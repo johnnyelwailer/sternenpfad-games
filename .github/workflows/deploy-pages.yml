@@ -2,10 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches:
-      - main
-      # publish game milestones from the active feature branch for early testing
-      - claude/schiffe-versenken-game-ohh5u6
+    branches: [main]
   workflow_dispatch:
 
 permissions:
