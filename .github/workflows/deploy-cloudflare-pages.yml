@@ -14,7 +14,9 @@ permissions:
 # an interrupted upload is simply replaced by the next deploy. It also
 # evicts zombie runners that would otherwise block the queue for hours.
 concurrency:
-  group: cloudflare-pages
+  # v2: renamed so runs never queue behind the zombie run that is
+  # stuck holding the old "cloudflare-pages" group
+  group: cloudflare-pages-v2
   cancel-in-progress: true
 
 jobs:
