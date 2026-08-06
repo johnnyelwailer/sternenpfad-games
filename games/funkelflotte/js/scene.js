@@ -7,7 +7,7 @@
 import * as THREE from "../vendor/three.module.min.js";
 import { tween, Ease, updateTweens } from "./tween.js";
 import { getWorld } from "./worlds.js";
-import { buildCreature } from "./models.js";
+import { buildCreature, buildDecoy } from "./models.js";
 import { buildEnvironment } from "./environments.js";
 
 const GRID = 8;
@@ -343,7 +343,9 @@ export function placeCreatures(slot, ships, { popIn = false, found = null } = {}
 export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   const d = dioramas[slot];
   if (!d) return null;
-  const model = buildCreature(d.worldId, ship.id, ship.size, customs[slot]?.[ship.id] ?? null);
+  const model = ship.decoy
+    ? buildDecoy()
+    : buildCreature(d.worldId, ship.id, ship.size, customs[slot]?.[ship.id] ?? null);
   model.rotation.y = 0.16; // subtle 3/4 turn so faces catch the camera
   const holder = new THREE.Group();
   holder.add(model);
@@ -390,6 +392,14 @@ export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
     tween((v) => holder.scale.setScalar(v), { dur: 0.7, ease: Ease.outBack });
   }
   return entry;
+}
+
+export function removeCreature(slot, id) {
+  const d = dioramas[slot];
+  const c = d?.creatures.get(id);
+  if (!c) return;
+  d.creaturesGroup.remove(c.holder);
+  d.creatures.delete(id);
 }
 
 let cachedPadTex = null;
@@ -523,7 +533,7 @@ export function shakeCreature(slot, shipId) {
 
 // ----------------------------------------------------------------- marks
 
-function missMarker(d, tile) {
+function missMarker(d, tile, key) {
   // dark dimple + themed floater
   tile.userData.state = "miss";
   tile.material.color.setHex(d.world.colors.tileDark);
@@ -534,7 +544,99 @@ function missMarker(d, tile) {
   );
   floater.position.set(tile.position.x, 0.12, tile.position.z);
   floater.userData.bob = Math.random() * 7;
+  floater.userData.cellKey = key;
   d.marksGroup.add(floater);
+}
+
+// number sprite for the sonar rule: warm colors near, cool colors far
+const digitTexCache = new Map();
+function digitTexture(dist) {
+  const color = dist <= 1 ? "#ff6b5f" : dist === 2 ? "#ffb347" : dist === 3 ? "#ffe066" : "#9fd9f5";
+  const cacheKey = `${dist}`;
+  if (digitTexCache.has(cacheKey)) return digitTexCache.get(cacheKey);
+  const c = document.createElement("canvas");
+  c.width = 96;
+  c.height = 96;
+  const ctx = c.getContext("2d");
+  ctx.font = "900 64px Nunito, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = "rgba(10,20,40,0.9)";
+  ctx.strokeText(String(dist), 48, 52);
+  ctx.fillStyle = color;
+  ctx.fillText(String(dist), 48, 52);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  digitTexCache.set(cacheKey, tex);
+  return tex;
+}
+
+function sonarMarker(d, tile, key, dist) {
+  const spr = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: digitTexture(dist), transparent: true, depthWrite: false })
+  );
+  spr.position.set(tile.position.x, 0.42, tile.position.z);
+  spr.scale.setScalar(0.62);
+  spr.userData.cellKey = key;
+  spr.userData.bob = Math.random() * 7;
+  spr.userData.bobBase = 0.42;
+  d.marksGroup.add(spr);
+  return spr;
+}
+
+function decoyMarker(d, tile, key) {
+  tile.userData.state = "decoy";
+  tile.material.color.setHex(0xff5f6d);
+  tile.material.opacity = 0.4;
+  // a sad little balloon scrap
+  const scrap = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.13, 0),
+    new THREE.MeshStandardMaterial({ color: 0xff5f6d, roughness: 0.6, flatShading: true })
+  );
+  scrap.scale.set(1, 0.35, 1);
+  scrap.position.set(tile.position.x, 0.1, tile.position.z);
+  scrap.userData.bob = Math.random() * 7;
+  scrap.userData.cellKey = key;
+  d.marksGroup.add(scrap);
+}
+
+// ghost rule: a faded miss becomes unknown again
+export function clearMark(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const key = `${x},${y}`;
+  const tile = d.tiles.get(key);
+  if (!tile || tile.userData.state !== "miss") return;
+  tile.userData.state = "unknown";
+  tween(
+    (v) => {
+      tile.material.opacity = 0.42 - v * 0.375;
+    },
+    { dur: 0.6, ease: Ease.outQuad, onDone: () => {
+      tile.material.color.setHex(0xffffff);
+      tile.material.opacity = 0.045;
+    } }
+  );
+  for (const m of [...d.marksGroup.children]) {
+    if (m.userData.cellKey !== key) continue;
+    tween(
+      (v) => {
+        m.scale.setScalar(Math.max(0.01, (1 - v)) * (m.isSprite ? 0.62 : 1));
+        if (m.material) m.material.opacity = 1 - v;
+      },
+      {
+        dur: 0.5,
+        ease: Ease.outQuad,
+        onDone: () => {
+          d.marksGroup.remove(m);
+          m.geometry?.dispose?.();
+          m.material?.dispose?.();
+        },
+      }
+    );
+    if (m.material) m.material.transparent = true;
+  }
 }
 
 function hitMarker(d, tile, key) {
@@ -568,10 +670,11 @@ function hitMarker(d, tile, key) {
   return crystal;
 }
 
-export function applyShot(slot, x, y, result) {
+export function applyShot(slot, x, y, result, { sonarDist = null } = {}) {
   const d = dioramas[slot];
   if (!d) return;
-  const tile = d.tiles.get(`${x},${y}`);
+  const key = `${x},${y}`;
+  const tile = d.tiles.get(key);
   if (!tile) return;
   const world = d.world;
   const pos = tile.getWorldPosition(new THREE.Vector3());
@@ -579,8 +682,26 @@ export function applyShot(slot, x, y, result) {
   camKick = result === "miss" ? 0.12 : 0.3;
   flash(d, tile.position, result === "miss" ? world.colors.sky : world.colors.accent);
 
-  if (result === "miss") {
-    missMarker(d, tile);
+  if (result === "decoy") {
+    // POP! the bluff balloon bursts in the shooter's face
+    camKick = 0.5;
+    decoyMarker(d, tile, key);
+    flash(d, tile.position, 0xff5f6d);
+    ringWave(d, tile.position, 0xff5f6d);
+    ringWave(d, tile.position, 0xffffff);
+    burst(d, pos, 0xff5f6d, { count: 55 });
+    burst(d, pos, 0xffffff, { count: 20, up: true });
+    starburst(d, tile.position);
+  } else if (result === "miss") {
+    missMarker(d, tile, key);
+    if (sonarDist != null) {
+      const spr = sonarMarker(d, tile, key, sonarDist);
+      spr.scale.setScalar(0.01);
+      tween((v) => spr.scale.setScalar(0.62 * v), { dur: 0.45, ease: Ease.outBack });
+      for (let i = 0; i < Math.min(sonarDist, 3); i += 1) {
+        setTimeout(() => ringWave(d, tile.position, world.colors.accent), i * 160);
+      }
+    }
     splashColumn(d, tile.position, world.colors.splash ?? world.colors.sky);
     ringWave(d, tile.position, world.colors.text);
     burst(d, pos, world.colors.splash ?? world.colors.sky, { count: 30, up: true });
@@ -594,13 +715,20 @@ export function applyShot(slot, x, y, result) {
   }
 }
 
-export function applyShotQuiet(slot, x, y, result) {
+export function applyShotQuiet(slot, x, y, result, { sonarDist = null } = {}) {
   const d = dioramas[slot];
   if (!d) return;
-  const tile = d.tiles.get(`${x},${y}`);
+  const key = `${x},${y}`;
+  const tile = d.tiles.get(key);
   if (!tile || tile.userData.state !== "unknown") return;
-  if (result === "miss") missMarker(d, tile);
-  else hitMarker(d, tile, `${x},${y}`);
+  if (result === "decoy") {
+    decoyMarker(d, tile, key);
+  } else if (result === "miss") {
+    missMarker(d, tile, key);
+    if (sonarDist != null) sonarMarker(d, tile, key, sonarDist);
+  } else {
+    hitMarker(d, tile, key);
+  }
 }
 
 export function revealWater(slot, cells) {
@@ -775,7 +903,7 @@ function updateBursts(d, dt) {
       m.position.y = 0.45 + Math.sin(clockT * 3 + m.position.x) * 0.05;
     }
     if (m.userData.bob !== undefined) {
-      m.position.y = 0.12 + Math.sin(clockT * 2 + m.userData.bob) * 0.04;
+      m.position.y = (m.userData.bobBase ?? 0.12) + Math.sin(clockT * 2 + m.userData.bob) * 0.04;
       m.rotation.y += dt * 0.6;
     }
   }

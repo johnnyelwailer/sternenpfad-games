@@ -11,6 +11,7 @@ export const MISS = "miss";
 export const HIT = "hit";
 export const SUNK = "sunk";
 export const REPEAT = "repeat";
+export const DECOY = "decoy"; // Schwindler rule: popped the bluff balloon
 
 export function key(x, y) {
   return `${x},${y}`;
@@ -57,7 +58,41 @@ export function canPlace(board, ship, ignoreId = null) {
       }
     }
   }
+  // the decoy balloon counts as occupied space too (no-touch keeps the
+  // auto-reveal around sunk creatures truthful)
+  if (board.decoy) {
+    for (const c of cells) {
+      if (cellsTouch(c, board.decoy)) return false;
+    }
+  }
   return true;
+}
+
+// ------------------------------------------------------- decoy (Schwindler)
+
+export function canPlaceDecoy(board, x, y) {
+  if (!inBounds(board, x, y)) return false;
+  for (const s of board.ships) {
+    for (const c of shipCells(s)) {
+      if (cellsTouch({ x, y }, c)) return false;
+    }
+  }
+  return true;
+}
+
+export function placeDecoy(board, x, y) {
+  if (!canPlaceDecoy(board, x, y)) return false;
+  board.decoy = { x, y };
+  return true;
+}
+
+export function randomDecoy(board, rng = Math.random) {
+  for (let tries = 0; tries < 400; tries += 1) {
+    const x = Math.floor(rng() * board.size);
+    const y = Math.floor(rng() * board.size);
+    if (placeDecoy(board, x, y)) return true;
+  }
+  return false;
 }
 
 export function placeShip(board, ship) {
@@ -160,6 +195,11 @@ export function fire(board, x, y) {
   const k = key(x, y);
   if (board.shots[k]) return { result: REPEAT, ship: null, revealed: [], gameOver: false };
 
+  if (board.decoy && board.decoy.x === x && board.decoy.y === y) {
+    board.shots[k] = DECOY;
+    return { result: DECOY, ship: null, revealed: [], gameOver: false };
+  }
+
   const ship = shipAt(board, x, y);
   if (!ship) {
     board.shots[k] = MISS;
@@ -183,6 +223,35 @@ export function fire(board, x, y) {
     return { result: SUNK, ship, revealed, gameOver: allSunk(board) };
   }
   return { result: HIT, ship, revealed: [], gameOver: false };
+}
+
+// -------------------------------------------------- sonar (Delfin-Sonar)
+
+// Chebyshev distance from (x,y) to the nearest not-yet-found creature.
+// 0 would be a hit, so callers only need this for misses.
+export function sonarDistance(board, x, y) {
+  let best = null;
+  for (const ship of board.ships) {
+    if (isSunk(ship)) continue;
+    for (const c of shipCells(ship)) {
+      const d = Math.max(Math.abs(c.x - x), Math.abs(c.y - y));
+      if (best === null || d < best) best = d;
+    }
+  }
+  return best;
+}
+
+// ------------------------------------------------ ghost (Geisterstunde)
+
+// Forget a miss mark so the cell becomes shootable again. Hits and the
+// popped decoy stay — only water knowledge fades.
+export function forgetShot(board, x, y) {
+  const k = key(x, y);
+  if (board.shots[k] === MISS) {
+    delete board.shots[k];
+    return true;
+  }
+  return false;
 }
 
 // Serialize only what the opponent may know at game end (fair-play reveal).

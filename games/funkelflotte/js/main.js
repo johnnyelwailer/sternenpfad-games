@@ -7,6 +7,7 @@ import { createAiState, noteResult, nextShot } from "./ai.js";
 import { WORLDS, getWorld, randomOtherWorld } from "./worlds.js";
 import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
 import * as PROG from "./progress.js";
+import { flag, setFlag, allFlags } from "./flags.js";
 import * as SND from "./sound.js";
 import * as SCENE from "./scene.js";
 import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
@@ -34,7 +35,13 @@ const S = {
   worldPickAction: null,
   customs: [{}, {}], // per board index: shipId -> { tint, hat }
   oppCustom: null, // online: opponent's map (arrives with their "ready")
+  rules: { decoy: false, sonar: false, ghost: false }, // extra rules
+  extraTurn: null, // player index that may keep shooting after a miss
+  ghostTrack: [null, null], // per board: { count, queue } for fading marks
+  sonarMap: [{}, {}], // per board: "x,y" -> sonar distance (for replay)
 };
+
+const GHOST_FADE = 5; // a miss mark fades after this many further shots
 
 const slotFor = (index) => (index === 0 ? "mine" : "enemy");
 let FAST = false; // shortened delays for automated tests
@@ -183,7 +190,86 @@ function foundIdsOn(index) {
 function newBoardWithFleet() {
   const b = E.createBoard();
   E.randomFleet(b);
+  if (S.rules.decoy) E.randomDecoy(b);
   return b;
+}
+
+// ----------------------------------------------------------- extra rules
+
+function loadRules() {
+  try {
+    const r = JSON.parse(localStorage.getItem("ff-rules") || "{}");
+    return { decoy: !!r.decoy, sonar: !!r.sonar, ghost: !!r.ghost };
+  } catch {
+    return { decoy: false, sonar: false, ghost: false };
+  }
+}
+
+function saveRules() {
+  try {
+    localStorage.setItem("ff-rules", JSON.stringify(S.rules));
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+function syncRuleChips() {
+  $("#rule-decoy").checked = S.rules.decoy;
+  $("#rule-sonar").checked = S.rules.sonar;
+  $("#rule-ghost").checked = S.rules.ghost;
+}
+
+function rulesSummary(rules) {
+  const parts = [];
+  if (rules.decoy) parts.push("🎈 Ballon-Schwindel");
+  if (rules.sonar) parts.push("🐬 Sonar");
+  if (rules.ghost) parts.push("👻 Geisterstunde");
+  return parts.join(" · ");
+}
+
+// the decoy rendered like a 1-cell creature for the 3D scene
+function decoyShipOf(board) {
+  return { id: "decoy", size: 1, x: board.decoy.x, y: board.decoy.y, dir: "h", decoy: true, hits: [] };
+}
+
+function decoyPopped(board) {
+  return board.decoy && board.shots[E.key(board.decoy.x, board.decoy.y)] === E.DECOY;
+}
+
+function shipsWithDecoy(board) {
+  return board.decoy && !decoyPopped(board) ? [...board.ships, decoyShipOf(board)] : board.ships;
+}
+
+function resetRuleState() {
+  S.extraTurn = null;
+  S.ghostTrack = [
+    { count: 0, queue: [] },
+    { count: 0, queue: [] },
+  ];
+  S.sonarMap = [{}, {}];
+}
+
+// ghost rule: count shots per board, fade old miss marks
+function ghostTick(idx, x, y, result) {
+  if (!S.rules.ghost) return;
+  const g = S.ghostTrack[idx];
+  if (!g) return;
+  g.count += 1;
+  if (result === E.MISS) g.queue.push({ x, y, at: g.count });
+  while (g.queue.length && g.count - g.queue[0].at >= GHOST_FADE) {
+    const c = g.queue.shift();
+    forgetCell(idx, c.x, c.y);
+  }
+}
+
+function forgetCell(idx, x, y) {
+  if (S.mode === "online" && idx === 1) {
+    delete S.shadow.marks[E.key(x, y)];
+  } else if (S.boards[idx]) {
+    E.forgetShot(S.boards[idx], x, y);
+  }
+  delete S.sonarMap[idx][E.key(x, y)];
+  SCENE.clearMark(slotFor(idx), x, y);
 }
 
 function creatureName(index, shipId) {
@@ -200,7 +286,8 @@ function syncCreatureVisibility() {
       continue;
     }
     if (!board) continue;
-    const ships = idx === S.viewer ? board.ships : board.ships.filter(E.isSunk);
+    const ships =
+      idx === S.viewer ? shipsWithDecoy(board) : board.ships.filter(E.isSunk);
     SCENE.placeCreatures(slot, ships);
   }
 }
@@ -212,7 +299,9 @@ function replayMarks(idx) {
   if (!marks) return;
   for (const [key, result] of Object.entries(marks)) {
     const [x, y] = key.split(",").map(Number);
-    SCENE.applyShotQuiet(slot, Number(x), Number(y), result);
+    SCENE.applyShotQuiet(slot, Number(x), Number(y), result, {
+      sonarDist: S.sonarMap[idx][key] ?? null,
+    });
   }
 }
 
@@ -228,6 +317,7 @@ function startMode(mode) {
   S.rematchMine = false;
   S.rematchTheirs = false;
   S.inputLocked = false;
+  resetRuleState();
 
   if (mode === "ai") {
     S.worlds[1] = randomOtherWorld(S.worlds[0]);
@@ -253,18 +343,25 @@ function startPlacement(player) {
   SCENE.setupBoard(slot, S.worlds[idx]);
   S.customs[idx] = loadCustom(S.worlds[idx]);
   SCENE.setCustomization(slot, S.customs[idx]);
-  SCENE.placeCreatures(slot, S.boards[idx].ships, { popIn: true });
+  SCENE.placeCreatures(slot, shipsWithDecoy(S.boards[idx]), { popIn: true });
   SCENE.focusBoard(slot, { immediate: S.phase === "title" });
   SCENE.clearInteraction();
   SCENE.setPlacementMode({
     slot,
     canPlaceAt: (id, x, y, dir) => {
       const board = S.boards[idx];
+      if (id === "decoy") return E.canPlaceDecoy(board, x, y);
       const ship = board.ships.find((s) => s.id === id);
       return E.canPlace(board, { ...ship, x, y, dir }, id);
     },
     onMove: (id, x, y, dir) => {
       const board = S.boards[idx];
+      if (id === "decoy") {
+        if (E.placeDecoy(board, x, y)) SND.tap();
+        else SND.sad();
+        SCENE.moveCreature(slot, decoyShipOf(board));
+        return;
+      }
       if (E.moveShip(board, id, x, y, dir)) {
         SND.tap();
         SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
@@ -276,6 +373,11 @@ function startPlacement(player) {
     },
     onRotate: (id) => {
       const board = S.boards[idx];
+      if (id === "decoy") {
+        SND.plop();
+        SCENE.shakeCreature(slot, id);
+        return;
+      }
       const ship = board.ships.find((s) => s.id === id);
       const dir = ship.dir === "h" ? "v" : "h";
       const maxX = board.size - (dir === "h" ? ship.size : 1);
@@ -297,7 +399,7 @@ function startPlacement(player) {
   status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
   show(null);
   $("#btn-shuffle").hidden = false;
-  $("#btn-style").hidden = false;
+  $("#btn-style").hidden = !flag("styles");
   $("#btn-place-done").hidden = false;
   $("#btn-place-done").disabled = false;
   $("#btn-place-done").textContent = "Fertig!";
@@ -371,11 +473,12 @@ function openStylePanel() {
     hatBtn.addEventListener("click", () => {
       SND.sparkle();
       const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
-      // cycle through unlocked hats only (stickers unlock more)
+      // cycle through unlocked hats only (stickers unlock more);
+      // with the sticker feature off, every hat is available
       let h = cur.hat;
       do {
         h = (h + 1) % ACCESSORIES.length;
-      } while (!PROG.isHatUnlocked(h) && h !== cur.hat);
+      } while (flag("stickers") && !PROG.isHatUnlocked(h) && h !== cur.hat);
       setShipCustom(ship.id, { hat: h });
       sync();
     });
@@ -388,7 +491,7 @@ function openStylePanel() {
     row.appendChild(hatBtn);
     rows.appendChild(row);
   }
-  const nu = PROG.nextUnlock();
+  const nu = flag("stickers") ? PROG.nextUnlock() : null;
   $("#style-hint").textContent = nu
     ? `Noch ${nu.remaining} Sticker bis zum nächsten Hut: ${ACCESSORY_NAMES[nu.kind]}!`
     : "";
@@ -403,8 +506,11 @@ function closeStylePanel() {
 function shuffleFleet() {
   SND.whoosh();
   const idx = S.placingPlayer;
-  E.randomFleet(S.boards[idx]);
-  SCENE.placeCreatures(slotFor(idx), S.boards[idx].ships, { popIn: true });
+  const board = S.boards[idx];
+  board.decoy = null;
+  E.randomFleet(board);
+  if (S.rules.decoy) E.randomDecoy(board);
+  SCENE.placeCreatures(slotFor(idx), shipsWithDecoy(board), { popIn: true });
 }
 
 function placementDone() {
@@ -550,15 +656,42 @@ function handleTap(x, y) {
 function showShotResult(idx, x, y, res, done) {
   const slot = slotFor(idx);
   const viewerIsShooter = idx !== S.viewer;
-  SCENE.applyShot(slot, x, y, res.result === E.MISS ? "miss" : "hit");
+  const sonarDist =
+    S.rules.sonar && res.result === E.MISS
+      ? res.dist ?? (S.boards[idx] ? E.sonarDistance(S.boards[idx], x, y) : null)
+      : null;
+  if (sonarDist != null) S.sonarMap[idx][E.key(x, y)] = sonarDist;
+  SCENE.applyShot(
+    slot,
+    x,
+    y,
+    res.result === E.MISS ? "miss" : res.result === E.DECOY ? "decoy" : "hit",
+    { sonarDist }
+  );
+  ghostTick(idx, x, y, res.result);
   if (navigator.vibrate) {
     navigator.vibrate(res.result === E.SUNK ? [60, 40, 90] : res.result === E.HIT ? 40 : 15);
   }
   const world = getWorld(S.worlds[idx]);
   const opp = S.mode === "ai" ? "Robo" : "Dein Mitspieler";
-  if (res.result === E.MISS) {
+  if (res.result === E.DECOY) {
     SND.plop();
-    status(viewerIsShooter ? world.words.miss : `Puh! ${opp} hat nichts gefunden.`);
+    SND.whoosh();
+    if (idx === S.viewer) SCENE.removeCreature(slot, "decoy");
+    status(
+      viewerIsShooter
+        ? "🎈 PENG! Nur ein Schwindel-Ballon — dein Gegner darf extra suchen!"
+        : `🎈 PENG! ${opp} ist auf deinen Schwindel-Ballon reingefallen!`
+    );
+  } else if (res.result === E.MISS) {
+    SND.plop();
+    status(
+      viewerIsShooter
+        ? sonarDist != null
+          ? `${world.words.miss} Sonar piept: ${sonarDist} Felder entfernt!`
+          : world.words.miss
+        : `Puh! ${opp} hat nichts gefunden.`
+    );
   } else if (res.result === E.HIT) {
     SND.sparkle();
     status(viewerIsShooter ? `${world.words.hit} Nochmal!` : `Oh nein! ${opp} hat was entdeckt …`);
@@ -582,7 +715,15 @@ function afterMyShot(res) {
     finishGame(S.turn);
     return;
   }
-  if (res.result !== E.MISS) return; // hit → same player continues
+  if (res.result === E.HIT || res.result === E.SUNK) return; // same player continues
+  if (res.result === E.DECOY) S.extraTurn = other(S.turn); // balloon owner earns a bonus
+
+  // a miss normally ends the turn — unless this player earned an extra one
+  if (res.result === E.MISS && S.extraTurn === S.turn) {
+    S.extraTurn = null;
+    toast("🎈 Extra-Zug! Such gleich nochmal!");
+    return;
+  }
 
   if (S.mode === "hotseat") {
     S.inputLocked = true;
@@ -636,7 +777,12 @@ function scheduleRoboTurn() {
         finishGame(1);
         return;
       }
-      if (res.result === E.MISS) {
+      if (res.result === E.DECOY) S.extraTurn = 0; // robo popped my balloon
+      if (res.result === E.MISS && S.extraTurn === 1) {
+        S.extraTurn = null;
+        status("Robo hat einen Extra-Zug und sucht weiter …");
+        scheduleRoboTurn();
+      } else if (res.result === E.MISS || res.result === E.DECOY) {
         S.turn = 0;
         S.inputLocked = false;
         beginTurn();
@@ -740,6 +886,7 @@ function wireNet() {
 }
 
 function beginOnlinePlacement() {
+  resetRuleState();
   S.boards = [newBoardWithFleet(), null];
   S.shadow = newShadow();
   S.myReady = false;
@@ -781,7 +928,7 @@ function handleNetMessage(msg) {
       // guest announces itself (+ its world); host answers idempotently
       if (msg.world) S.worlds[1] = msg.world;
       if (S.isHost) {
-        S.net.send({ t: "hello", v: 2, world: S.worlds[0] });
+        S.net.send({ t: "hello", v: 2, world: S.worlds[0], rules: S.rules });
         if (S.phase === "title" || S.phase === "over") beginOnlinePlacement();
       }
       break;
@@ -789,6 +936,15 @@ function handleNetMessage(msg) {
     case "hello": {
       if (S.phase !== "title" && S.phase !== "over") break;
       S.worlds[1] = msg.world || "ozean";
+      // the host decides the extra rules for both players
+      S.rules = {
+        decoy: !!msg.rules?.decoy,
+        sonar: !!msg.rules?.sonar,
+        ghost: !!msg.rules?.ghost,
+      };
+      syncRuleChips();
+      const summary = rulesSummary(S.rules);
+      if (summary) toast(`Extra-Regeln: ${summary}`, 3200);
       beginOnlinePlacement();
       break;
     }
@@ -816,6 +972,10 @@ function handleNetMessage(msg) {
             : null,
         revealed: res.revealed,
         gameOver: res.gameOver,
+        dist:
+          S.rules.sonar && res.result === E.MISS
+            ? E.sonarDistance(S.boards[0], msg.x, msg.y)
+            : null,
       });
       if (res.result === E.REPEAT) break;
       showShotResult(0, msg.x, msg.y, res, () => {
@@ -825,11 +985,22 @@ function handleNetMessage(msg) {
         }
         if (res.gameOver) {
           finishGame(1);
-        } else if (res.result === E.MISS) {
+        } else if (res.result === E.DECOY) {
+          S.extraTurn = 0; // they popped my balloon — I get a bonus turn
           S.turn = 0;
           S.inputLocked = false;
           beginTurn();
-          toast("Du bist dran!");
+          toast("🎈 Du bist dran — mit Extra-Zug!");
+        } else if (res.result === E.MISS) {
+          if (S.extraTurn === 1) {
+            S.extraTurn = null;
+            status("🎈 Dein Mitspieler hat einen Extra-Zug und sucht weiter …");
+          } else {
+            S.turn = 0;
+            S.inputLocked = false;
+            beginTurn();
+            toast("Du bist dran!");
+          }
         } else {
           status("Dein Mitspieler hat was gefunden und sucht weiter …");
         }
@@ -840,12 +1011,14 @@ function handleNetMessage(msg) {
       S.inputLocked = false;
       if (msg.result === E.REPEAT) break;
       const k = E.key(msg.x, msg.y);
-      S.shadow.marks[k] = msg.result === E.MISS ? E.MISS : E.HIT;
+      S.shadow.marks[k] =
+        msg.result === E.MISS ? E.MISS : msg.result === E.DECOY ? E.DECOY : E.HIT;
       const fakeRes = {
         result: msg.result,
         ship: msg.ship,
         revealed: msg.revealed || [],
         gameOver: msg.gameOver,
+        dist: msg.dist ?? null,
       };
       if (msg.result === E.SUNK && msg.ship) {
         S.shadow.found.push(msg.ship);
@@ -856,7 +1029,19 @@ function handleNetMessage(msg) {
           finishGame(0);
           return;
         }
+        if (msg.result === E.DECOY) {
+          S.extraTurn = 1; // their balloon → they get the bonus turn
+          S.turn = 1;
+          beginTurn();
+          return;
+        }
         if (msg.result === E.MISS) {
+          if (S.extraTurn === 0) {
+            S.extraTurn = null;
+            S.inputLocked = false;
+            toast("🎈 Extra-Zug! Such gleich nochmal!");
+            return;
+          }
           S.turn = 1;
           beginTurn();
         }
@@ -903,7 +1088,7 @@ function finishGame(winner) {
   }
   const stickerBox = $("#win-sticker");
   stickerBox.hidden = true;
-  if (iWon) {
+  if (iWon && flag("stickers")) {
     const winnersWorld = S.worlds[loserIdx]; // the world they searched in
     const r = PROG.awardSticker(winnersWorld);
     const creature = getWorld(r.worldId).creatures[r.idx];
@@ -1025,6 +1210,22 @@ function goHome() {
 function boot() {
   SCENE.initScene($("#stage"));
   applyUiWorld("ozean");
+  S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
+  syncRuleChips();
+  document.querySelector(".rules-row").hidden = !flag("rules");
+  $("#btn-album").hidden = !flag("stickers");
+  for (const [id, k] of [
+    ["#rule-decoy", "decoy"],
+    ["#rule-sonar", "sonar"],
+    ["#rule-ghost", "ghost"],
+  ]) {
+    $(id).addEventListener("change", (e) => {
+      SND.unlock();
+      SND.tap();
+      S.rules[k] = e.target.checked;
+      saveRules();
+    });
+  }
   buildWorldPicker($("#world-grid"), (id) => {
     S.worlds[0] = id;
     applyUiWorld(id);
@@ -1140,6 +1341,12 @@ function boot() {
     },
     tap: (x, y) => handleTap(x, y),
     setStyle: (id, tint, hat) => setShipCustom(id, { tint, hat }),
+    setRules: (r) => {
+      Object.assign(S.rules, r);
+      syncRuleChips();
+    },
+    flags: allFlags,
+    setFlag,
     placementBoard: () => S.boards[S.placingPlayer],
     marksOn: (idx) => (S.mode === "online" && idx === 1 ? S.shadow.marks : S.boards[idx]?.shots),
     rotateFirst: () => {

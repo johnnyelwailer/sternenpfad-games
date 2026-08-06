@@ -121,6 +121,123 @@ test("robo game: my shots mark the enemy board, robo answers on mine", async ({ 
     .toBeGreaterThan(0);
 });
 
+async function waitMyTurn(page) {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            window.__FF.state.phase === "battle" &&
+            window.__FF.state.turn === 0 &&
+            !window.__FF.state.inputLocked
+        ),
+      { timeout: 30000 }
+    )
+    .toBe(true);
+}
+
+// tap atomically: only when it is really my turn, verifying the shot
+// registered — robo timers can steal the turn between poll and tap
+async function tapWhenMyTurn(page, x, y) {
+  for (let i = 0; i < 200; i += 1) {
+    const ok = await page.evaluate(([tx, ty]) => {
+      const st = window.__FF.state;
+      if (st.phase !== "battle" || st.turn !== 0 || st.inputLocked) return false;
+      window.__FF.tap(tx, ty);
+      return !!window.__FF.marksOn(1)[`${tx},${ty}`];
+    }, [x, y]);
+    if (ok) return;
+    await page.waitForTimeout(150);
+  }
+  throw new Error(`could not tap ${x},${y}`);
+}
+
+// cells guaranteed to be water on robo's board (no ship, no balloon)
+async function missCells(page, count) {
+  return page.evaluate((n) => {
+    const b = window.__FF.state.boards[1];
+    const E = window.__FF.engine;
+    const occupied = new Set();
+    for (const s of b.ships) for (const c of E.shipCells(s)) occupied.add(`${c.x},${c.y}`);
+    if (b.decoy) occupied.add(`${b.decoy.x},${b.decoy.y}`);
+    const out = [];
+    for (let y = 0; y < 8 && out.length < n; y += 1) {
+      for (let x = 0; x < 8 && out.length < n; x += 1) {
+        if (!occupied.has(`${x},${y}`)) out.push({ x, y });
+      }
+    }
+    return out;
+  }, count);
+}
+
+test("feature flags: new features can be switched off via URL", async ({ page }) => {
+  await page.goto(`${GAME}?flags=styles:0,rules:0,stickers:0`);
+  await page.waitForFunction(() => !!window.__FF);
+  await expect(page.locator(".rules-row")).toBeHidden();
+  await expect(page.locator("#btn-album")).toBeHidden();
+  await page.locator('[data-mode="ai"]').click();
+  await expect(page.locator("#btn-place-done")).toBeVisible();
+  await expect(page.locator("#btn-style")).toBeHidden();
+  // defaults stay on without the override
+  await page.goto(GAME);
+  await page.waitForFunction(() => !!window.__FF);
+  await expect(page.locator(".rules-row")).toBeVisible();
+  await expect(page.locator("#btn-album")).toBeVisible();
+});
+
+test("extra rules: sonar distances and the decoy balloon", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => {
+    window.__FF.setFast();
+    window.__FF.setRules({ decoy: true, sonar: true });
+  });
+  await page.locator('[data-mode="ai"]').click();
+
+  // my own board got a balloon to place
+  expect(await page.evaluate(() => !!window.__FF.placementBoard().decoy)).toBe(true);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  // a guaranteed miss shows a sonar distance
+  const [cell] = await missCells(page, 1);
+  await tapWhenMyTurn(page, cell.x, cell.y);
+  await expect
+    .poll(() => page.evaluate((k) => window.__FF.state.sonarMap[1][k], `${cell.x},${cell.y}`))
+    .toBeGreaterThan(0);
+
+  // popping robo's balloon marks the cell and hands robo a bonus turn
+  const decoy = await page.evaluate(() => window.__FF.state.boards[1].decoy);
+  await tapWhenMyTurn(page, decoy.x, decoy.y);
+  await expect
+    .poll(() => page.evaluate((k) => window.__FF.marksOn(1)[k], `${decoy.x},${decoy.y}`))
+    .toBe("decoy");
+  await waitMyTurn(page); // game keeps flowing after the pop
+});
+
+test("extra rules: ghost mode fades old miss marks", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => {
+    window.__FF.setFast();
+    window.__FF.setRules({ decoy: false, sonar: false, ghost: true });
+  });
+  await page.locator('[data-mode="ai"]').click();
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  const cells = await missCells(page, 6);
+  for (const cell of cells) {
+    await tapWhenMyTurn(page, cell.x, cell.y);
+    await page.waitForTimeout(250);
+  }
+  // after 6 shots the first miss (5 shots ago) has faded away
+  await expect
+    .poll(() => page.evaluate((k) => window.__FF.marksOn(1)[k] ?? null, `${cells[0].x},${cells[0].y}`))
+    .toBeNull();
+  // ...and the freshest one is still there
+  const last = cells[cells.length - 1];
+  expect(await page.evaluate((k) => window.__FF.marksOn(1)[k], `${last.x},${last.y}`)).toBe("miss");
+});
+
 test("hot-seat: two worlds, pass screens, full game to the win screen", async ({ page }) => {
   test.setTimeout(420000);
   await page.evaluate(() => window.__FF.setFast());

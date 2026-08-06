@@ -1166,3 +1166,32 @@ export function buildCreature(worldId, index, size, custom = null) {
   };
   return wrap;
 }
+
+// ------------------------------------------------------------ decoy balloon
+// The Schwindler rule's bluff: a cheeky balloon that pops when found.
+// One clear look across all worlds so kids instantly recognize it.
+
+export function buildDecoy() {
+  const g = new THREE.Group();
+  const redM = mat(0xff5f6d, { roughness: 0.35 });
+  const balloon = add(g, new THREE.SphereGeometry(0.34, 14, 12), redM, 0, 0.78, 0);
+  balloon.scale.set(1, 1.15, 1);
+  // shine spot
+  const shine = add(g, new THREE.SphereGeometry(0.09, 8, 6), mat(0xffffff, { roughness: 0.2 }), -0.14, 0.94, 0.14);
+  shine.scale.set(0.9, 1.4, 0.6);
+  // knot + string
+  add(g, new THREE.ConeGeometry(0.07, 0.12, 6), redM, 0, 0.42, 0).rotation.x = Math.PI;
+  const string = add(g, new THREE.CylinderGeometry(0.012, 0.012, 0.36, 4), mat(0xfdf6e3), 0, 0.2, 0);
+  // cheeky face
+  const blinkEyes = makeEyes(g, -0.26, 0.82, 0, 0.13, 0.06);
+  smile(g, -0.32, 0.7, 0, 0.08, 0.015);
+
+  g.userData.animate = (t) => {
+    balloon.position.y = 0.78 + Math.sin(t * 1.6) * 0.05;
+    shine.position.y = 0.94 + Math.sin(t * 1.6) * 0.05;
+    g.rotation.z = Math.sin(t * 1.2) * 0.08;
+    string.rotation.z = Math.sin(t * 2.1) * 0.15;
+    blinkEyes(t);
+  };
+  return g;
+}
