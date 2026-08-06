@@ -1,0 +1,10 @@
+{
+  "id": "procedural-fox",
+  "title": "Spielideen-Labor",
+  "emoji": "🧪",
+  "tagline": "Ein kleiner 3D-Fuchs",
+  "description": "Ein mobiles Animations- und Steuerungs-Experiment für zukünftige Spiele.",
+  "accent": ["#7b4f2f", "#21152a"],
+  "locales": ["de"],
+  "pages": { "type": "static" }
+}
