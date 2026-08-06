@@ -1650,30 +1650,127 @@ export function createPreview(canvas) {
 // ------------------------------------------------------------- thumbnails
 
 let thumbRenderer = null;
-export function creatureThumb(worldId, index, size = 3, px = 128, custom = null) {
+
+function ensureThumbRenderer(px) {
   if (!thumbRenderer) {
     thumbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    thumbRenderer.setSize(px, px);
     thumbRenderer.outputColorSpace = THREE.SRGBColorSpace;
   }
-  const s = new THREE.Scene();
-  const world = getWorld(worldId);
-  const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
-  cam.position.set(-2.6, 2.2, 3.4);
-  cam.lookAt(0, 0.55, 0);
-  s.add(new THREE.HemisphereLight(0xffffff, 0x667788, 1.15));
-  const dl = new THREE.DirectionalLight(world.colors.light, 1.7);
-  dl.position.set(-3, 5, 4);
-  s.add(dl);
-  const model = buildCreature(worldId, index, size, custom);
-  s.add(model);
-  thumbRenderer.render(s, cam);
-  const url = thumbRenderer.domElement.toDataURL("image/png");
+  thumbRenderer.setSize(px, px);
+  return thumbRenderer;
+}
+
+// place the camera so the object fits the square frame — no clipping,
+// whatever the creature's proportions
+function frameToFit(cam, obj, margin = 1.28) {
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+  const fov = (cam.fov * Math.PI) / 180;
+  const dist = ((maxDim / 2) * margin) / Math.tan(fov / 2);
+  const dir = new THREE.Vector3(-0.55, 0.45, 0.78).normalize();
+  cam.position.copy(center.clone().add(dir.multiplyScalar(dist)));
+  cam.lookAt(center);
+}
+
+function disposeSceneTree(s) {
   s.traverse((o) => {
     if (o.isMesh) {
       o.geometry?.dispose?.();
       o.material?.dispose?.();
     }
   });
+}
+
+export function creatureThumb(worldId, index, size = 3, px = 128, custom = null) {
+  const r = ensureThumbRenderer(px);
+  const s = new THREE.Scene();
+  const world = getWorld(worldId);
+  const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
+  s.add(new THREE.HemisphereLight(0xffffff, 0x667788, 1.15));
+  const dl = new THREE.DirectionalLight(world.colors.light, 1.7);
+  dl.position.set(-3, 5, 4);
+  s.add(dl);
+  const model = buildCreature(worldId, index, size, custom);
+  model.rotation.y = 0.25;
+  s.add(model);
+  frameToFit(cam, model);
+  r.render(s, cam);
+  const url = r.domElement.toDataURL("image/png");
+  disposeSceneTree(s);
   return url;
+}
+
+const cssHex = (hex) => `#${hex.toString(16).padStart(6, "0")}`;
+
+// a little themed vignette for the world picker cards: gradient sky in
+// the world's palette, hero + buddy creature framed to fit, soft ground
+export function worldCardThumb(worldId, customMap = null, px = 192) {
+  const r = ensureThumbRenderer(px);
+  const world = getWorld(worldId);
+  const s = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+  s.add(new THREE.HemisphereLight(0xffffff, 0x556677, 1.1));
+  const dl = new THREE.DirectionalLight(world.colors.light, 1.6);
+  dl.position.set(-3, 5, 4);
+  s.add(dl);
+
+  const stars = new THREE.Group(); // the cast — framing ignores the ground
+  const hero = buildCreature(worldId, 0, 2.4, customMap?.[0] ?? null);
+  hero.rotation.y = 0.35;
+  stars.add(hero);
+  const buddy = buildCreature(worldId, 4, 1.3, customMap?.[4] ?? null);
+  buddy.position.set(1.5, 0, 0.85);
+  buddy.rotation.y = -0.15;
+  stars.add(buddy);
+  s.add(stars);
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(3.4, 28),
+    new THREE.MeshStandardMaterial({ color: world.colors.tile, roughness: 1, flatShading: true })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.set(0.7, -0.03, 0.3);
+  ground.scale.set(1.5, 1, 1);
+  s.add(ground);
+  frameToFit(cam, stars, 1.12);
+  r.render(s, cam);
+
+  // composite the render over a painted sky
+  const out = document.createElement("canvas");
+  out.width = px;
+  out.height = px;
+  const ctx = out.getContext("2d");
+  const sky = ctx.createLinearGradient(0, 0, 0, px);
+  sky.addColorStop(0, cssHex(world.colors.sky));
+  sky.addColorStop(0.62, cssHex(world.colors.horizon ?? world.colors.fog));
+  sky.addColorStop(1, cssHex(world.colors.fog));
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, px, px);
+  // soft sun / glow up in the corner
+  const glow = ctx.createRadialGradient(px * 0.78, px * 0.18, 2, px * 0.78, px * 0.18, px * 0.36);
+  glow.addColorStop(0, "rgba(255,248,220,0.85)");
+  glow.addColorStop(1, "rgba(255,248,220,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, px, px);
+  // a pinch of twinkle in the world's accent color
+  ctx.fillStyle = cssHex(world.colors.accent);
+  let seed = worldId.length * 7 + 3;
+  const rnd = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  for (let i = 0; i < 9; i += 1) {
+    const sx = rnd() * px;
+    const sy = rnd() * px * 0.45;
+    const sr = 1 + rnd() * 1.8;
+    ctx.globalAlpha = 0.35 + rnd() * 0.5;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.drawImage(r.domElement, 0, 0, px, px);
+  disposeSceneTree(s);
+  return out.toDataURL("image/png");
 }
