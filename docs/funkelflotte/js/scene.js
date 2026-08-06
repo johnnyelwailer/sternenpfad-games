@@ -283,17 +283,17 @@ function shipAnchor(ship) {
   return new THREE.Vector3(cx - GRID / 2 + 0.5, 0.1, cy - GRID / 2 + 0.5);
 }
 
-export function placeCreatures(slot, ships, { popIn = false } = {}) {
+export function placeCreatures(slot, ships, { popIn = false, found = null } = {}) {
   const d = dioramas[slot];
   if (!d) return;
   d.creaturesGroup.clear();
   d.creatures.clear();
   for (const ship of ships) {
-    addCreature(slot, ship, { popIn });
+    addCreature(slot, ship, { popIn, found });
   }
 }
 
-export function addCreature(slot, ship, { popIn = false } = {}) {
+export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   const d = dioramas[slot];
   if (!d) return null;
   const model = buildCreature(d.worldId, ship.id, ship.size);
@@ -329,6 +329,10 @@ export function addCreature(slot, ship, { popIn = false } = {}) {
   blob.scale.set(ship.size * 0.95, 0.85, 1);
   holder.add(blob);
 
+  // persistent golden ring marks creatures that were already found
+  const isFound = found ?? (Array.isArray(ship.hits) && ship.hits.length >= ship.size);
+  if (isFound) addFoundRing(d, holder, ship);
+
   d.creaturesGroup.add(holder);
   const entry = { model, holder, baseY: 0.1, phase: Math.random() * 7, ship: { ...ship } };
   d.creatures.set(ship.id, entry);
@@ -345,6 +349,24 @@ function padTexture() {
     cachedPadTex = radialTexture("rgba(255,255,255,0.85)", "rgba(255,255,255,0)");
   }
   return cachedPadTex;
+}
+
+function addFoundRing(d, holder, ship) {
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.05, 8, 30),
+    new THREE.MeshStandardMaterial({
+      color: d.world.colors.accent,
+      emissive: d.world.colors.accent,
+      emissiveIntensity: 1.1,
+      flatShading: true,
+    })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.08;
+  ring.scale.set(ship.size * 0.78, 0.9, 1);
+  ring.userData.foundRing = true;
+  holder.add(ring);
+  return ring;
 }
 
 const gridTexCache = new Map();
@@ -560,37 +582,75 @@ export function revealShip(slot, ship) {
     if (cells.has(m.userData.cellKey)) d.marksGroup.remove(m);
   }
   let entry = d.creatures.get(ship.id);
-  if (!entry) entry = addCreature(slot, ship);
+  if (!entry) entry = addCreature(slot, ship, { found: false });
   const holder = entry.holder;
+  const baseRot = holder.rotation.y;
+  const center = shipAnchor(ship);
+  const worldPos = holder.getWorldPosition(new THREE.Vector3());
+  worldPos.y += 0.5;
+
+  // --- themed discovery burst -------------------------------------------
+  const w = d.worldId;
+  if (w === "weltraum") {
+    // machines explode: flash, fiery debris, smoke, shock rings
+    flash(d, center, 0xffa050);
+    ringWave(d, center, 0xff8c1a);
+    ringWave(d, center, 0xffe066);
+    burst(d, worldPos, 0xff8c1a, { count: 60 });
+    burst(d, worldPos, 0xffe066, { count: 40 });
+    burst(d, worldPos, 0x8a8f9a, { count: 26, up: true }); // smoke
+    camKick = 0.7;
+  } else if (w === "ozean" || w === "teich") {
+    // sea friends burst out of a big fountain
+    flash(d, center, d.world.colors.accent);
+    splashColumn(d, center, d.world.colors.splash ?? 0x9fdcff);
+    splashColumn(d, { x: center.x + 0.4, z: center.z }, 0xffffff);
+    ringWave(d, center, 0xffffff);
+    ringWave(d, center, d.world.colors.splash ?? 0x9fdcff);
+    burst(d, worldPos, d.world.colors.splash ?? 0x9fdcff, { count: 55, up: true });
+    burst(d, worldPos, 0xffffff, { count: 25, up: true });
+    camKick = 0.45;
+  } else {
+    // jungle: leaves fly, dust rolls, ground thumps
+    flash(d, center, d.world.colors.accent);
+    ringWave(d, center, 0x8a6a43);
+    burst(d, worldPos, 0x51b06a, { count: 45 });
+    burst(d, worldPos, 0x2e7d3f, { count: 30 });
+    burst(d, worldPos, 0xc9b48f, { count: 22, up: true }); // dust
+    camKick = 0.6;
+  }
+  starburst(d, center);
+  burst(d, worldPos, d.world.colors.accent, { count: 40 });
+
+  // --- creature entrance: leap out, one clean spin, land with a bounce ---
   holder.position.y = -1.6;
-  holder.scale.setScalar(0.55);
+  holder.scale.setScalar(0.5);
+  const leapH = w === "teich" ? 1.6 : 1.1; // hooked fish jumps higher
   tween(
     (v) => {
-      holder.position.y = -1.6 + v * 1.7;
-      holder.scale.setScalar(0.55 + v * 0.45);
+      const lift =
+        v < 0.55
+          ? (v / 0.55) * (1.7 + leapH) - 1.6
+          : 0.1 + Math.cos(((v - 0.55) / 0.45) * Math.PI * 0.5) * leapH;
+      holder.position.y = lift;
+      holder.scale.setScalar(0.5 + Math.min(1, v * 1.6) * 0.5);
+      holder.rotation.y = baseRot + Math.PI * 2 * Ease.inOutQuad(v);
     },
     {
-      dur: 0.9,
-      ease: Ease.outBack,
+      dur: 1.1,
+      ease: Ease.linear,
       onDone: () => {
+        holder.rotation.y = baseRot;
+        holder.position.y = 0.1;
         entry.baseY = 0.1;
-        // celebration hop
-        tween(
-          (v) => {
-            holder.position.y = 0.1 + Math.abs(Math.sin(v * Math.PI * 2)) * 0.5 * (1 - v);
-            holder.rotation.y += 0.05 * Math.sin(v * Math.PI);
-          },
-          { dur: 1.0, ease: Ease.linear }
-        );
+        ringWave(d, center, d.world.colors.accent);
+        const ring = addFoundRing(d, holder, ship);
+        ring.scale.setScalar(0.01);
+        tween((v) => ring.scale.set(ship.size * 0.78 * v, 0.9 * v, v), { dur: 0.4, ease: Ease.outBack });
+        camKick = Math.max(camKick, 0.3);
       },
     }
   );
-  const pos = holder.getWorldPosition(new THREE.Vector3());
-  pos.y += 0.6;
-  burst(d, pos, d.world.colors.accent, { count: 70 });
-  burst(d, pos, 0xffffff, { count: 34 });
-  starburst(d, holder.position);
-  camKick = 0.5;
 }
 
 // ------------------------------------------------------------- particles
@@ -862,7 +922,6 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
   const sameBoard = Math.abs(fromPos.x - cx) < DIORAMA_GAP / 2;
 
   if (sameBoard) {
-    // small reframe on the same board: gentle glide
     camTween = tween(
       (v) => {
         camera.position.lerpVectors(fromPos, pos, v);
@@ -871,7 +930,7 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
         lerpSky(v);
       },
       {
-        dur: 0.5,
+        dur: 0.35,
         ease: Ease.inOutQuad,
         onDone: () => {
           camBase.pos.copy(pos);
@@ -883,30 +942,37 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
     return;
   }
 
-  // Board switch: quick "flip through the sky" — pitch up until only
-  // sky fills the view, hop sideways unseen, then drop down onto the
-  // other board. Short, and no long lateral dash.
-  const upFrom = fromPos.clone().add(new THREE.Vector3(0, 6, 2));
-  const upTo = pos.clone().add(new THREE.Vector3(0, 6, 2));
-  const skyFrom = new THREE.Vector3(fromPos.x, fromPos.y + 70, fromPos.z - 20);
-  const skyTo = new THREE.Vector3(pos.x, pos.y + 70, pos.z - 20);
+  // Board switch: PLATE FLIP. The camera whips over the top of the old
+  // board until it looks straight down (board fills the frame), then the
+  // new board tilts up into view on the other side. Fast and direct —
+  // no journey through the sky.
+  const fromCx = fromPos.x > DIORAMA_GAP / 2 ? DIORAMA_GAP : 0;
+  const fromCenter = new THREE.Vector3(fromCx, 0, 0);
+  const toCenter = new THREE.Vector3(cx, 0, 0);
+  const fromDist = Math.max(9, fromPos.distanceTo(fromCenter));
+  const eTop = Math.PI * 0.49; // nearly straight down
+  const orbit = (center, e, r) =>
+    new THREE.Vector3(center.x, Math.sin(e) * r, Math.cos(e) * r);
+  const fromElev = Math.asin(Math.min(1, Math.max(0, (fromPos.y - 0) / fromDist)));
 
   camTween = tween(
     (v) => {
       if (v < 0.5) {
         const k = Ease.inOutQuad(v * 2);
-        camera.position.lerpVectors(fromPos, upFrom, k);
-        camBase.look.lerpVectors(fromLook, skyFrom, k * k);
+        const e = fromElev + (eTop - fromElev) * k;
+        camera.position.copy(orbit(fromCenter, e, fromDist));
+        camBase.look.lerpVectors(fromLook, fromCenter, k);
       } else {
         const k = Ease.inOutQuad((v - 0.5) * 2);
-        camera.position.lerpVectors(upTo, pos, k);
-        camBase.look.lerpVectors(skyTo, look, 1 - (1 - k) * (1 - k));
+        const e = eTop + (elevation - eTop) * k;
+        camera.position.copy(orbit(toCenter, e, dist));
+        camBase.look.lerpVectors(toCenter, look, k);
       }
       camera.lookAt(camBase.look);
       lerpSky(v);
     },
     {
-      dur: 0.85,
+      dur: 0.5,
       ease: Ease.linear,
       onDone: () => {
         camBase.pos.copy(pos);
