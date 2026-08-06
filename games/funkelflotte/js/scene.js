@@ -36,6 +36,37 @@ let drag = null;
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
+// free-look: user-controlled orbit/tilt/zoom around the focused board
+const orbit = { azim: 0, elev: null, zoom: 1 };
+const pointers = new Map();
+let gesture = null; // 'ship' | 'orbit' | 'pinch' | null
+let pinchStart = null;
+
+function clampNum(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+function defaultElevation() {
+  return camera.aspect < 0.8 ? 0.7 : 0.62;
+}
+
+// camera pose for a slot from framing + user orbit state
+function pose(slot) {
+  const cx = dioramaX(slot);
+  const e = clampNum(orbit.elev ?? defaultElevation(), 0.42, 1.35);
+  const a = clampNum(orbit.azim, -1.1, 1.1);
+  // tilting low zooms in, top-down pulls back — plus manual pinch zoom
+  const angleZoom = 0.78 + 0.5 * ((e - 0.42) / (1.35 - 0.42));
+  const dist = framingDistance() * angleZoom * clampNum(orbit.zoom, 0.55, 1.5);
+  const posV = new THREE.Vector3(
+    cx + dist * Math.cos(e) * Math.sin(a),
+    dist * Math.sin(e),
+    dist * Math.cos(e) * Math.cos(a)
+  );
+  const lookV = new THREE.Vector3(cx, -0.2, -2.0 * Math.cos(a));
+  return { pos: posV, look: lookV, elev: e, dist };
+}
+
 // --------------------------------------------------------------- helpers
 
 export function radialTexture(inner = "rgba(255,255,255,1)", outer = "rgba(255,255,255,0)", size = 128) {
@@ -271,6 +302,11 @@ export function resetScene() {
   tapHandler = null;
   placement = null;
   drag = null;
+  orbit.azim = 0;
+  orbit.elev = null;
+  orbit.zoom = 1;
+  pointers.clear();
+  gesture = null;
 }
 
 function shipAnchor(ship) {
@@ -889,10 +925,11 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
   const wasFocused = focused;
   focused = slot;
   const cx = dioramaX(slot);
-  const dist = framingDistance();
-  const elevation = camera.aspect < 0.8 ? 0.7 : 0.62;
-  const pos = new THREE.Vector3(cx, Math.sin(elevation) * dist, Math.cos(elevation) * dist);
-  const look = new THREE.Vector3(cx, -0.2, -2.0);
+  const P = pose(slot);
+  const dist = P.dist;
+  const elevation = P.elev;
+  const pos = P.pos;
+  const look = P.look;
 
   const d = dioramas[slot];
   const world = d ? d.world : getWorld("ozean");
@@ -1021,10 +1058,16 @@ export function debugCamera() {
 
 function idleCamera() {
   if (camTween) return;
+  const P = pose(focused);
   const kick = Math.sin(clockT * 42) * camKick;
-  camera.position.x = camBase.pos.x + Math.sin(clockT * 0.4) * 0.35 + kick;
-  camera.position.y = camBase.pos.y + Math.sin(clockT * 0.55) * 0.22 + kick * 0.6;
-  camera.lookAt(camBase.look);
+  camera.position.set(
+    P.pos.x + Math.sin(clockT * 0.4) * 0.3 + kick,
+    P.pos.y + Math.sin(clockT * 0.55) * 0.2 + kick * 0.6,
+    P.pos.z
+  );
+  camBase.pos.copy(P.pos);
+  camBase.look.copy(P.look);
+  camera.lookAt(P.look);
 }
 
 export function currentFocus() {
@@ -1059,69 +1102,124 @@ function raycastTiles(e, slot) {
 }
 
 function onPointerDown(e) {
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
+  canvas.setPointerCapture(e.pointerId);
+
+  if (pointers.size === 2) {
+    // second finger: switch to pinch zoom
+    const [p1, p2] = [...pointers.values()];
+    pinchStart = { dist: Math.hypot(p1.x - p2.x, p1.y - p2.y), zoom: orbit.zoom };
+    gesture = "pinch";
+    drag = null;
+    return;
+  }
+
   if (placement) {
     const cell = raycastTiles(e, placement.slot);
-    if (!cell) return;
-    const d = dioramas[placement.slot];
-    for (const [, entry] of d.creatures) {
-      const s = entry.ship;
-      for (let i = 0; i < s.size; i += 1) {
-        const cx = s.dir === "h" ? s.x + i : s.x;
-        const cy = s.dir === "v" ? s.y + i : s.y;
-        if (cx === cell.x && cy === cell.y) {
-          drag = {
-            entry,
-            grabDx: cell.x - s.x,
-            grabDy: cell.y - s.y,
-            startX: e.clientX,
-            startY: e.clientY,
-            moved: false,
-            previewX: s.x,
-            previewY: s.y,
-          };
-          canvas.setPointerCapture(e.pointerId);
-          return;
+    if (cell) {
+      const d = dioramas[placement.slot];
+      for (const [, entry] of d.creatures) {
+        const sh = entry.ship;
+        for (let i = 0; i < sh.size; i += 1) {
+          const cx = sh.dir === "h" ? sh.x + i : sh.x;
+          const cy = sh.dir === "v" ? sh.y + i : sh.y;
+          if (cx === cell.x && cy === cell.y) {
+            drag = {
+              entry,
+              grabDx: cell.x - sh.x,
+              grabDy: cell.y - sh.y,
+              startX: e.clientX,
+              startY: e.clientY,
+              moved: false,
+              previewX: sh.x,
+              previewY: sh.y,
+            };
+            gesture = "ship";
+            return;
+          }
         }
       }
     }
   }
+  // empty space (or battle board): candidate for orbit / tap
+  gesture = "maybe-orbit";
 }
 
 function onPointerMove(e) {
-  if (!drag || !placement) return;
-  if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 10) return;
-  drag.moved = true;
-  const cell = raycastTiles(e, placement.slot);
-  if (!cell) return;
-  const s = drag.entry.ship;
-  const maxX = GRID - (s.dir === "h" ? s.size : 1);
-  const maxY = GRID - (s.dir === "v" ? s.size : 1);
-  drag.previewX = Math.max(0, Math.min(maxX, cell.x - drag.grabDx));
-  drag.previewY = Math.max(0, Math.min(maxY, cell.y - drag.grabDy));
-  const candidate = { ...s, x: drag.previewX, y: drag.previewY };
-  moveCreature(placement.slot, { ...candidate, id: s.id }, { animate: false });
-  drag.entry.ship = s;
-  const ok = placement.canPlaceAt(s.id, drag.previewX, drag.previewY, s.dir);
-  setCreatureInvalid(placement.slot, s.id, !ok);
-}
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x;
+  const dy = e.clientY - p.y;
+  p.x = e.clientX;
+  p.y = e.clientY;
 
-function onPointerUp(e) {
-  if (drag && placement) {
-    const { entry, moved, previewX, previewY } = drag;
-    const s = entry.ship;
-    drag = null;
-    setCreatureInvalid(placement.slot, s.id, false);
-    if (moved) {
-      placement.onMove(s.id, previewX, previewY, s.dir);
-    } else {
-      placement.onRotate(s.id);
+  if (gesture === "pinch" && pointers.size === 2 && pinchStart) {
+    const [p1, p2] = [...pointers.values()];
+    const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    if (pinchStart.dist > 10) {
+      orbit.zoom = clampNum(pinchStart.zoom * (pinchStart.dist / d), 0.55, 1.5);
     }
     return;
   }
+
+  if (gesture === "ship" && drag && placement) {
+    if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 10) return;
+    drag.moved = true;
+    const cell = raycastTiles(e, placement.slot);
+    if (!cell) return;
+    const sh = drag.entry.ship;
+    const maxX = GRID - (sh.dir === "h" ? sh.size : 1);
+    const maxY = GRID - (sh.dir === "v" ? sh.size : 1);
+    drag.previewX = Math.max(0, Math.min(maxX, cell.x - drag.grabDx));
+    drag.previewY = Math.max(0, Math.min(maxY, cell.y - drag.grabDy));
+    const candidate = { ...sh, x: drag.previewX, y: drag.previewY };
+    moveCreature(placement.slot, { ...candidate, id: sh.id }, { animate: false });
+    drag.entry.ship = sh;
+    const ok = placement.canPlaceAt(sh.id, drag.previewX, drag.previewY, sh.dir);
+    setCreatureInvalid(placement.slot, sh.id, !ok);
+    return;
+  }
+
+  if (gesture === "maybe-orbit" || gesture === "orbit") {
+    const total = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
+    if (gesture === "maybe-orbit" && total < 9) return;
+    gesture = "orbit";
+    // drag to look around: horizontal = orbit, vertical = tilt
+    orbit.azim = clampNum(orbit.azim - dx * 0.0045, -1.1, 1.1);
+    orbit.elev = clampNum((orbit.elev ?? defaultElevation()) + dy * 0.004, 0.42, 1.35);
+  }
+}
+
+function onPointerUp(e) {
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinchStart = null;
+
+  if (gesture === "ship" && drag && placement) {
+    const { entry, moved, previewX, previewY } = drag;
+    const sh = entry.ship;
+    drag = null;
+    gesture = null;
+    setCreatureInvalid(placement.slot, sh.id, false);
+    if (moved) {
+      placement.onMove(sh.id, previewX, previewY, sh.dir);
+    } else {
+      placement.onRotate(sh.id);
+    }
+    return;
+  }
+
+  const wasOrbit = gesture === "orbit" || gesture === "pinch";
+  if (pointers.size === 0) gesture = null;
   drag = null;
-  if (tapHandler) {
-    const cell = raycastTiles(e, tapHandler.slot);
-    if (cell) tapHandler.handler(cell.x, cell.y);
+  if (wasOrbit) return; // a camera gesture is never a shot
+
+  if (tapHandler && p) {
+    const moved = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
+    if (moved < 9) {
+      const cell = raycastTiles(e, tapHandler.slot);
+      if (cell) tapHandler.handler(cell.x, cell.y);
+    }
   }
 }
 
