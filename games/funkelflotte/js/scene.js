@@ -883,7 +883,7 @@ export function renderTreasures(slot, positions) {
   for (const t of positions || []) {
     const tile = d.tiles.get(`${t.x},${t.y}`);
     if (!tile) continue;
-    const chest = buildTreasureChest();
+    const chest = buildTreasureChest(d.worldId);
     chest.position.set(tile.position.x, 0.05, tile.position.z);
     chest.rotation.y = 0.4;
     chest.userData.phase = Math.random() * 7;
@@ -932,18 +932,62 @@ export function openTreasure(slot, x, y) {
 
 // ------------------------------------------------------ power effects
 
+// screen-space anchor of a cell (for DOM flight animations)
+export function cellScreenPos(slot, x, y) {
+  const d = dioramas[slot];
+  const tile = d?.tiles.get(`${x},${y}`);
+  if (!tile) return null;
+  const v = tile.getWorldPosition(new THREE.Vector3());
+  v.y += 0.5;
+  v.project(camera);
+  return {
+    x: (v.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-v.y * 0.5 + 0.5) * window.innerHeight,
+  };
+}
+
 // each power projects its purpose with its own signature effect
 
 export function waveSweep(slot, y) {
   const d = dioramas[slot];
   if (!d) return;
+  // a real water ridge rolls across the row, splashes in its wake
+  const ridge = new THREE.Mesh(
+    new THREE.SphereGeometry(0.55, 12, 8),
+    new THREE.MeshBasicMaterial({
+      color: d.world.colors.splash ?? 0x9fdcff,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+    })
+  );
+  const z = y - GRID / 2 + 0.5;
+  ridge.scale.set(1.2, 0.7, 1.6);
+  ridge.position.set(-GRID / 2 - 0.6, 0.25, z);
+  d.root.add(ridge);
+  tween(
+    (v) => {
+      ridge.position.x = -GRID / 2 - 0.6 + v * (GRID + 1.2);
+      ridge.position.y = 0.25 + Math.sin(v * Math.PI * 4) * 0.08;
+      ridge.material.opacity = v < 0.85 ? 0.75 : 0.75 * (1 - (v - 0.85) / 0.15);
+    },
+    {
+      dur: 0.9,
+      ease: Ease.linear,
+      onDone: () => {
+        d.root.remove(ridge);
+        ridge.geometry.dispose();
+        ridge.material.dispose();
+      },
+    }
+  );
   for (let x = 0; x < GRID; x += 1) {
     const tile = d.tiles.get(`${x},${y}`);
     if (!tile) continue;
     setTimeout(() => {
       splashColumn(d, tile.position, d.world.colors.splash ?? 0x9fdcff);
       if (x % 2 === 0) ringWave(d, tile.position, 0xffffff);
-    }, x * 90);
+    }, 60 + x * 100);
   }
   camKick = 0.3;
 }
@@ -958,6 +1002,39 @@ export function radarPing(slot, x, y) {
   for (let i = 0; i < 3; i += 1) {
     setTimeout(() => ringWave(d, center, 0x7dff9a), i * 220);
   }
+  // rotating radar sweep beam, like the real thing
+  const beam = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.6, 0.5),
+    new THREE.MeshBasicMaterial({
+      map: radialTexture("rgba(125,255,154,0.9)", "rgba(125,255,154,0)"),
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  beam.rotation.x = -Math.PI / 2;
+  beam.position.set(center.x, 0.22, center.z);
+  const pivot = new THREE.Group();
+  pivot.position.set(center.x, 0, center.z);
+  beam.position.set(1.3, 0.22, 0);
+  pivot.add(beam);
+  d.root.add(pivot);
+  tween(
+    (v) => {
+      pivot.rotation.y = v * Math.PI * 4;
+      beam.material.opacity = v < 0.8 ? 0.9 : 0.9 * (1 - (v - 0.8) / 0.2);
+    },
+    {
+      dur: 1.4,
+      ease: Ease.linear,
+      onDone: () => {
+        d.root.remove(pivot);
+        beam.geometry.dispose();
+        beam.material.dispose();
+      },
+    }
+  );
 }
 
 export function spotlight(slot, x, y) {
@@ -997,6 +1074,36 @@ export function clockRipple(slot) {
   flash(d, { x: 0, z: 0 }, 0x9fdcff);
   for (let i = 0; i < 2; i += 1) setTimeout(() => ringWave(d, { x: 0, z: 0 }, 0xffd447), i * 240);
   starburst(d, { x: 0, z: 0 });
+  // golden sparks spiral upward like a rewinding clock
+  const sparks = [];
+  for (let i = 0; i < 10; i += 1) {
+    const spr = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: padTexture(), color: 0xffd447, transparent: true, depthWrite: false })
+    );
+    spr.scale.setScalar(0.3);
+    d.root.add(spr);
+    sparks.push({ spr, off: (i / 10) * Math.PI * 2 });
+  }
+  tween(
+    (v) => {
+      for (const s of sparks) {
+        const a = s.off + v * 5;
+        const r = 2.6 * (1 - v * 0.65);
+        s.spr.position.set(Math.cos(a) * r, 0.3 + v * 2.2, Math.sin(a) * r);
+        s.spr.material.opacity = 1 - v;
+      }
+    },
+    {
+      dur: 1.3,
+      ease: Ease.outQuad,
+      onDone: () => {
+        for (const s of sparks) {
+          d.root.remove(s.spr);
+          s.spr.material.dispose();
+        }
+      },
+    }
+  );
 }
 
 export function tornadoAt(slot, x, y) {
@@ -1050,10 +1157,40 @@ export function bellToll(slot) {
 export function cloverRain(slot) {
   const d = dioramas[slot];
   if (!d) return;
-  const pos = new THREE.Vector3(d.root.position.x, 3.4, 0);
-  burst(d, pos, 0x6fd087, { count: 60, up: false });
-  burst(d, pos, 0xa7e8b8, { count: 30, up: false });
   flash(d, { x: 0, z: 0 }, 0x6fd087);
+  // real little leaves flutter down over the whole board
+  const leafM = new THREE.MeshBasicMaterial({ color: 0x5fc27a, transparent: true, side: THREE.DoubleSide });
+  const leaves = [];
+  for (let i = 0; i < 22; i += 1) {
+    const leaf = new THREE.Mesh(new THREE.CircleGeometry(0.14, 6), leafM);
+    leaf.scale.y = 0.6;
+    leaf.position.set((Math.random() - 0.5) * SPAN, 3.2 + Math.random() * 1.6, (Math.random() - 0.5) * SPAN);
+    leaf.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+    d.root.add(leaf);
+    leaves.push({ leaf, sway: 1 + Math.random() * 2, ph: Math.random() * 7, vy: 1.1 + Math.random() * 0.8 });
+  }
+  tween(
+    (v) => {
+      for (const L of leaves) {
+        L.leaf.position.y -= L.vy * 0.016 * 2.2;
+        L.leaf.position.x += Math.sin(clockT * L.sway + L.ph) * 0.02;
+        L.leaf.rotation.z += 0.05;
+        L.leaf.rotation.x += 0.03;
+      }
+      leafM.opacity = v < 0.8 ? 1 : 1 - (v - 0.8) / 0.2;
+    },
+    {
+      dur: 2.2,
+      ease: Ease.linear,
+      onDone: () => {
+        for (const L of leaves) {
+          d.root.remove(L.leaf);
+          L.leaf.geometry.dispose();
+        }
+        leafM.dispose();
+      },
+    }
+  );
 }
 
 export function starComet(slot, x, y, delay = 0) {

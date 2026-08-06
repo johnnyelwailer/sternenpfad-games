@@ -125,9 +125,11 @@ export function worldPower(worldId) {
   return { ozean: "welle", weltraum: "radar", dino: "trommel", teich: "schild" }[worldId] ?? "fernglas";
 }
 
-export function drawPower(rng = Math.random, hand = []) {
-  // never hand out a second permanent clover
-  const pool = hand.includes("klee") ? POOL.filter((k) => k !== "klee") : POOL;
+export function drawPower(rng = Math.random, hand = [], { instant = false } = {}) {
+  let pool = hand.includes("klee") ? POOL.filter((k) => k !== "klee") : POOL;
+  // treasures auto-fire their power on the spot — the salvo would grant
+  // extra shots there, so it only ever comes from recharges
+  if (instant) pool = pool.filter((k) => k !== "salve");
   return pool[Math.floor(rng() * pool.length)];
 }
 

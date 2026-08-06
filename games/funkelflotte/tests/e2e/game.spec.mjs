@@ -11,6 +11,12 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => !!window.__FF);
 });
 
+// title → robo game (difficulty picker in between)
+async function startRobo(page) {
+  await page.locator('[data-mode="ai"]').click();
+  await page.locator('[data-robo="leicht"]').click();
+}
+
 async function firstUnknownCell(page, boardIdx) {
   return page.evaluate((idx) => {
     const marks = window.__FF.marksOn(idx) || {};
@@ -44,7 +50,7 @@ test("title screen shows worlds and modes, world picking re-themes", async ({ pa
 });
 
 test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async ({ page }) => {
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await expect(page.locator("#btn-place-done")).toBeVisible();
   const shipCount = await page.evaluate(() => window.__FF.placementBoard().ships.length);
   expect(shipCount).toBe(5);
@@ -108,13 +114,13 @@ test("customizer lives in the aquarium; styles carry into battles", async ({ pag
 
   // the fleet wears the aquarium styles in the next battle
   await page.locator("#btn-home").click();
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   const applied = await page.evaluate(() => window.__FF.state.customs[0]);
   expect(applied[0]).toEqual({ tint: 1, hat: 1 });
 });
 
 test("placement: world can be swapped where Stil used to be", async ({ page }) => {
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await expect(page.locator("#btn-world")).toBeVisible();
   await expect(page.locator("#btn-opts")).toBeVisible();
   await page.locator("#btn-world").click();
@@ -131,7 +137,7 @@ test("placement: world can be swapped where Stil used to be", async ({ page }) =
 });
 
 test("robo game: my shots mark the enemy board, robo answers on mine", async ({ page }) => {
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await page.locator("#btn-place-done").click();
   await expect(page.locator("#status")).toContainText("Du bist dran", { timeout: 10000 });
 
@@ -151,6 +157,14 @@ test("robo game: my shots mark the enemy board, robo answers on mine", async ({ 
       timeout: 20000,
     })
     .toBeGreaterThan(0);
+});
+
+test("robo difficulty picker: schlau robo is selectable", async ({ page }) => {
+  await page.locator('[data-mode="ai"]').click();
+  await expect(page.locator("#screen-robo")).toHaveClass(/active/);
+  await page.locator('[data-robo="schlau"]').click();
+  await expect(page.locator("#btn-place-done")).toBeVisible();
+  expect(await page.evaluate(() => window.__FF.state.aiState.difficulty)).toBe("schlau");
 });
 
 async function waitMyTurn(page) {
@@ -212,7 +226,7 @@ test("feature flags: new features can be switched off via URL", async ({ page })
   await expect(page.locator("#rule-decoy")).toBeHidden();
   await expect(page.locator("#opt-powers")).toBeHidden();
   await page.locator("#btn-options-back").click();
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await expect(page.locator("#btn-place-done")).toBeVisible();
   await expect(page.locator("#btn-style")).toBeHidden();
   // defaults stay on without the override
@@ -235,7 +249,7 @@ test("Zauber-Kräfte: legend explains, world power + treasure + powers work", as
   await page.locator("#btn-options-back").click();
 
   await page.evaluate(() => window.__FF.setFast());
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await page.locator("#btn-place-done").click();
   await waitMyTurn(page);
 
@@ -249,16 +263,22 @@ test("Zauber-Kräfte: legend explains, world power + treasure + powers work", as
     /^data:image\/png/
   );
 
-  // dig up the visible treasure: a power arrives, but it costs the turn
+  // dig up the visible treasure: the spell fires on the spot, then the
+  // turn passes — nothing is stored in the hand
   const t = await page.evaluate(() => window.__FF.state.boards[1].treasures[0]);
   await page.evaluate(([x, y]) => window.__FF.tap(x, y), [t.x, t.y]);
   await expect
-    .poll(() => page.evaluate(() => window.__FF.state.powers[0].hand.length))
-    .toBe(2);
-  await expect
     .poll(() => page.evaluate(() => window.__FF.state.boards[1].treasures.length))
     .toBe(0);
-  await waitMyTurn(page); // the dig ended our turn — robo answered
+  await page.waitForTimeout(600);
+  const pending = await page.evaluate(() => window.__FF.state.pendingPower);
+  if (pending) {
+    // the freed spell wants a target — feed it one
+    const [cell] = await missCells(page, 1);
+    await page.evaluate(([x, y]) => window.__FF.tap(x, y), [cell.x, cell.y]);
+  }
+  await waitMyTurn(page); // spell resolved, turn cycled back to us
+  expect(await page.evaluate(() => window.__FF.state.powers[0].hand)).toEqual(["welle"]);
 
   // fernglas peeks a creature cell without marking it
   await page.evaluate(() => window.__FF.power("fernglas"));
@@ -298,7 +318,7 @@ test("Zauber-Kräfte: the option really disables powers", async ({ page }) => {
   await page.locator("#opt-powers").click({ force: true });
   await page.locator("#btn-options-back").click();
   await page.evaluate(() => window.__FF.setFast());
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await page.locator("#btn-place-done").click();
   await waitMyTurn(page);
   expect(await page.evaluate(() => window.__FF.state.powers[0])).toBeNull();
@@ -312,7 +332,7 @@ test("extra rules: sonar distances and the decoy balloon", async ({ page }) => {
     window.__FF.setFast();
     window.__FF.setRules({ decoy: true, sonar: true });
   });
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
 
   // my own board got a balloon to place
   expect(await page.evaluate(() => !!window.__FF.placementBoard().decoy)).toBe(true);
@@ -341,7 +361,7 @@ test("extra rules: ghost mode fades old miss marks", async ({ page }) => {
     window.__FF.setFast();
     window.__FF.setRules({ decoy: false, sonar: false, ghost: true });
   });
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await page.locator("#btn-place-done").click();
   await waitMyTurn(page);
 
@@ -769,7 +789,7 @@ test("works offline after the first visit (PWA)", async ({ browser }) => {
   await page.reload();
   await expect(page.locator("h1.logo")).toContainText("Funkel-Flotte");
   await page.waitForFunction(() => !!window.__FF);
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await expect(page.locator("#btn-place-done")).toBeVisible();
   const ships = await page.evaluate(() => window.__FF.placementBoard().ships.length);
   expect(ships).toBe(5);
@@ -910,7 +930,7 @@ test("online: full cross-world P2P game with rematch", async ({ browser }) => {
 test("rapid double taps fire only one shot", async ({ page }) => {
   test.setTimeout(120000);
   await page.evaluate(() => window.__FF.setFast());
-  await page.locator('[data-mode="ai"]').click();
+  await startRobo(page);
   await page.locator("#btn-place-done").click();
   await waitMyTurn(page);
   const cells = await missCells(page, 2);

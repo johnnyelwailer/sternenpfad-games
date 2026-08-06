@@ -402,7 +402,8 @@ function startMode(mode) {
   if (mode === "ai") {
     S.worlds[1] = randomOtherWorld(S.worlds[0]);
     S.boards = [newBoardWithFleet(), newBoardWithFleet()];
-    S.aiState = createAiState("leicht");
+    S.aiState = createAiState(S.forceRoboLevel ?? S.roboLevel ?? "leicht");
+    S.forceRoboLevel = null;
     startPlacement(0);
   } else if (mode === "hotseat") {
     S.boards = [newBoardWithFleet(), newBoardWithFleet()];
@@ -776,23 +777,70 @@ function passiveBadge(kind, label) {
   return b;
 }
 
-// big reveal card whenever a power arrives — icon, name, what it does
+// reveal card whenever a power arrives — big icon + name; the effect
+// itself is the explanation
 let gainTimer = null;
 function showPowerGain(kind, why) {
   const p = PW.POWERS[kind];
   const card = $("#power-gain");
   card.innerHTML = `<div class="gain-why">${why}</div>
     <img alt="" src="${SCENE.powerIconUrl(kind, 192)}" />
-    <div class="gain-name">${p.name}</div>
-    <div class="gain-desc">${p.desc}</div>`;
+    <div class="gain-name">${p.name}</div>`;
   card.hidden = false;
   clearTimeout(gainTimer);
   gainTimer = setTimeout(() => {
     card.hidden = true;
-  }, FAST ? 300 : 3200);
+  }, FAST ? 300 : 2600);
   card.onclick = () => {
     card.hidden = true;
   };
+}
+
+// the dug-up power sails from the chest to the middle of the screen,
+// then fires on the spot
+function powerFlyOut(kind, slot, x, y, onDone) {
+  const from = SCENE.cellScreenPos(slot, x, y) ?? {
+    x: window.innerWidth / 2,
+    y: window.innerHeight * 0.6,
+  };
+  const img = document.createElement("img");
+  img.className = "power-fly";
+  img.alt = "";
+  img.src = SCENE.powerIconUrl(kind, 192);
+  img.style.left = `${from.x}px`;
+  img.style.top = `${from.y}px`;
+  document.body.appendChild(img);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      img.style.left = `${window.innerWidth / 2}px`;
+      img.style.top = `${window.innerHeight * 0.3}px`;
+      img.classList.add("landed");
+    });
+  });
+  setTimeout(() => {
+    img.remove();
+    onDone();
+  }, FAST ? 100 : 1100);
+}
+
+// treasures cast their power immediately — cause and effect in one go
+function autoUsePower(kind) {
+  const p = PW.POWERS[kind];
+  showPowerGain(kind, "💎 Schatz-Zauber");
+  if (p.target === "none") {
+    executePower(kind, null);
+    return;
+  }
+  S.pendingPower = kind;
+  S.inputLocked = false; // the next tap is the spell's target
+  status(`✨ Tipp ein Feld — der Schatz-Zauber wartet!`);
+}
+
+function dispatchTreasureFollowup() {
+  if (!S.treasureFollowup) return;
+  const f = S.treasureFollowup;
+  S.treasureFollowup = null;
+  setTimeout(f, FAST ? 140 : 1700);
 }
 
 function consumePower(kind) {
@@ -881,6 +929,7 @@ function executePower(kind, target) {
   const enemySlot = slotFor(other(my));
   const st = myPowers();
   const p = PW.POWERS[kind];
+  SND.powerCast(CAST_SOUND[kind] ?? "info");
 
   if (kind === "welle") {
     consumePower(kind);
@@ -960,6 +1009,7 @@ function executePower(kind, target) {
       toast("Kein Platz zum Wirbeln!");
       S.pendingPower = null;
       renderPowers();
+      dispatchTreasureFollowup();
       return;
     }
     consumePower(kind);
@@ -976,6 +1026,7 @@ function executePower(kind, target) {
       toast("Kein freies Plätzchen für den Ballon!");
       S.pendingPower = null;
       renderPowers();
+      dispatchTreasureFollowup();
       return;
     }
     consumePower(kind);
@@ -988,7 +1039,25 @@ function executePower(kind, target) {
     runSalvo(target);
   }
   renderPowers();
+  dispatchTreasureFollowup();
 }
+
+// activation timbre by temperament
+const CAST_SOUND = {
+  welle: "info",
+  radar: "info",
+  fernglas: "info",
+  trommel: "info",
+  kompass: "info",
+  glocke: "info",
+  klee: "defense",
+  doppel: "attack",
+  zeit: "defense",
+  schild: "defense",
+  wirbel: "move",
+  ballon: "move",
+  salve: "attack",
+};
 
 // three shots at once, then the turn passes — the defender resolves
 function runSalvo(target) {
@@ -1182,15 +1251,19 @@ function handleTap(x, y) {
   // the result of the first shot is still playing out
   S.inputLocked = true;
 
-  // dug up the treasure: a power for a turn — the chest was worth it
+  // dug up the treasure: it casts its power on the spot, then the turn passes
   if (res.result === E.MISS && powersEnabled() && PW.treasureAt(board, x, y)) {
     board.treasures = board.treasures.filter((t) => !(t.x === x && t.y === y));
     SCENE.applyShotQuiet(slotFor(targetIdx), x, y, "miss");
     SCENE.openTreasure(slotFor(targetIdx), x, y);
-    SND.fanfare();
-    gainPower(S.turn, PW.drawPower(Math.random, myPowers()?.hand ?? []), "💎 Schatz geborgen");
-    status("💎 Schatz geborgen! Das war deinen Zug wert.");
-    setTimeout(() => afterMyShot({ result: E.MISS, gameOver: false }), FAST ? 80 : 1800);
+    SND.treasure();
+    const kind = PW.drawPower(Math.random, [], { instant: true });
+    S.treasureFollowup = () => afterMyShot({ result: E.MISS, gameOver: false });
+    setTimeout(
+      () => powerFlyOut(kind, slotFor(targetIdx), x, y, () => autoUsePower(kind)),
+      FAST ? 40 : 700
+    );
+    status("💎 Der Schatz entfesselt einen Zauber!");
     return;
   }
 
@@ -1232,7 +1305,7 @@ function showShotResult(idx, x, y, res, done) {
         : `🎈 PENG! ${opp} ist auf deinen Schwindel-Ballon reingefallen!`
     );
   } else if (res.result === E.MISS) {
-    SND.plop();
+    SND.missWorld(S.worlds[idx]);
     status(
       viewerIsShooter
         ? sonarDist != null
@@ -1241,10 +1314,12 @@ function showShotResult(idx, x, y, res, done) {
         : `Puh! ${opp} hat nichts gefunden.`
     );
   } else if (res.result === E.HIT) {
-    SND.sparkle();
+    if (viewerIsShooter) SND.hitEnemy(S.worlds[idx]);
+    else SND.hitOwn();
     status(viewerIsShooter ? `${world.words.hit} Nochmal!` : `Oh nein! ${opp} hat was entdeckt …`);
   } else if (res.result === E.SUNK) {
-    SND.fanfare();
+    if (viewerIsShooter) SND.sunkEnemy(S.worlds[idx]);
+    else SND.sunkOwn();
     SCENE.revealShip(slot, res.ship);
     SCENE.revealWater(slot, res.revealed);
     status(
@@ -1333,7 +1408,40 @@ function scheduleRoboTurn() {
   setTimeout(() => {
     if (S.phase !== "battle" || S.mode !== "ai" || S.turn !== 1) return;
     const myBoard = S.boards[0];
-    const shot = nextShot(S.aiState, myBoard);
+    const schlau = S.aiState.difficulty === "schlau";
+    const st1 = powersEnabled() ? S.powers[1] : null;
+
+    // the clever robo actually casts its spells
+    if (schlau && st1) {
+      const shieldIdx = st1.hand.indexOf("schild");
+      const zeitIdx = st1.hand.indexOf("zeit");
+      const doppelIdx = st1.hand.indexOf("doppel");
+      if (shieldIdx >= 0 && !st1.shield && S.boards[1].ships.some((s) => s.hits.length > 0 && !E.isSunk(s))) {
+        st1.hand.splice(shieldIdx, 1);
+        st1.shield = true;
+        SCENE.shieldFlash("enemy");
+        SND.powerCast("defense");
+        toast("🤖 Robo wirkt einen Schutz-Zauber!");
+      } else if (zeitIdx >= 0 && S.extraTurn === null && Math.random() < 0.6) {
+        st1.hand.splice(zeitIdx, 1);
+        S.extraTurn = 1;
+        SCENE.clockRipple("mine");
+        SND.powerCast("defense");
+        toast("🤖 Robo wirkt einen Zeitzauber!");
+      } else if (doppelIdx >= 0 && !st1.doubleShot && Math.random() < 0.6) {
+        st1.hand.splice(doppelIdx, 1);
+        st1.doubleShot = true;
+        SND.powerCast("attack");
+        toast("🤖 Robo zielt doppelt!");
+      }
+    }
+
+    // the clever robo also goes for your visible treasure chest
+    let shot = null;
+    if (schlau && myBoard.treasures?.length && (st1?.hand.length ?? 0) < PW.HAND_MAX && Math.random() < 0.35) {
+      shot = { ...myBoard.treasures[0] };
+    }
+    if (!shot) shot = nextShot(S.aiState, myBoard);
     if (!shot) return;
 
     // my lily-pad shield bounces robo's shot — cell stays secret
@@ -1352,12 +1460,18 @@ function scheduleRoboTurn() {
 
     const res = E.fire(myBoard, shot.x, shot.y);
 
-    // robo digs up my treasure: it is gone, and robo's turn ends
+    // robo digs up my treasure: gone — and a clever robo pockets a spell
     if (res.result === E.MISS && powersEnabled() && PW.treasureAt(myBoard, shot.x, shot.y)) {
       myBoard.treasures = myBoard.treasures.filter((t) => !(t.x === shot.x && t.y === shot.y));
       SCENE.applyShotQuiet("mine", shot.x, shot.y, "miss");
       SCENE.openTreasure("mine", shot.x, shot.y);
-      status("💎 Oh nein, Robo hat deinen Schatz stibitzt!");
+      SND.treasure();
+      if (schlau && st1 && st1.hand.length < PW.HAND_MAX) {
+        st1.hand.push(PW.drawPower(Math.random, st1.hand, { instant: true }));
+        status("💎 Robo hat deinen Schatz geborgen und einen Zauber eingesteckt!");
+      } else {
+        status("💎 Oh nein, Robo hat deinen Schatz stibitzt!");
+      }
       setTimeout(() => {
         S.turn = 0;
         S.inputLocked = false;
@@ -1373,6 +1487,12 @@ function scheduleRoboTurn() {
         return;
       }
       if (res.result === E.DECOY) S.extraTurn = 0; // robo popped my balloon
+      if (res.result === E.MISS && powersEnabled() && S.powers[1]?.doubleShot) {
+        S.powers[1].doubleShot = false;
+        status("🤖 Robo zielt gleich nochmal …");
+        scheduleRoboTurn();
+        return;
+      }
       if (res.result === E.MISS && S.extraTurn === 1) {
         S.extraTurn = null;
         status("Robo hat einen Extra-Zug und sucht weiter …");
@@ -1783,7 +1903,7 @@ function handleNetMessage(msg) {
 
       const res = E.fire(S.boards[0], msg.x, msg.y);
 
-      // they dug up my treasure — they get a power, their turn ends
+      // they dug up my treasure — everyone sees it; I wait for their spell
       if (res.result === E.MISS && powersEnabled() && PW.treasureAt(S.boards[0], msg.x, msg.y)) {
         S.boards[0].treasures = S.boards[0].treasures.filter(
           (t) => !(t.x === msg.x && t.y === msg.y)
@@ -1791,14 +1911,8 @@ function handleNetMessage(msg) {
         S.net.send({ t: "result", x: msg.x, y: msg.y, result: E.MISS, treasure: true });
         SCENE.applyShotQuiet("mine", msg.x, msg.y, "miss");
         SCENE.openTreasure("mine", msg.x, msg.y);
-        status("💎 Dein Mitspieler hat deinen Schatz geborgen!");
-        setTimeout(() => {
-          if (S.phase !== "battle") return;
-          S.turn = 0;
-          S.inputLocked = false;
-          beginTurn();
-          toast("Du bist dran!");
-        }, FAST ? 80 : 1800);
+        SND.treasure();
+        status("💎 Dein Mitspieler hat deinen Schatz geborgen — sein Zauber wirkt …");
         break;
       }
 
@@ -1866,14 +1980,19 @@ function handleNetMessage(msg) {
         S.shadow.marks[E.key(msg.x, msg.y)] = E.MISS;
         SCENE.applyShotQuiet("enemy", msg.x, msg.y, "miss");
         SCENE.openTreasure("enemy", msg.x, msg.y);
-        SND.fanfare();
-        gainPower(0, PW.drawPower(Math.random, S.powers[0]?.hand ?? []), "💎 Schatz geborgen");
-        status("💎 Schatz geborgen! Das war deinen Zug wert.");
-        setTimeout(() => {
+        SND.treasure();
+        const kind = PW.drawPower(Math.random, [], { instant: true });
+        S.treasureFollowup = () => {
+          S.net.send({ t: "pw-done" });
           if (S.phase !== "battle") return;
           S.turn = 1;
           beginTurn();
-        }, FAST ? 80 : 1800);
+        };
+        setTimeout(
+          () => powerFlyOut(kind, "enemy", msg.x, msg.y, () => autoUsePower(kind)),
+          FAST ? 40 : 700
+        );
+        status("💎 Der Schatz entfesselt einen Zauber!");
         break;
       }
       const k = E.key(msg.x, msg.y);
@@ -1979,6 +2098,15 @@ function handleNetMessage(msg) {
           }
         );
       }
+      break;
+    }
+    case "pw-done": {
+      // the treasure spell over there has finished — my turn now
+      if (S.phase !== "battle") break;
+      S.turn = 0;
+      S.inputLocked = false;
+      beginTurn();
+      toast("Du bist dran!");
       break;
     }
     case "pwr": {
@@ -3159,6 +3287,7 @@ function startJourneyStop(i) {
       ghost: !!stop.rules.ghost,
     };
     syncRuleChips();
+    S.forceRoboLevel = "leicht"; // the journey stays kind
     startMode("ai");
   } else if (stop.type === "puzzle") {
     startPuzzle();
@@ -3507,8 +3636,32 @@ function boot() {
     applyUiWorld(id);
   }, "ozean");
 
+  try {
+    S.roboLevel = localStorage.getItem("ff-robo") === "schlau" ? "schlau" : "leicht";
+  } catch {
+    S.roboLevel = "leicht";
+  }
   document.querySelectorAll("[data-mode]").forEach((btn) => {
-    btn.addEventListener("click", () => startMode(btn.dataset.mode));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.mode === "ai") {
+        SND.unlock();
+        SND.tap();
+        show("screen-robo");
+        return;
+      }
+      startMode(btn.dataset.mode);
+    });
+  });
+  document.querySelectorAll("[data-robo]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      S.roboLevel = btn.dataset.robo === "schlau" ? "schlau" : "leicht";
+      try {
+        localStorage.setItem("ff-robo", S.roboLevel);
+      } catch {
+        /* private mode */
+      }
+      startMode("ai");
+    });
   });
 
   $("#btn-host").addEventListener("click", hostGame);

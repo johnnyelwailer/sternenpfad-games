@@ -1201,31 +1201,70 @@ export function buildCreature(worldId, index, size, custom = null) {
 // Visible on the board for BOTH players: digging it costs a turn but
 // grants a Zauber-Kraft. Golden, glinting, impossible to miss.
 
-export function buildTreasureChest() {
+export function buildTreasureChest(worldId = "ozean") {
   const g = new THREE.Group();
-  const woodM = mat(0x8a5a2b, { roughness: 0.8 });
   const goldM = mat(0xffc94d, { metalness: 0.5, roughness: 0.3, emissive: 0xaa7700, emissiveIntensity: 0.35 });
+  const gem = add(g, new THREE.OctahedronGeometry(0.09, 0), mat(0x7de8ff, { emissive: 0x7de8ff, emissiveIntensity: 1 }), 0, 0.46, 0);
+  let lid = new THREE.Group();
+  let wobble = null;
 
-  const base = add(g, new THREE.BoxGeometry(0.52, 0.26, 0.38), woodM, 0, 0.16, 0);
-  const lid = new THREE.Group();
-  lid.position.set(0, 0.29, -0.19); // hinge at the back edge
-  const lidMesh = add(lid, new THREE.CylinderGeometry(0.19, 0.19, 0.5, 10, 1, false, 0, Math.PI), woodM, 0, 0, 0.19);
-  lidMesh.rotation.z = Math.PI / 2;
+  if (worldId === "weltraum") {
+    // glowing tech capsule with a sliding hatch
+    const shellM = mat(0x8892a8, { metalness: 0.6, roughness: 0.3 });
+    const body = add(g, new THREE.CylinderGeometry(0.26, 0.3, 0.34, 8), shellM, 0, 0.2, 0);
+    body.rotation.y = Math.PI / 8;
+    const stripe = add(g, new THREE.TorusGeometry(0.28, 0.035, 6, 12), mat(0x7de8ff, { emissive: 0x2fa8d8, emissiveIntensity: 0.9 }), 0, 0.2, 0);
+    stripe.rotation.x = Math.PI / 2;
+    lid.position.set(0, 0.38, -0.14);
+    add(lid, new THREE.CylinderGeometry(0.24, 0.27, 0.1, 8), shellM, 0, 0, 0.14);
+    add(lid, new THREE.SphereGeometry(0.05, 6, 5), mat(0xff5f6d, { emissive: 0xff5f6d, emissiveIntensity: 1 }), 0, 0.08, 0.14);
+    wobble = (t) => {
+      stripe.scale.setScalar(1 + Math.sin(t * 3.1) * 0.04);
+    };
+  } else if (worldId === "dino") {
+    // mossy stone egg cracked open at the top, crystals poking out
+    const stoneM = mat(0x9aa08a, { roughness: 0.95 });
+    const egg = add(g, new THREE.SphereGeometry(0.3, 10, 8), stoneM, 0, 0.24, 0);
+    egg.scale.set(1, 1.2, 0.95);
+    add(g, new THREE.SphereGeometry(0.16, 8, 6), mat(0x5faf6f, { roughness: 0.9 }), 0.12, 0.42, 0.08).scale.y = 0.5;
+    for (const [dx, dz, s] of [[-0.08, 0.06, 0.09], [0.1, -0.05, 0.07]]) {
+      add(g, new THREE.OctahedronGeometry(s, 0), mat(0xb388ff, { emissive: 0x7a55cc, emissiveIntensity: 0.8 }), dx, 0.5, dz);
+    }
+    lid.position.set(0, 0.52, -0.1);
+    const cap = add(lid, new THREE.SphereGeometry(0.18, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), stoneM, 0, 0, 0.1);
+    cap.scale.set(1.1, 0.8, 1);
+  } else if (worldId === "teich") {
+    // painted clay pot with a lily-pad lid
+    const clayM = mat(0xc47f5a, { roughness: 0.85 });
+    const pot = add(g, new THREE.CylinderGeometry(0.24, 0.18, 0.32, 10), clayM, 0, 0.19, 0);
+    pot.scale.x = 1.1;
+    add(g, new THREE.TorusGeometry(0.24, 0.045, 6, 12), mat(0x8a5535, { roughness: 0.8 }), 0, 0.36, 0).rotation.x = Math.PI / 2;
+    lid.position.set(0, 0.42, -0.12);
+    const pad = add(lid, new THREE.CylinderGeometry(0.26, 0.24, 0.05, 12), mat(0x4da06a, { roughness: 0.6 }), 0, 0, 0.12);
+    pad.scale.z = 0.9;
+    add(lid, new THREE.SphereGeometry(0.07, 8, 6), mat(0xff8ac2, { roughness: 0.5 }), 0, 0.07, 0.12);
+  } else {
+    // ozean: the classic golden-banded wooden chest
+    const woodM = mat(0x8a5a2b, { roughness: 0.8 });
+    add(g, new THREE.BoxGeometry(0.52, 0.26, 0.38), woodM, 0, 0.16, 0);
+    lid.position.set(0, 0.29, -0.19);
+    const lidMesh = add(lid, new THREE.CylinderGeometry(0.19, 0.19, 0.5, 10, 1, false, 0, Math.PI), woodM, 0, 0, 0.19);
+    lidMesh.rotation.z = Math.PI / 2;
+    add(g, new THREE.BoxGeometry(0.56, 0.06, 0.42), goldM, 0, 0.1, 0);
+    add(g, new THREE.BoxGeometry(0.09, 0.3, 0.4), goldM, 0, 0.17, 0);
+    const lock = add(g, new THREE.SphereGeometry(0.06, 8, 6), goldM, 0, 0.28, 0.2);
+    wobble = (t) => {
+      lock.scale.setScalar(1 + Math.max(0, Math.sin(t * 3)) * 0.25);
+    };
+  }
+
   g.add(lid);
-  // golden bands + lock
-  add(g, new THREE.BoxGeometry(0.56, 0.06, 0.42), goldM, 0, 0.1, 0);
-  add(g, new THREE.BoxGeometry(0.09, 0.3, 0.4), goldM, 0, 0.17, 0);
-  const lock = add(g, new THREE.SphereGeometry(0.06, 8, 6), goldM, 0, 0.28, 0.2);
-  // a peeking glow gem
-  const gem = add(g, new THREE.OctahedronGeometry(0.09, 0), mat(0x7de8ff, { emissive: 0x7de8ff, emissiveIntensity: 1 }), 0, 0.42, 0);
-
   g.userData.lid = lid;
   g.userData.animate = (t) => {
-    // restless glint + tiny wiggle so it always catches the eye
-    gem.position.y = 0.42 + Math.sin(t * 2.2) * 0.06;
+    gem.position.y = 0.46 + Math.sin(t * 2.2) * 0.06;
     gem.rotation.y = t * 1.6;
-    lock.scale.setScalar(1 + Math.max(0, Math.sin(t * 3)) * 0.25);
     g.rotation.z = Math.sin(t * 1.1) * 0.03;
+    if (wobble) wobble(t);
   };
   return g;
 }
