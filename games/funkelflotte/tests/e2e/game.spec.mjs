@@ -772,8 +772,25 @@ test("online: full cross-world P2P game with rematch", async ({ browser }) => {
   await guest.locator('#world-grid-2 [data-world="dino"]').click();
   await guest.locator("#btn-worldpick-go").click();
 
+  // the host also picks their world fresh once the guest arrives
+  await expect(host.locator("#screen-worldpick")).toHaveClass(/active/, { timeout: 30000 });
+  await host.locator('#world-grid-2 [data-world="weltraum"]').click();
+  await host.locator("#btn-worldpick-go").click();
+
   await expect(host.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
   await expect(guest.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
+
+  // both devices remembered each other for future direct reconnects
+  await expect
+    .poll(() =>
+      host.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("ff-friends") || "{}")).length)
+    )
+    .toBe(1);
+  await expect
+    .poll(() =>
+      guest.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("ff-friends") || "{}")).length)
+    )
+    .toBe(1);
 
   // each side knows the other's world
   await expect
@@ -824,11 +841,81 @@ test("online: full cross-world P2P game with rematch", async ({ browser }) => {
   const loser = winner === host ? guest : host;
   await expect(loser.locator("#screen-win")).toHaveClass(/active/, { timeout: 15000 });
 
-  // rematch: both press, both land back in placement
+  // rematch: both press, both RE-PICK their worlds, then placement
   await winner.locator("#btn-rematch").click();
   await loser.locator("#btn-rematch").click();
+  await expect(host.locator("#screen-worldpick")).toHaveClass(/active/, { timeout: 20000 });
+  await host.locator('#world-grid-2 [data-world="teich"]').click();
+  await host.locator("#btn-worldpick-go").click();
+  await expect(guest.locator("#screen-worldpick")).toHaveClass(/active/, { timeout: 20000 });
+  await guest.locator('#world-grid-2 [data-world="ozean"]').click();
+  await guest.locator("#btn-worldpick-go").click();
   await expect(host.locator("#btn-place-done")).toBeVisible({ timeout: 20000 });
   await expect(guest.locator("#btn-place-done")).toBeVisible({ timeout: 20000 });
+  await expect.poll(() => host.evaluate(() => window.__FF.state.worlds)).toEqual(["teich", "ozean"]);
+  await expect.poll(() => guest.evaluate(() => window.__FF.state.worlds[1])).toBe("teich");
+
+  await ctxA.close();
+  await ctxB.close();
+});
+
+test("rapid double taps fire only one shot", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator('[data-mode="ai"]').click();
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+  const cells = await missCells(page, 2);
+  const marked = await page.evaluate(([a, b]) => {
+    window.__FF.tap(a.x, a.y);
+    window.__FF.tap(b.x, b.y); // must be swallowed by the input lock
+    return {
+      first: window.__FF.marksOn(1)[`${a.x},${a.y}`] ?? null,
+      second: window.__FF.marksOn(1)[`${b.x},${b.y}`] ?? null,
+    };
+  }, cells);
+  expect(marked.first).toBe("miss");
+  expect(marked.second).toBeNull();
+});
+
+test("friends: reconnect directly without any code", async ({ browser }) => {
+  test.setTimeout(120000);
+  const ctxA = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const ctxB = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const host = await ctxA.newPage();
+  const guest = await ctxB.newPage();
+  for (const p of [host, guest]) {
+    await p.addInitScript(() => localStorage.setItem("ff-muted", "1"));
+  }
+  await host.goto(`${GAME}?${PS}`);
+  await host.waitForFunction(() => !!window.__FF);
+  const hostPid = await host.evaluate(() => localStorage.getItem("ff-pid"));
+  expect(hostPid).toBeTruthy();
+  // the host simply sits on the online screen — reachable for friends
+  await host.locator('[data-mode="online"]').click();
+
+  // the guest remembers the host from an earlier match
+  await guest.goto(`${GAME}?${PS}`);
+  await guest.waitForFunction(() => !!window.__FF);
+  await guest.evaluate((pid) => {
+    localStorage.setItem(
+      "ff-friends",
+      JSON.stringify({ [pid]: { world: "weltraum", ts: Date.now() - 3600000 } })
+    );
+  }, hostPid);
+  await guest.locator('[data-mode="online"]').click();
+  await expect(guest.locator("#friends-box")).toBeVisible();
+  await guest.locator(".friend-btn").first().click();
+  await expect(guest.locator("#screen-worldpick")).toHaveClass(/active/);
+  await guest.locator('#world-grid-2 [data-world="dino"]').click();
+  await guest.locator("#btn-worldpick-go").click();
+
+  // knock-knock: the host answers with its own world pick, then both place
+  await expect(host.locator("#screen-worldpick")).toHaveClass(/active/, { timeout: 30000 });
+  await host.locator("#btn-worldpick-go").click();
+  await expect(host.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
+  await expect(guest.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
+  await expect.poll(() => host.evaluate(() => window.__FF.state.worlds[1])).toBe("dino");
 
   await ctxA.close();
   await ctxB.close();

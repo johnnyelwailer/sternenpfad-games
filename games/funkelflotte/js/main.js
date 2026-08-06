@@ -14,7 +14,9 @@ import * as CHASE from "./chase.js";
 import * as BOSS from "./boss.js";
 import * as SND from "./sound.js";
 import * as SCENE from "./scene.js";
-import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
+import { Net, makeCode, normalizeCode, joinUrl, stableId } from "./net.js";
+
+const PID = stableId(); // this device's permanent friend address
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -65,6 +67,11 @@ function show(screenId) {
   if (screenId) $(`#${screenId}`).classList.add("active");
   $("#btn-home").hidden = screenId === "screen-title";
   $("#hud").hidden = !!screenId && screenId !== "screen-win";
+  if (screenId === "screen-online") {
+    // visible to remembered friends while this screen is open
+    renderFriends();
+    startFriendListener();
+  }
 }
 
 let toastTimer = null;
@@ -926,9 +933,7 @@ function runSalvo(target) {
       finishGame(me());
       return;
     }
-    // the salvo always ends the turn
-    S.inputLocked = false;
-    afterMyShot({ result: E.MISS, gameOver: false });
+    endMyTurn(); // the salvo always ends the turn
   });
 }
 
@@ -1085,9 +1090,13 @@ function handleTap(x, y) {
     SND.tap();
     return;
   }
+  // lock immediately — rapid double-taps must never fire twice while
+  // the result of the first shot is still playing out
+  S.inputLocked = true;
 
   // dug up a treasure: gain a power and keep searching
   if (res.result === E.MISS && powersEnabled() && PW.treasureAt(board, x, y)) {
+    S.inputLocked = false;
     board.treasures = board.treasures.filter((t) => !(t.x === x && t.y === y));
     SCENE.applyShotQuiet(slotFor(targetIdx), x, y, "miss");
     SCENE.treasureBurst(slotFor(targetIdx), x, y);
@@ -1166,7 +1175,10 @@ function afterMyShot(res) {
     finishGame(S.turn);
     return;
   }
-  if (res.result === E.HIT || res.result === E.SUNK) return; // same player continues
+  if (res.result === E.HIT || res.result === E.SUNK) {
+    S.inputLocked = false; // same player continues
+    return;
+  }
   if (res.result === E.DECOY) S.extraTurn = other(S.turn); // balloon owner earns a bonus
 
   // a miss normally ends the turn — unless a power says otherwise
@@ -1174,12 +1186,14 @@ function afterMyShot(res) {
     const st = powersEnabled() ? myPowers() : null;
     if (st?.doubleShot) {
       st.doubleShot = false;
+      S.inputLocked = false;
       toast("🎯 Doppelschuss! Das zählt nicht — gleich nochmal!");
       renderPowers();
       return;
     }
     if (S.extraTurn === S.turn) {
       S.extraTurn = null;
+      S.inputLocked = false;
       toast("⏳ Extra-Zug! Such gleich nochmal!");
       return;
     }
@@ -1293,6 +1307,152 @@ function newShadow() {
   return { size: E.DEFAULT_GRID, marks: {}, found: [] };
 }
 
+// ---------------------------------------------------------------- friends
+// After one QR/code handshake both devices remember each other and can
+// reconnect directly: every device listens on its stable id whenever
+// the online screen is open.
+
+function loadFriends() {
+  try {
+    const o = JSON.parse(localStorage.getItem("ff-friends") || "{}");
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveFriend(pid, worldId) {
+  if (!pid || typeof pid !== "string" || pid === PID || pid.length > 24) return;
+  try {
+    const f = loadFriends();
+    f[pid] = { world: WORLDS[worldId] ? worldId : "ozean", ts: Date.now() };
+    localStorage.setItem("ff-friends", JSON.stringify(f));
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+function forgetFriend(pid) {
+  try {
+    const f = loadFriends();
+    delete f[pid];
+    localStorage.setItem("ff-friends", JSON.stringify(f));
+  } catch {
+    /* ignore */
+  }
+  renderFriends();
+}
+
+function timeAgo(ts) {
+  const m = Math.max(1, Math.round((Date.now() - ts) / 60000));
+  if (m < 60) return `vor ${m} Min.`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `vor ${h} Std.`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "gestern" : `vor ${d} Tagen`;
+}
+
+function renderFriends() {
+  const box = $("#friends-box");
+  const list = $("#friends-list");
+  if (!box) return;
+  const friends = Object.entries(loadFriends()).sort((a, b) => b[1].ts - a[1].ts);
+  box.hidden = friends.length === 0;
+  list.innerHTML = "";
+  for (const [pid, f] of friends) {
+    const row = document.createElement("div");
+    row.className = "friend-row";
+    const btn = document.createElement("button");
+    btn.className = "friend-btn";
+    btn.textContent = `🤝 Mitspieler aus ${getWorld(f.world).name} · ${timeAgo(f.ts)}`;
+    btn.addEventListener("click", () => joinFriend(pid));
+    const x = document.createElement("button");
+    x.className = "friend-forget";
+    x.textContent = "✕";
+    x.setAttribute("aria-label", "Freund vergessen");
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      SND.tap();
+      forgetFriend(pid);
+    });
+    row.appendChild(btn);
+    row.appendChild(x);
+    list.appendChild(row);
+  }
+}
+
+function startFriendListener() {
+  if (S.friendNet) return;
+  const net = new Net();
+  S.friendNet = net;
+  net.onMessage = (m) => handleNetMessage(m);
+  net.onClose = () => {};
+  net.onStatus = (st) => {
+    if (st !== "connected" || S.friendNet !== net) return;
+    if (S.net?.conn) {
+      // already talking to someone — turn the second knock away
+      net.destroy();
+      if (S.friendNet === net) S.friendNet = null;
+      return;
+    }
+    if (S.net) S.net.destroy();
+    S.friendNet = null;
+    S.net = net;
+    S.isHost = true;
+    wireNet();
+    toast("🤝 Ein bekannter Freund ist beigetreten!", 2600);
+    // the friend's `hi` pings drive the usual handshake from here
+  };
+  net.host(PID).catch(() => {
+    if (S.friendNet === net) S.friendNet = null; // e.g. second tab holds the id
+  });
+}
+
+function stopFriendListener() {
+  if (S.friendNet) {
+    S.friendNet.destroy();
+    S.friendNet = null;
+  }
+}
+
+function joinFriend(pid) {
+  SND.tap();
+  // fresh world choice for every match, then knock on the friend's door
+  showWorldPick({
+    title: "Wähl deine Welt!",
+    selected: S.worlds[0],
+    onDone: (worldId) => {
+      S.worlds[0] = worldId;
+      applyUiWorld(worldId);
+      show("screen-online");
+      toast("Klopfe beim Freund an …", 2400);
+      S.isHost = false;
+      if (S.net) S.net.destroy();
+      S.net = new Net();
+      wireNet();
+      S.net
+        .join(pid)
+        .then(() => {
+          const ping = setInterval(() => {
+            if (S.phase !== "title" || !S.net) {
+              clearInterval(ping);
+              return;
+            }
+            S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
+          }, 1500);
+          S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
+        })
+        .catch(() => {
+          toast("Dein Freund ist gerade nicht da. Zeigt euch sonst den QR-Code!", 3400);
+          if (S.net) {
+            S.net.destroy();
+            S.net = null;
+          }
+        });
+    },
+  });
+}
+
 function hostGame() {
   SND.tap();
   const code = makeCode();
@@ -1331,22 +1491,16 @@ function joinGame(code) {
   S.net
     .join(code)
     .then(() => {
-      let tries = 0;
+      // keep announcing until the host answers — the host may still be
+      // picking their world, so never give up while the line is open
       const ping = setInterval(() => {
         if (S.phase !== "title" || !S.net) {
           clearInterval(ping);
           return;
         }
-        tries += 1;
-        if (tries > 8) {
-          clearInterval(ping);
-          toast("Verbindung klappt nicht. Probiert es nochmal!", 2600);
-          goHome();
-          return;
-        }
-        S.net.send({ t: "hi", world: S.worlds[0] });
+        S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
       }, 1500);
-      S.net.send({ t: "hi", world: S.worlds[0] });
+      S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
     })
     .catch((err) => {
       btn.disabled = false;
@@ -1375,6 +1529,8 @@ function wireNet() {
 }
 
 function beginOnlinePlacement() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   resetRuleState();
   S.boards = [newBoardWithFleet(), null];
   S.shadow = newShadow();
@@ -1416,28 +1572,50 @@ function onlineShoot(x, y) {
 function handleNetMessage(msg) {
   switch (msg.t) {
     case "hi": {
-      // guest announces itself (+ its world); host answers idempotently
-      if (msg.world) S.worlds[1] = msg.world;
-      if (S.isHost) {
-        S.net.send({
-          t: "hello",
-          v: 2,
-          world: S.worlds[0],
-          rules: S.rules,
-          mode: S.gameMode,
-          powers: flag("powers") && S.powersOn,
-        });
-        if (["title", "over", "chase", "boss"].includes(S.phase)) {
-          if (S.gameMode === "chase") beginChaseOnlineHider();
-          else if (S.gameMode === "boss") beginBossOnlineMonster();
-          else beginOnlinePlacement();
-        }
+      // guest announces itself (+ its world & friend id)
+      if (msg.world && WORLDS[msg.world]) S.worlds[1] = msg.world;
+      if (msg.pid) S.oppPid = msg.pid;
+      if (!S.isHost) break;
+      if (S.gameMode !== "chase" && S.gameMode !== "boss" && S.phase === "place") {
+        // a lost hello: re-ack so the guest stops pinging
+        sendHello();
+        break;
       }
+      if (!["title", "over", "chase", "boss"].includes(S.phase) || S.pickingWorld) break;
+      if (S.gameMode === "chase") {
+        sendHello();
+        beginChaseOnlineHider();
+        break;
+      }
+      if (S.gameMode === "boss") {
+        sendHello();
+        beginBossOnlineMonster();
+        break;
+      }
+      // classic: the host picks their world fresh for every match
+      S.pickingWorld = true;
+      showWorldPick({
+        title: "Mitspieler ist da — wähl deine Welt!",
+        selected: S.worlds[0],
+        onDone: (worldId) => {
+          S.pickingWorld = false;
+          S.worlds[0] = worldId;
+          applyUiWorld(worldId);
+          sendHello();
+          beginOnlinePlacement();
+        },
+      });
+      break;
+    }
+    case "world": {
+      // the opponent re-picked their world (each match, fresh choice)
+      if (msg.world && WORLDS[msg.world]) S.worlds[1] = msg.world;
       break;
     }
     case "hello": {
       if (!["title", "over", "chase", "boss"].includes(S.phase)) break;
-      S.worlds[1] = msg.world || "ozean";
+      S.worlds[1] = WORLDS[msg.world] ? msg.world : "ozean";
+      if (msg.pid) S.oppPid = msg.pid;
       if (msg.mode === "chase") {
         S.gameMode = "chase";
         beginChaseOnlineSeeker();
@@ -1459,6 +1637,20 @@ function handleNetMessage(msg) {
       syncRuleChips();
       const parts = [rulesSummary(S.rules), S.powersOn ? "✨ Zauber-Kräfte" : ""].filter(Boolean);
       if (parts.length) toast(`Gemeinsame Optionen: ${parts.join(" · ")}`, 3200);
+      if (S.phase === "over") {
+        // rematch: the guest also picks a fresh world every match
+        showWorldPick({
+          title: "Neue Runde — wähl deine Welt!",
+          selected: S.worlds[0],
+          onDone: (worldId) => {
+            S.worlds[0] = worldId;
+            applyUiWorld(worldId);
+            S.net.send({ t: "world", world: worldId });
+            beginOnlinePlacement();
+          },
+        });
+        break;
+      }
       beginOnlinePlacement();
       break;
     }
@@ -1734,21 +1926,45 @@ function handleNetMessage(msg) {
   }
 }
 
+function sendHello() {
+  S.net.send({
+    t: "hello",
+    v: 2,
+    world: S.worlds[0],
+    rules: S.rules,
+    mode: S.gameMode,
+    powers: flag("powers") && S.powersOn,
+    pid: PID,
+  });
+}
+
 function maybeRematch() {
   if (!(S.rematchMine && S.rematchTheirs)) return;
-  if (S.isHost) {
-    S.net.send({
-      t: "hello",
-      v: 2,
-      world: S.worlds[0],
-      rules: S.rules,
-      mode: S.gameMode,
-      powers: flag("powers") && S.powersOn,
-    });
-    if (S.gameMode === "chase") beginChaseOnlineHider();
-    else if (S.gameMode === "boss") beginBossOnlineMonster();
-    else beginOnlinePlacement();
+  if (!S.isHost) return;
+  if (S.gameMode === "chase") {
+    sendHello();
+    beginChaseOnlineHider();
+    return;
   }
+  if (S.gameMode === "boss") {
+    sendHello();
+    beginBossOnlineMonster();
+    return;
+  }
+  // classic rematch: the host re-picks their world first
+  if (S.pickingWorld) return;
+  S.pickingWorld = true;
+  showWorldPick({
+    title: "Neue Runde — wähl deine Welt!",
+    selected: S.worlds[0],
+    onDone: (worldId) => {
+      S.pickingWorld = false;
+      S.worlds[0] = worldId;
+      applyUiWorld(worldId);
+      sendHello();
+      beginOnlinePlacement();
+    },
+  });
 }
 
 // --------------------------------------------------------------- chase
@@ -2007,6 +2223,8 @@ function chaseEnd(caught) {
 // ---- online chase ----------------------------------------------------
 
 function beginChaseOnlineHider() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   S.mode = "chase";
   S.phase = "chase";
   S.chase = { kind: "online", st: CHASE.createChase(), role: "hider", marks: {} };
@@ -2017,6 +2235,8 @@ function beginChaseOnlineHider() {
 }
 
 function beginChaseOnlineSeeker() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   S.mode = "chase";
   S.phase = "chase";
   S.chase = { kind: "online", st: null, role: "seeker", marks: {}, ready: false, shotsLeft: CHASE.CHASE_SHOTS };
@@ -2365,6 +2585,8 @@ function bossEnd(hunterWon) {
 // ---- online boss -------------------------------------------------------
 
 function beginBossOnlineMonster() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   S.mode = "boss";
   S.phase = "boss";
   S.boss = { kind: "online", st: BOSS.createBoss(), role: "monster", marks: {} };
@@ -2373,6 +2595,8 @@ function beginBossOnlineMonster() {
 }
 
 function beginBossOnlineHunter() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   S.mode = "boss";
   S.phase = "boss";
   S.boss = {
@@ -2939,6 +3163,9 @@ function rematch() {
 function goHome() {
   S.phase = "title";
   SND.stopAmbient();
+  stopFriendListener();
+  S.oppPid = null;
+  S.pickingWorld = false;
   if (S.net) {
     S.net.destroy();
     S.net = null;

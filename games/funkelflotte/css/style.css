@@ -648,6 +648,59 @@ h1.logo {
   min-height: 44px;
 }
 
+/* --------------------------------------------------------- friends */
+
+#friends-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  width: min(92vw, 420px);
+}
+
+#friends-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.friend-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.friend-btn {
+  flex: 1;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.28);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-radius: 14px;
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.friend-btn:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.friend-forget {
+  flex: none;
+  width: 44px;
+  border-radius: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+}
+
 /* ------------------------------------------------------ power tray */
 
 #powers {
