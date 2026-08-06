@@ -19,6 +19,8 @@ const PRECACHE = [
   "./js/progress.js",
   "./js/flags.js",
   "./js/puzzle.js",
+  "./js/chase.js",
+  "./js/boss.js",
   "./vendor/three.module.min.js",
   "./vendor/three.core.min.js",
   "./vendor/peerjs.min.js",

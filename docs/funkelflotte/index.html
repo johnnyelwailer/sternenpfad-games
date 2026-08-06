@@ -66,7 +66,34 @@
       </div>
       <div class="extras-row">
         <button class="btn ghost" id="btn-puzzle">🧩 Knobel-Insel</button>
+        <button class="btn ghost" id="btn-chase">🙈 Fang mich!</button>
+        <button class="btn ghost" id="btn-boss">👑 Monster-Jagd</button>
         <button class="btn ghost" id="btn-album">📖 Sticker-Album</button>
+        <button class="btn ghost" id="btn-aquarium">🐠 Aquarium</button>
+      </div>
+    </section>
+
+    <!-- Boss mode picker -->
+    <section id="screen-boss" class="screen opaque">
+      <div class="stars" aria-hidden="true"></div>
+      <h2 class="h2">👑 Monster-Jagd</h2>
+      <p class="hint">Ein riesiges Königs-Monster stapft übers Brett!<br />Der Jäger braucht fünf Treffer — das Monster flüchtet nach jedem Schuss.</p>
+      <div class="stack">
+        <button class="btn big" data-boss="ai">Alleine gegen Robo</button>
+        <button class="btn big" data-boss="hotseat">Zu zweit an einem Gerät</button>
+        <button class="btn big" data-boss="online">Mit zwei Geräten</button>
+      </div>
+    </section>
+
+    <!-- Chase mode picker -->
+    <section id="screen-chase" class="screen opaque">
+      <div class="stars" aria-hidden="true"></div>
+      <h2 class="h2">🙈 Fang mich!</h2>
+      <p class="hint">Einer versteckt sich und huscht nach jedem Schuss ein Feld weiter.<br />Der andere bekommt Zahlen-Hinweise. Wer ist schlauer?</p>
+      <div class="stack">
+        <button class="btn big" data-chase="ai">Alleine gegen Robo</button>
+        <button class="btn big" data-chase="hotseat">Zu zweit an einem Gerät</button>
+        <button class="btn big" data-chase="online">Mit zwei Geräten</button>
       </div>
     </section>
 
@@ -128,6 +155,23 @@
         <button class="btn big" id="btn-pass-go">Ich bin dran!</button>
       </div>
     </section>
+
+    <!-- Chase: hider's secret move (seeker closes their eyes) -->
+    <div id="chase-move" hidden>
+      <div class="chase-move-card">
+        <div class="chase-move-title">🙈 Sucher: Augen zu!</div>
+        <p class="chase-move-sub" id="chase-move-sub">Verstecker: Wohin geht's?</p>
+        <div class="arrow-pad">
+          <button class="arrow-btn" data-move="0,-1" aria-label="hoch">⬆️</button>
+          <div class="arrow-mid">
+            <button class="arrow-btn" data-move="-1,0" aria-label="links">⬅️</button>
+            <button class="arrow-btn" id="btn-peek" aria-label="kurz nachschauen">👀</button>
+            <button class="arrow-btn" data-move="1,0" aria-label="rechts">➡️</button>
+          </div>
+          <button class="arrow-btn" data-move="0,1" aria-label="runter">⬇️</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Win -->
     <section id="screen-win" class="screen">

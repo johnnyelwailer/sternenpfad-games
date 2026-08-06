@@ -489,6 +489,70 @@ h1.logo {
   }
 }
 
+/* ------------------------------------------------------- chase overlay */
+
+#chase-move {
+  position: fixed;
+  inset: 0;
+  z-index: 64;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  background: rgba(5, 10, 25, 0.45);
+}
+
+.chase-move-card {
+  background: rgba(10, 20, 40, 0.9);
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  border-radius: 24px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+
+.chase-move-title {
+  font-weight: 900;
+  font-size: 1.1rem;
+}
+
+.chase-move-sub {
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+
+.arrow-pad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.arrow-mid {
+  display: flex;
+  gap: 6px;
+}
+
+.arrow-btn {
+  width: 58px;
+  height: 58px;
+  font-size: 1.5rem;
+  border: none;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.arrow-btn:active {
+  background: rgba(255, 255, 255, 0.28);
+}
+
 /* --------------------------------------------------------- extras row */
 
 .extras-row {
