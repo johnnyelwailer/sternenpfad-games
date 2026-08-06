@@ -217,17 +217,10 @@ h1.logo {
 
 .world-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  width: min(92vw, 480px);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: min(88vw, 380px);
   margin-bottom: 2vh;
-}
-
-@media (max-width: 420px) {
-  .world-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-  }
 }
 
 .world-card {

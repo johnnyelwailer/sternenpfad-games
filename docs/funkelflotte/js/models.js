@@ -808,12 +808,244 @@ function babyBibo(size) {
   return g;
 }
 
+
+// ----------------------------------------------------------------- Teich
+
+function karpfen(size) {
+  const g = new THREE.Group();
+  const goldM = mat(0xe8963f, { roughness: 0.55, metalness: 0.15 });
+  const bellyM = mat(0xf7d9a8, { roughness: 0.6 });
+  const finM = mat(0xd97b2f, { roughness: 0.6, side: THREE.DoubleSide });
+  const len = size * 0.94;
+
+  const body = add(g, new THREE.SphereGeometry(0.5, 16, 12), goldM, -len * 0.06, 0.5, 0);
+  body.scale.set(len * 0.62, 0.82, 0.72);
+  add(g, new THREE.SphereGeometry(0.44, 14, 10), bellyM, -len * 0.06, 0.4, 0).scale.set(len * 0.56, 0.6, 0.64);
+  // big carp lips
+  const lips = add(g, new THREE.TorusGeometry(0.1, 0.045, 8, 14), goldM, -len * 0.38, 0.5, 0);
+  lips.rotation.y = Math.PI / 2;
+  // dorsal fin + tail fan
+  const dorsal = add(g, new THREE.CircleGeometry(0.32, 10, 0, Math.PI * 0.8), finM, -len * 0.02, 0.92, 0);
+  dorsal.rotation.x = 0;
+  const tail = new THREE.Group();
+  tail.position.set(len * 0.28, 0.5, 0);
+  const fan = add(tail, new THREE.CircleGeometry(0.36, 10, -Math.PI * 0.4, Math.PI * 0.8), finM, 0.24, 0, 0);
+  g.add(tail);
+  for (const sd of [-1, 1]) {
+    const fin = add(g, new THREE.CircleGeometry(0.18, 8, 0, Math.PI * 0.9), finM, -len * 0.16, 0.32, sd * 0.34);
+    fin.rotation.y = sd * 1.1;
+    fin.rotation.z = -0.6;
+  }
+  // bubbles from the lips
+  const bubbles = [];
+  for (let i = 0; i < 3; i += 1) {
+    bubbles.push(add(g, new THREE.SphereGeometry(0.05 - i * 0.01, 8, 6), mat(0xdff4ff, { transparent: true, opacity: 0.7 }), -len * 0.42, 0.6, 0));
+  }
+  const blinkEyes = makeEyes(g, -len * 0.3, 0.62, 0, 0.24, 0.08);
+
+  g.userData.animate = (t) => {
+    tail.rotation.y = Math.sin(t * 3.2) * 0.4;
+    body.rotation.y = Math.sin(t * 3.2) * 0.03;
+    lips.scale.setScalar(1 + Math.max(0, Math.sin(t * 2.2)) * 0.25);
+    bubbles.forEach((b, i) => {
+      const ph = (t * 0.9 + i * 0.33) % 1;
+      b.position.y = 0.58 + ph * 0.55;
+      b.position.x = -len * 0.42 - ph * 0.1;
+      b.material.opacity = 0.7 * (1 - ph);
+    });
+    blinkEyes(t);
+  };
+  return g;
+}
+
+function ente(size) {
+  const g = new THREE.Group();
+  const featherM = mat(0xfdf6e3, { roughness: 0.7 });
+  const beakM = mat(0xf2a13f, { roughness: 0.5 });
+  const len = size * 0.9;
+
+  // mama duck
+  const mama = new THREE.Group();
+  const body = add(mama, new THREE.SphereGeometry(0.4, 14, 10), featherM, 0.1, 0.42, 0);
+  body.scale.set(1.35, 0.95, 0.95);
+  const tailFeather = add(mama, new THREE.ConeGeometry(0.14, 0.3, 8), featherM, 0.6, 0.55, 0);
+  tailFeather.rotation.z = -1.1;
+  const headG = new THREE.Group();
+  headG.position.set(-0.36, 0.86, 0);
+  add(headG, new THREE.SphereGeometry(0.22, 12, 10), featherM);
+  const beak = add(headG, new THREE.ConeGeometry(0.09, 0.24, 8), beakM, -0.28, -0.02, 0);
+  beak.rotation.z = Math.PI / 2;
+  const blinkEyes = makeEyes(headG, -0.12, 0.08, 0, 0.13, 0.055);
+  mama.add(headG);
+  const wings = [];
+  for (const sd of [-1, 1]) {
+    const w = add(mama, new THREE.SphereGeometry(0.2, 10, 8), mat(0xf2e8cf, { roughness: 0.75 }), 0.08, 0.5, sd * 0.3);
+    w.scale.set(1.3, 0.6, 0.4);
+    wings.push(w);
+  }
+  mama.position.x = -len * 0.26;
+  g.add(mama);
+
+  // duckling paddling behind
+  const kid = new THREE.Group();
+  add(kid, new THREE.SphereGeometry(0.18, 10, 8), mat(0xffe28a, { roughness: 0.7 }), 0, 0.3, 0).scale.set(1.3, 0.9, 0.9);
+  const kidHead = add(kid, new THREE.SphereGeometry(0.12, 10, 8), mat(0xffe28a, { roughness: 0.7 }), -0.16, 0.52, 0);
+  const kidBeak = add(kid, new THREE.ConeGeometry(0.05, 0.12, 6), beakM, -0.28, 0.5, 0);
+  kidBeak.rotation.z = Math.PI / 2;
+  const kidEyes = makeEyes(kid, -0.2, 0.57, 0, 0.08, 0.035, 2);
+  kid.position.x = len * 0.3;
+  g.add(kid);
+
+  g.userData.animate = (t) => {
+    mama.position.y = Math.sin(t * 1.8) * 0.04;
+    mama.rotation.z = Math.sin(t * 1.8) * 0.03;
+    headG.rotation.z = Math.sin(t * 1.1) * 0.12;
+    wings.forEach((w, i) => {
+      w.rotation.x = Math.sin(t * 2.4 + i * Math.PI) * 0.1;
+    });
+    kid.position.y = Math.sin(t * 2.2 + 1) * 0.05;
+    kid.rotation.z = Math.sin(t * 2.6) * 0.08;
+    kid.position.x = len * 0.3 + Math.sin(t * 0.9) * 0.06;
+    blinkEyes(t);
+    kidEyes(t);
+  };
+  return g;
+}
+
+function flossi(size) {
+  const g = new THREE.Group();
+  const bodyM = mat(0x4fb8d9, { roughness: 0.5 });
+  const stripeM = mat(0xffd447, { roughness: 0.55 });
+  const finM = mat(0x3f96b8, { roughness: 0.6, side: THREE.DoubleSide });
+  const len = size * 0.9;
+
+  // tall flat tropical fish
+  const body = add(g, new THREE.SphereGeometry(0.5, 16, 12), bodyM, -len * 0.08, 0.62, 0);
+  body.scale.set(len * 0.42, 1.05, 0.42);
+  for (const dx of [-0.14, 0.1]) {
+    const stripe = add(g, new THREE.SphereGeometry(0.5, 14, 10), stripeM, -len * 0.08 + dx * len, 0.62, 0);
+    stripe.scale.set(len * 0.07, 1.06, 0.43);
+  }
+  const tail = new THREE.Group();
+  tail.position.set(len * 0.2, 0.62, 0);
+  add(tail, new THREE.CircleGeometry(0.4, 10, -Math.PI * 0.45, Math.PI * 0.9), finM, 0.28, 0, 0);
+  g.add(tail);
+  const topFin = add(g, new THREE.CircleGeometry(0.3, 8, Math.PI * 0.1, Math.PI * 0.8), finM, -len * 0.08, 1.12, 0);
+  const botFin = add(g, new THREE.CircleGeometry(0.22, 8, Math.PI * 1.1, Math.PI * 0.8), finM, -len * 0.08, 0.16, 0);
+  const blinkEyes = makeEyes(g, -len * 0.3, 0.74, 0, 0.14, 0.07);
+  smile(g, -len * 0.34, 0.52, 0, 0.08);
+
+  g.userData.animate = (t) => {
+    tail.rotation.y = Math.sin(t * 3.6) * 0.5;
+    g.rotation.y = Math.sin(t * 3.6) * 0.02;
+    g.position.y = Math.sin(t * 1.7) * 0.06;
+    topFin.rotation.z = Math.sin(t * 2.4) * 0.12;
+    blinkEyes(t);
+  };
+  return g;
+}
+
+function frosch(size) {
+  const g = new THREE.Group();
+  const skinM = mat(0x5fbf5f, { roughness: 0.6 });
+  const bellyM = mat(0xd7f0b8, { roughness: 0.65 });
+  const width = size * 0.4 + 0.3;
+
+  // lily pad
+  const pad = add(g, new THREE.CircleGeometry(0.62, 18, 0.3, Math.PI * 1.85), mat(0x3f9a52, { roughness: 0.9, side: THREE.DoubleSide }), 0, 0.06, 0);
+  pad.rotation.x = -Math.PI / 2;
+  pad.scale.set(width * 1.15, 1, 1);
+
+  const frog = new THREE.Group();
+  const body = add(frog, new THREE.SphereGeometry(0.32, 14, 10), skinM, 0, 0.32, 0);
+  body.scale.set(width, 0.85, 1);
+  add(frog, new THREE.SphereGeometry(0.26, 12, 9), bellyM, -0.04, 0.26, 0).scale.set(width * 0.9, 0.7, 0.9);
+  // bulging eyes on top
+  const eyeBulbs = [];
+  for (const sd of [-1, 1]) {
+    add(frog, new THREE.SphereGeometry(0.11, 10, 8), skinM, -0.14, 0.62, sd * 0.16);
+  }
+  const blinkEyes = makeEyes(frog, -0.2, 0.64, 0, 0.16, 0.07);
+  smile(frog, -0.28, 0.36, 0, 0.11);
+  // throat bubble
+  const throat = add(frog, new THREE.SphereGeometry(0.12, 10, 8), mat(0xf7ffd9, { transparent: true, opacity: 0.85 }), -0.24, 0.24, 0);
+  // folded legs
+  for (const sd of [-1, 1]) {
+    const leg = add(frog, new THREE.SphereGeometry(0.13, 8, 6), skinM, 0.16, 0.18, sd * (width * 0.75));
+    leg.scale.set(1.4, 0.6, 0.8);
+  }
+  g.add(frog);
+
+  g.userData.animate = (t) => {
+    // croak: throat inflates rhythmically
+    const croak = Math.max(0, Math.sin(t * 1.4)) ** 3;
+    throat.scale.setScalar(0.7 + croak * 0.9);
+    frog.scale.y = 1 - croak * 0.06;
+    // little hop every few seconds
+    const hop = Math.max(0, Math.sin(t * 0.8 + 2)) ** 14;
+    frog.position.y = hop * 0.3;
+    pad.rotation.z = Math.sin(t * 1.2) * 0.03;
+    blinkEyes(t);
+  };
+  return g;
+}
+
+function krabbe(size) {
+  const g = new THREE.Group();
+  const shellM = mat(0xe86450, { roughness: 0.55 });
+  const width = size * 0.4 + 0.28;
+
+  const body = add(g, new THREE.SphereGeometry(0.34, 14, 10), shellM, 0, 0.34, 0);
+  body.scale.set(width, 0.7, 0.9);
+  // eye stalks
+  const stalks = [];
+  for (const sd of [-1, 1]) {
+    const stalk = add(g, new THREE.CylinderGeometry(0.03, 0.03, 0.22, 6), shellM, -0.1, 0.62, sd * 0.12);
+    stalks.push(stalk);
+  }
+  const blinkEyes = makeEyes(g, -0.12, 0.76, 0, 0.12, 0.06);
+  // big claws
+  const claws = [];
+  for (const sd of [-1, 1]) {
+    const claw = new THREE.Group();
+    claw.position.set(-0.2, 0.34, sd * width * 0.9);
+    add(claw, new THREE.CylinderGeometry(0.045, 0.045, 0.3, 6), shellM, -0.1, 0, 0).rotation.z = Math.PI / 2;
+    const pincer = add(claw, new THREE.SphereGeometry(0.14, 10, 8), shellM, -0.3, 0.02, 0);
+    pincer.scale.set(1.3, 0.9, 0.8);
+    add(claw, new THREE.ConeGeometry(0.05, 0.14, 6), shellM, -0.44, 0.1, 0).rotation.z = 0.7;
+    claws.push({ claw, sd });
+    g.add(claw);
+  }
+  // legs
+  for (const sd of [-1, 1]) {
+    for (let k = 0; k < 3; k += 1) {
+      const leg = add(g, new THREE.CylinderGeometry(0.025, 0.02, 0.3, 5), shellM, 0.08 + k * 0.14, 0.2, sd * (width * 0.8));
+      leg.rotation.x = sd * 0.9;
+    }
+  }
+
+  g.userData.animate = (t) => {
+    for (const { claw, sd } of claws) {
+      claw.rotation.z = Math.sin(t * 2.6 + sd) * 0.3 + 0.15;
+    }
+    stalks.forEach((st, i) => {
+      st.rotation.x = Math.sin(t * 1.9 + i) * 0.15;
+    });
+    // scuttle side-step
+    g.position.z = Math.sin(t * 1.1) * 0.08;
+    g.position.y = Math.abs(Math.sin(t * 4.4)) * 0.02;
+    blinkEyes(t);
+  };
+  return g;
+}
+
 // -------------------------------------------------------------- registry
 
 const BUILDERS = {
   ozean: [wal, oktopus, robbe, schildkroete, qualle],
   weltraum: [station, rakete, ufo, satellit, funkelstern],
   dino: [langhals, rexi, triceratops, flugsaurier, babyBibo],
+  teich: [karpfen, ente, flossi, frosch, krabbe],
 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));

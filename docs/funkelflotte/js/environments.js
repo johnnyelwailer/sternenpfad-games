@@ -663,7 +663,200 @@ function dino(boardSpan) {
   return g;
 }
 
-const BUILDERS = { ozean, weltraum, dino };
+
+// ----------------------------------------------------------------- Teich
+
+function cattail(scale) {
+  const g = new THREE.Group();
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 1.4, 5), mat(0x4f8f3f));
+  stem.position.y = 0.7;
+  g.add(stem);
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.35, 7), mat(0x6b4423));
+  head.position.y = 1.45;
+  g.add(head);
+  const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.22, 4), mat(0x8faf5f));
+  tip.position.y = 1.75;
+  g.add(tip);
+  for (let i = 0; i < 2; i += 1) {
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.06, 1.1, 4), mat(0x5fae4f));
+    leaf.scale.x = 0.35;
+    leaf.position.set(0.1 - i * 0.2, 0.6, 0.05);
+    leaf.rotation.z = (i ? -1 : 1) * 0.25;
+    g.add(leaf);
+  }
+  g.scale.setScalar(scale);
+  return g;
+}
+
+function teich(boardSpan) {
+  const g = new THREE.Group();
+  const lagoonR = boardSpan * 1.0;
+  const bankR = boardSpan * 1.28;
+
+  // murky green pond water with the same living shader
+  const water = makeWater(lagoonR, bankR, { shallow: 0x63c9ae, deep: 0x1e6b5a, fog: 0xd2ecd8 });
+  g.add(water);
+
+  // grassy bank ring
+  const bank = new THREE.Mesh(new THREE.RingGeometry(lagoonR + 0.15, bankR + 1.8, 44), mat(0x62b555, { roughness: 0.95 }));
+  bank.rotation.x = -Math.PI / 2;
+  bank.position.y = 0.02;
+  g.add(bank);
+  const bankOuter = new THREE.Mesh(new THREE.RingGeometry(bankR + 1.75, bankR + 3.2, 44), mat(0x4f9a48, { roughness: 1 }));
+  bankOuter.rotation.x = -Math.PI / 2;
+  bankOuter.position.y = -0.03;
+  g.add(bankOuter);
+
+  // wooden jetty with a fishing rod and bobber
+  const jetty = new THREE.Group();
+  const plankM = mat(0x9a6b3f, { roughness: 0.85 });
+  for (let i = 0; i < 5; i += 1) {
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 2.6), plankM);
+    plank.position.set(i * 0.66, 0.34, 0);
+    jetty.add(plank);
+  }
+  for (const [px, pz] of [[0.2, -1.1], [0.2, 1.1], [2.6, -1.1], [2.6, 1.1]]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.9, 6), mat(0x7a4f2e));
+    post.position.set(px, 0.05, pz);
+    jetty.add(post);
+  }
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.035, 2.4, 5), mat(0x6b4423));
+  rod.position.set(-0.9, 1.0, 0.5);
+  rod.rotation.z = 0.9;
+  jetty.add(rod);
+  const line = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 1.35, 3), basic(0xf5f8fa, { transparent: true, opacity: 0.6 }));
+  line.position.set(-1.95, 0.72, 0.5);
+  jetty.add(line);
+  const bobber = new THREE.Group();
+  const bTop = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xe85d5d, { roughness: 0.5 }));
+  const bBot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), mat(0xfdf6e3, { roughness: 0.5 }));
+  bobber.add(bTop, bBot);
+  bobber.position.set(-1.95, 0.05, 0.5);
+  jetty.add(bobber);
+  jetty.position.set(lagoonR + 0.4, 0, -boardSpan * 0.35);
+  jetty.rotation.y = Math.PI;
+  g.add(jetty);
+
+  // lily pads drifting on the pond edge (outside the play grid)
+  const pads = [];
+  for (let i = 0; i < 7; i += 1) {
+    const a = 0.5 + (i / 7) * Math.PI * 2;
+    const r = lagoonR * (0.9 + (i % 2) * 0.14);
+    const pad = new THREE.Mesh(
+      new THREE.CircleGeometry(0.38 + (i % 3) * 0.12, 14, 0.4, Math.PI * 1.8),
+      mat(0x3f9a52, { roughness: 0.9, side: THREE.DoubleSide })
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(Math.cos(a) * r, 0.045, Math.sin(a) * r);
+    pad.userData.phase = i * 1.3;
+    pads.push(pad);
+    g.add(pad);
+    if (i % 3 === 0) {
+      const bloom = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.16, 6), mat(0xffb7d5, { roughness: 0.6 }));
+      bloom.position.set(Math.cos(a) * r, 0.14, Math.sin(a) * r);
+      g.add(bloom);
+    }
+  }
+
+  // cattails + reeds around the bank
+  const reeds = [];
+  for (let i = 0; i < 10; i += 1) {
+    const a = (i / 10) * Math.PI * 2 + 0.9;
+    const r = bankR + 0.5 + Math.random() * 0.8;
+    const c = cattail(0.9 + Math.random() * 0.5);
+    c.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+    c.userData.phase = Math.random() * 6;
+    reeds.push(c);
+    g.add(c);
+  }
+
+  // mid/far: bushes, a weeping willow silhouette, hills
+  for (const [x, z, sc] of [[-9, -12, 1.6], [10, -12, 1.3], [12, 8, 1.5], [-12, 7, 1.2]]) {
+    const bush = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), mat(0x6fbf6a, { roughness: 1 }));
+    bush.scale.set(sc * 1.4, sc * 0.9, sc * 1.2);
+    bush.position.set(x, 0.3, z);
+    g.add(bush);
+  }
+  const willow = new THREE.Group();
+  const wTrunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 3.4, 7), mat(0x6b4a2e));
+  wTrunk.position.y = 1.7;
+  willow.add(wTrunk);
+  const crown = new THREE.Mesh(new THREE.SphereGeometry(2.6, 12, 9), mat(0x74c184, { roughness: 1 }));
+  crown.scale.y = 0.85;
+  crown.position.y = 4.2;
+  willow.add(crown);
+  const strands = [];
+  for (let i = 0; i < 8; i += 1) {
+    const a = (i / 8) * Math.PI * 2;
+    const strand = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.02, 2.2, 4), mat(0x6fbf6a));
+    strand.position.set(Math.cos(a) * 2.3, 3.0, Math.sin(a) * 2.3);
+    strand.userData.phase = i;
+    strands.push(strand);
+    willow.add(strand);
+  }
+  willow.position.set(-7, 0, -16);
+  g.add(willow);
+
+  for (const [x, z, sc, h] of [[-16, -34, 15, 9], [14, -32, 18, 12], [32, -16, 13, 8]]) {
+    const hill = new THREE.Mesh(new THREE.ConeGeometry(sc, h, 9), mat(0x8cc794, { roughness: 1 }));
+    hill.position.set(x, h / 2 - 1.4, z);
+    g.add(hill);
+  }
+
+  const clouds = [];
+  for (const [x, y, z, sc] of [[-11, 8, -14, 1.6], [10, 9, -12, 1.2], [2, 10, -19, 2.0]]) {
+    const c = cloud(sc);
+    c.position.set(x, y, z);
+    clouds.push(c);
+    g.add(c);
+  }
+
+  // dragonflies darting over the pond
+  const dragonflies = [];
+  for (let i = 0; i < 3; i += 1) {
+    const dfly = flyer([0x5fd0e8, 0xb388ff, 0x8fe06a][i], 0.45, "flat");
+    dfly.userData.orbit = { r: 4.5 + i * 2, h: 1.2 + i * 0.5, speed: 0.5 + i * 0.15, phase: i * 2.2 };
+    dragonflies.push(dfly);
+    g.add(dfly);
+  }
+
+  const sparkles = particleField(45, 0xfff8d0, 0.11, 12, 4);
+  g.add(sparkles);
+
+  g.userData.animate = (t) => {
+    water.material.uniforms.uTime.value = t;
+    bobber.position.y = 0.05 + Math.sin(t * 1.8) * 0.06;
+    rod.rotation.z = 0.9 + Math.sin(t * 1.1) * 0.02;
+    pads.forEach((pad) => {
+      pad.position.y = 0.045 + Math.sin(t * 1.4 + pad.userData.phase) * 0.02;
+      pad.rotation.z = Math.sin(t * 0.7 + pad.userData.phase) * 0.1;
+    });
+    reeds.forEach((c) => {
+      c.rotation.z = Math.sin(t * 1.5 + c.userData.phase) * 0.06;
+    });
+    strands.forEach((st) => {
+      st.rotation.x = Math.sin(t * 1.3 + st.userData.phase) * 0.08;
+    });
+    for (const dfly of dragonflies) {
+      const o = dfly.userData.orbit;
+      const a = t * o.speed + o.phase;
+      dfly.position.set(
+        Math.cos(a) * o.r + Math.sin(t * 2.3 + o.phase) * 0.8,
+        o.h + Math.sin(t * 3.1 + o.phase) * 0.4,
+        Math.sin(a) * o.r
+      );
+      dfly.rotation.y = -a - Math.PI / 2;
+      dfly.userData.flap(t + o.phase, 18);
+    }
+    clouds.forEach((c, i) => {
+      c.position.x += Math.sin(t * 0.07 + i) * 0.003;
+    });
+    sparkles.userData.update(t);
+  };
+  return g;
+}
+
+const BUILDERS = { ozean, weltraum, dino, teich };
 
 export function buildEnvironment(worldId, boardSpan) {
   return (BUILDERS[worldId] || ozean)(boardSpan);
