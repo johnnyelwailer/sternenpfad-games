@@ -247,6 +247,7 @@ function startPlacement(player) {
     },
   });
 
+  SND.startAmbient(S.worlds[idx]);
   const who = S.mode === "hotseat" ? `Spieler ${player + 1}` : "Du";
   status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
   show(null);
@@ -365,6 +366,7 @@ function beginTurn() {
   renderChips(other(S.viewer));
 
   if (S.turn === S.viewer) {
+    SND.startAmbient(S.worlds[target]);
     SCENE.focusBoard(slotFor(target));
     SCENE.clearInteraction();
     SCENE.setTapMode(slotFor(target), (x, y) => handleTap(x, y));
@@ -375,6 +377,7 @@ function beginTurn() {
         : `Du bist dran! Such ${world.words.boardIn}!`
     );
   } else {
+    SND.startAmbient(S.worlds[S.viewer]);
     SCENE.clearInteraction();
     SCENE.focusBoard(slotFor(S.viewer));
     status(S.mode === "ai" ? "Robo sucht gerade …" : "Dein Mitspieler sucht gerade …");
@@ -775,6 +778,7 @@ function rematch() {
 
 function goHome() {
   S.phase = "title";
+  SND.stopAmbient();
   if (S.net) {
     S.net.destroy();
     S.net = null;
@@ -855,7 +859,14 @@ function boot() {
     SND.unlock();
     SND.setMuted(!SND.isMuted());
     syncMute();
-    if (!SND.isMuted()) SND.tap();
+    if (SND.isMuted()) {
+      SND.stopAmbient();
+    } else {
+      SND.tap();
+      if (S.phase === "place" || S.phase === "battle") {
+        SND.startAmbient(S.worlds[S.phase === "place" ? S.placingPlayer : other(S.turn)]);
+      }
+    }
   });
 
   if ("serviceWorker" in navigator) {
