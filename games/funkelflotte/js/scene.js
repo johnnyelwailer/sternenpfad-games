@@ -1606,6 +1606,11 @@ export function currentFocus() {
   return focused;
 }
 
+// external nudge for dramatic moments (roars, stomps)
+export function kick(strength = 0.5) {
+  camKick = Math.max(camKick, strength);
+}
+
 // ----------------------------------------------------------- interaction
 
 export function setTapMode(slot, handler) {

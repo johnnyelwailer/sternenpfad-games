@@ -43,9 +43,19 @@ export function createBoss(rng = Math.random, { size = 8, shots = BOSS_SHOTS } =
     wounds: [], // wounded segment indexes (0..BOSS_SIZE-1)
     shotsLeft: shots,
     shotCount: 0,
+    moves: 0, // total moves taken — every 3rd one is a ROAR
+    limp: false, // toggles once wounded 3+: it only moves every 2nd time
     marks: {}, // "x,y" -> { dist, at }
     defeated: false,
   };
+}
+
+// wounded monsters limp: with 3+ wounds they sit out every other move.
+// Call once per move opportunity; true = the monster stays put.
+export function bossLimps(st) {
+  if (st.wounds.length < 3) return false;
+  st.limp = !st.limp;
+  return st.limp;
 }
 
 // clamp-place the monster during setup; tapping its body rotates it
@@ -118,7 +128,12 @@ export function moveBoss(st, dx, dy) {
   if (!fits(st, st.boss.x + dx, st.boss.y + dy, st.boss.dir)) return false;
   st.boss.x += dx;
   st.boss.y += dy;
+  st.moves += 1;
   return true;
+}
+
+export function bossRoars(st) {
+  return st.moves > 0 && st.moves % 3 === 0;
 }
 
 // robo monster: shuffles away from the last shot, with some wobble

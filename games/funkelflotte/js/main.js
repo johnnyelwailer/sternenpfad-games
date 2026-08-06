@@ -2024,6 +2024,14 @@ function chaseStatus(prefix = "") {
   status(`${lead}Fang ${fridoName()}! 🔦 ${st ? st.shotsLeft : ""} Schüsse übrig`);
 }
 
+// hot-and-cold flavor for the chase — hearts race when you're close
+function chaseWarmth(dist) {
+  if (dist <= 1) return "🔥 GANZ NAH!";
+  if (dist === 2) return "Heiß!";
+  if (dist === 3) return "Warm …";
+  return "Brrr, kalt.";
+}
+
 function setupChaseBoard() {
   S.viewer = 0;
   applyUiWorld(S.worlds[0]);
@@ -2132,6 +2140,7 @@ function chaseSeekTap(x, y) {
     return;
   }
   SND.plop();
+  SND.heartbeat(res.dist);
   SCENE.applyShot("mine", x, y, "miss", { sonarDist: res.dist });
   for (const k of res.faded) {
     const [fx, fy] = k.split(",").map(Number);
@@ -2145,7 +2154,7 @@ function chaseSeekTap(x, y) {
   if (S.chase.kind === "ai") {
     CHASE.roboMove(st, { x, y });
     SND.whoosh();
-    chaseStatus("Husch — weitergeflitzt!");
+    chaseStatus(chaseWarmth(res.dist));
   } else {
     // hotseat: the hider secretly moves via the eyes-closed overlay
     S.inputLocked = true;
@@ -2358,6 +2367,7 @@ function handleChaseMessage(msg) {
         break;
       }
       SND.plop();
+      SND.heartbeat(msg.dist);
       S.chase.marks[E.key(msg.x, msg.y)] = true;
       SCENE.applyShot("mine", msg.x, msg.y, "miss", { sonarDist: msg.dist });
       for (const k of msg.faded || []) {
@@ -2370,7 +2380,7 @@ function handleChaseMessage(msg) {
         chaseEnd(false);
         break;
       }
-      status(`Er huscht gerade weiter … 🔦 ${msg.shotsLeft} Schüsse übrig`);
+      status(`${chaseWarmth(msg.dist)} Er huscht weiter … 🔦 ${msg.shotsLeft} Schüsse übrig`);
       break;
     }
     case "c-moved": {
@@ -2537,12 +2547,31 @@ function bossSeekTap(x, y) {
   }
 
   if (S.boss.kind === "ai") {
-    BOSS.roboBossMove(st, { x, y });
-    SND.whoosh();
+    if (BOSS.bossLimps(st)) {
+      status(`${bossName()} humpelt und bleibt stehen! Jetzt hast du es!`);
+    } else {
+      BOSS.roboBossMove(st, { x, y });
+      SND.whoosh();
+      if (BOSS.bossRoars(st)) bossRoar();
+    }
   } else {
+    if (BOSS.bossLimps(st)) {
+      toast(`${bossName()} humpelt und bleibt stehen! 🩹`);
+      S.inputLocked = false;
+      bossHunterStatus(st.wounds.length, st.shotsLeft, "Es kann nicht fliehen —");
+      return;
+    }
     S.inputLocked = true;
     setTimeout(() => openMoveOverlay("boss"), FAST ? 50 : 900);
   }
+}
+
+// ROAAAR! screen shake + growl — pure drama, the monster is furious
+function bossRoar() {
+  SND.growl();
+  SCENE.kick(0.8);
+  if (navigator.vibrate) navigator.vibrate([80, 40, 120]);
+  toast(`👣 ROAAAR! ${bossName()} ist wütend!`, 1800);
 }
 
 function bossMoveTap(dx, dy) {
@@ -2550,9 +2579,11 @@ function bossMoveTap(dx, dy) {
   if (BOSS.moveBoss(st, dx, dy)) {
     SND.whoosh();
     $("#chase-move").hidden = true;
+    const roar = BOSS.bossRoars(st);
+    if (roar) bossRoar();
     if (S.boss.kind === "online") {
       SCENE.moveCreature("mine", bossShipOf(st));
-      S.net.send({ t: "b-moved" });
+      S.net.send({ t: "b-moved", roar });
       status(`🙈 Stapf clever! Der Jäger hat noch 🔦 ${st.shotsLeft} Schüsse.`);
     } else {
       S.inputLocked = false;
@@ -2718,6 +2749,12 @@ function handleBossMessage(msg) {
           break;
         }
       }
+      if (BOSS.bossLimps(st)) {
+        toast(`${bossName()} humpelt und bleibt stehen! 🩹`);
+        S.net.send({ t: "b-moved", limped: true });
+        status(`🙈 Autsch! Der Jäger hat noch 🔦 ${st.shotsLeft} Schüsse.`);
+        break;
+      }
       openMoveOverlay("boss");
       break;
     }
@@ -2752,7 +2789,12 @@ function handleBossMessage(msg) {
     case "b-moved": {
       if (S.boss?.role !== "hunter") break;
       S.inputLocked = false;
-      bossHunterStatus(S.boss.wounds, S.boss.shotsLeft, "Es ist weitergestapft — jag es!");
+      if (msg.roar) bossRoar();
+      bossHunterStatus(
+        S.boss.wounds,
+        S.boss.shotsLeft,
+        msg.limped ? "Es humpelt und konnte nicht fliehen!" : "Es ist weitergestapft — jag es!"
+      );
       break;
     }
     default:
@@ -2801,10 +2843,13 @@ function startPuzzle() {
   SND.startAmbient(worldId);
   show(null);
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   puzzleStatus();
   renderChips(0);
+  toast("⭐⭐⭐ gibt es für höchstens 1 Fehlgrabung!", 2600);
 }
 
 function puzzleStatus(prefix = "") {
@@ -2878,8 +2923,17 @@ function puzzleEnd(won) {
   const stickerBox = $("#win-sticker");
   stickerBox.hidden = true;
   if (won) {
-    $("#win-title").textContent = "Rätsel gelöst!";
-    $("#win-sub").textContent = world.words.win;
+    // star rating: fewer wrong digs = more stars, 3 stars = extra sticker
+    const misses = PUZZLE_SPADES - S.puzzle.spades;
+    const stars = misses <= 1 ? 3 : misses <= 3 ? 2 : 1;
+    $("#win-title").textContent = `Rätsel gelöst! ${"⭐".repeat(stars)}`;
+    $("#win-sub").textContent =
+      stars === 3
+        ? "PERFEKT geknobelt — dafür gibt es einen Extra-Sticker!"
+        : stars === 2
+          ? `Stark! Nur ${misses} Fehlgrabungen. Schaffst du es mit höchstens einer?`
+          : world.words.win;
+    if (flag("stickers") && stars === 3) PROG.awardSticker(S.worlds[0]);
     if (flag("stickers")) {
       const r = PROG.awardSticker(S.worlds[0]);
       const creature = getWorld(r.worldId).creatures[r.idx];

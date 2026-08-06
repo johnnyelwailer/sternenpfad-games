@@ -108,6 +108,24 @@ export function whoosh() {
   noise(0, 0.3, 0.06, 500);
 }
 
+// monster roar: low, mean, and a little too close
+export function growl() {
+  tone(72, 0, 0.5, "sawtooth", 0.2, 45);
+  tone(54, 0.08, 0.55, "sawtooth", 0.16, 36);
+  noise(0, 0.5, 0.05, 180);
+}
+
+// proximity heartbeat for the chase: the closer, the faster it thumps
+export function heartbeat(dist) {
+  const d = Math.min(4, Math.max(1, dist));
+  const thumps = 5 - d; // 4 at dist 1 … 1 at dist 4+
+  const gap = 0.12 + d * 0.05;
+  for (let i = 0; i < thumps; i += 1) {
+    tone(95 + (4 - d) * 18, i * gap, 0.09, "sine", 0.2, 58);
+    tone(60, i * gap + 0.045, 0.07, "sine", 0.12, 45);
+  }
+}
+
 // ---------------------------------------------------------------- ambient
 // gentle looping soundscape per world (waves / space hum / jungle)
 
