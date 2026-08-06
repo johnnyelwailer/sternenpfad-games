@@ -999,6 +999,98 @@ test("rapid double taps fire only one shot", async ({ page }) => {
   expect(marked.second).toBeNull();
 });
 
+test("resume: a refresh mid-battle restores the robo game", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+  const [cell] = await missCells(page, 1);
+  await tapWhenMyTurn(page, cell.x, cell.y);
+  await waitMyTurn(page);
+
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  // straight back into the battle, marks intact
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("battle");
+  expect(
+    await page.evaluate((k) => window.__FF.marksOn(1)[k], `${cell.x},${cell.y}`)
+  ).toBe("miss");
+  // and the game is playable
+  await waitMyTurn(page);
+  const [next] = await missCells(page, 1);
+  await tapWhenMyTurn(page, next.x, next.y);
+});
+
+test("resume: an online game survives a guest refresh", async ({ browser }) => {
+  test.setTimeout(180000);
+  const ctxA = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const ctxB = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const host = await ctxA.newPage();
+  const guest = await ctxB.newPage();
+  for (const p of [host, guest]) {
+    await p.addInitScript(() => localStorage.setItem("ff-muted", "1"));
+  }
+
+  await host.goto(`${GAME}?${PS}`);
+  await host.waitForFunction(() => !!window.__FF);
+  await host.evaluate(() => window.__FF.setFast());
+  await host.locator('[data-mode="online"]').click();
+  await host.locator("#btn-host").click();
+  await expect(host.locator("#host-code")).not.toHaveText("····", { timeout: 20000 });
+  const code = (await host.locator("#host-code").textContent()).trim();
+
+  await guest.goto(`${GAME}?${PS}&join=${code}`);
+  await guest.waitForFunction(() => !!window.__FF);
+  await guest.evaluate(() => window.__FF.setFast());
+  await guest.locator("#btn-worldpick-go").click();
+  await expect(host.locator("#screen-worldpick")).toHaveClass(/active/, { timeout: 30000 });
+  await host.locator("#btn-worldpick-go").click();
+  await expect(host.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
+  await expect(guest.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
+  await host.locator("#btn-place-done").click();
+  await guest.locator("#btn-place-done").click();
+  await expect(host.locator("#status")).toContainText(/dran|sucht/, { timeout: 20000 });
+  await expect(guest.locator("#status")).toContainText(/dran|sucht/, { timeout: 20000 });
+
+  // the guest's browser dies mid-battle …
+  await guest.reload();
+  await guest.waitForFunction(() => !!window.__FF);
+  // … and finds its way back into the same game
+  await expect.poll(() => guest.evaluate(() => window.__FF.state.phase)).toBe("battle");
+  await expect
+    .poll(() => guest.evaluate(() => window.__FF.state.resumeOk === true), { timeout: 30000 })
+    .toBe(true);
+  await expect
+    .poll(() => host.evaluate(() => !window.__FF.state.inputLocked || window.__FF.state.turn === 1), {
+      timeout: 20000,
+    })
+    .toBe(true);
+
+  // whoever's turn it is can keep shooting
+  const guestTurn = await guest.evaluate(() => window.__FF.state.turn === 0);
+  const active = guestTurn ? guest : host;
+  const target = await active.evaluate(() => {
+    const marks = window.__FF.marksOn(1) || {};
+    for (let y = 0; y < 8; y += 1) {
+      for (let x = 0; x < 8; x += 1) {
+        if (!marks[`${x},${y}`]) return { x, y };
+      }
+    }
+    return null;
+  });
+  await active.evaluate(([x, y]) => window.__FF.tap(x, y), [target.x, target.y]);
+  await expect
+    .poll(
+      () => active.evaluate((k) => (window.__FF.marksOn(1) || {})[k] != null, `${target.x},${target.y}`),
+      { timeout: 15000 }
+    )
+    .toBe(true);
+
+  await ctxA.close();
+  await ctxB.close();
+});
+
 test("friends: reconnect directly without any code", async ({ browser }) => {
   test.setTimeout(120000);
   const ctxA = await browser.newContext({ viewport: { width: 340, height: 600 } });

@@ -321,6 +321,25 @@ function ensureTreasures(board) {
   return board.treasures;
 }
 
+function treasureListFor(idx) {
+  return S.mode === "online" && idx === 1 ? S.oppTreasures : S.boards[idx]?.treasures;
+}
+
+function marksFor(idx) {
+  return S.mode === "online" && idx === 1 ? S.shadow?.marks : S.boards[idx]?.shots;
+}
+
+// after any shot lands on board `idx`: do buried chests surface?
+function checkTreasureReveal(idx, x, y) {
+  if (!powersEnabled()) return;
+  const newly = PW.revealTreasures(treasureListFor(idx) ?? [], marksFor(idx) ?? {}, x, y);
+  for (const t of newly) {
+    SCENE.spawnChest(slotFor(idx), t.x, t.y);
+    SND.sparkle();
+    toast("💎 Eine Schatztruhe ist aufgetaucht!", 2200);
+  }
+}
+
 // ghost rule: count shots per board, fade old miss marks
 function ghostTick(idx, x, y, result) {
   if (!S.rules.ghost) return;
@@ -388,6 +407,7 @@ function startMode(mode) {
   S.chase = null;
   S.boss = null;
   S.journey = null;
+  clearSave();
   S.turn = 0;
   S.viewer = 0;
   S.rematchMine = false;
@@ -1035,6 +1055,7 @@ function executePower(kind, target) {
   }
   renderPowers();
   dispatchTreasureFollowup();
+  saveGame();
 }
 
 // activation timbre by temperament
@@ -1087,6 +1108,7 @@ function applySalvoResults(targetIdx, results, done) {
     setTimeout(() => {
       SND.plop();
       SCENE.applyShot(slot, r.x, r.y, r.res.result === E.MISS ? "miss" : "hit");
+      checkTreasureReveal(targetIdx, r.x, r.y);
       if (r.res.result === E.SUNK && r.res.ship) {
         SND.fanfare();
         SCENE.revealShip(slot, r.res.ship);
@@ -1148,11 +1170,9 @@ function startBattle(firstTurn) {
       PW.newPowerState(S.worlds[1], { cards }),
     ];
     for (const b of S.boards) if (b) ensureTreasures(b);
-    SCENE.renderTreasures("mine", S.boards[0]?.treasures ?? []);
-    SCENE.renderTreasures(
-      "enemy",
-      S.mode === "online" ? S.oppTreasures ?? [] : S.boards[1]?.treasures ?? []
-    );
+    // chests start buried — they surface as the search progresses
+    SCENE.renderTreasures("mine", (S.boards[0]?.treasures ?? []).filter((t) => t.revealed));
+    SCENE.renderTreasures("enemy", (treasureListFor(1) ?? []).filter((t) => t.revealed));
     if (cards) showPowerGain(PW.worldPower(S.worlds[S.viewer]), "🌍 Deine Welt-Karte");
   } else {
     S.powers = [null, null];
@@ -1166,6 +1186,7 @@ function startBattle(firstTurn) {
   show(null);
   beginTurn();
   if (S.mode === "ai" && firstTurn === 1) scheduleRoboTurn();
+  saveGame();
 }
 
 // set up camera + interaction for the current turn (from viewer's seat)
@@ -1194,6 +1215,7 @@ function beginTurn() {
     }
     S.pendingPower = null;
     renderPowers();
+    saveGame();
   } else {
     renderPowers();
     SND.startAmbient(S.worlds[S.viewer]);
@@ -1288,6 +1310,7 @@ function showShotResult(idx, x, y, res, done) {
     { sonarDist }
   );
   ghostTick(idx, x, y, res.result);
+  checkTreasureReveal(idx, x, y);
   if (navigator.vibrate) {
     navigator.vibrate(res.result === E.SUNK ? [60, 40, 90] : res.result === E.HIT ? 40 : 15);
   }
@@ -1327,6 +1350,7 @@ function showShotResult(idx, x, y, res, done) {
     );
     renderChips(other(S.viewer));
   }
+  saveGame();
   setTimeout(done, FAST ? 50 : res.result === E.SUNK ? 1200 : 500);
 }
 
@@ -1733,6 +1757,11 @@ function wireNet() {
   S.net.onMessage = (msg) => handleNetMessage(msg);
   S.net.onClose = () => {
     if (S.phase === "over") return;
+    // mid-battle drop: hold the fort and let the opponent reconnect
+    if (S.phase === "battle" && S.mode === "online" && S.oppPid) {
+      enterReconnectWait();
+      return;
+    }
     toast("Die Verbindung ist weg.", 2600);
     goHome();
   };
@@ -1919,7 +1948,7 @@ function handleNetMessage(msg) {
         break;
       }
 
-      S.net.send({
+      const resultMsg = {
         t: "result",
         x: msg.x,
         y: msg.y,
@@ -1934,7 +1963,9 @@ function handleNetMessage(msg) {
           (S.rules.sonar || msg.clover) && res.result === E.MISS
             ? E.sonarDistance(S.boards[0], msg.x, msg.y)
             : null,
-      });
+      };
+      S.net.send(resultMsg);
+      if (res.result !== E.REPEAT) S.lastResultMsg = resultMsg; // for resume replay
       if (res.result === E.REPEAT) break;
       showShotResult(0, msg.x, msg.y, res, () => {
         if (S.phase !== "battle") {
@@ -2101,6 +2132,39 @@ function handleNetMessage(msg) {
           }
         );
       }
+      break;
+    }
+    case "resume": {
+      // the opponent refreshed and is back — pick up where we stopped
+      if (S.phase !== "battle" || S.mode !== "online") break;
+      if (msg.pid && S.oppPid && msg.pid !== S.oppPid) break; // stranger
+      S.net.send({ t: "resume-ok", yourTurn: S.turn === 1, lastResult: S.lastResultMsg ?? null });
+      S.inputLocked = false;
+      beginTurn();
+      toast("🔌 Dein Mitspieler ist zurück!");
+      saveGame();
+      break;
+    }
+    case "resume-ok": {
+      if (S.phase !== "battle" || S.resumeOk) break;
+      S.resumeOk = true;
+      S.turn = msg.yourTurn ? 0 : 1;
+      // replay the one result that may have been lost in the refresh
+      const lr = msg.lastResult;
+      if (lr && lr.result && lr.result !== E.REPEAT && !S.shadow.marks[E.key(lr.x, lr.y)]) {
+        const mark = lr.result === E.MISS ? E.MISS : lr.result === E.DECOY ? E.DECOY : E.HIT;
+        S.shadow.marks[E.key(lr.x, lr.y)] = mark;
+        SCENE.applyShotQuiet("enemy", lr.x, lr.y, mark);
+        if (lr.result === E.SUNK && lr.ship) {
+          S.shadow.found.push(lr.ship);
+          for (const c of lr.revealed || []) S.shadow.marks[E.key(c.x, c.y)] = E.MISS;
+          SCENE.addCreature("enemy", { ...lr.ship, hits: [] }, { found: true });
+        }
+      }
+      S.inputLocked = false;
+      beginTurn();
+      toast("▶️ Weiter geht's!");
+      saveGame();
       break;
     }
     case "pw-done": {
@@ -3162,6 +3226,7 @@ function puzzleEnd(won) {
 
 function finishGame(winner) {
   S.phase = "over";
+  clearSave();
   SCENE.clearInteraction();
   renderPowers();
   $("#btn-rematch").textContent = "Nochmal spielen";
@@ -3480,8 +3545,13 @@ function rematch() {
 
 function goHome() {
   S.phase = "title";
+  clearSave();
   SND.stopAmbient();
   stopFriendListener();
+  if (S.reconnectNet) {
+    S.reconnectNet.destroy();
+    S.reconnectNet = null;
+  }
   S.oppPid = null;
   S.pickingWorld = false;
   if (S.net) {
@@ -3514,6 +3584,185 @@ function goHome() {
   applyUiWorld(S.worlds[0]);
   renderPowers();
   show("screen-title");
+}
+
+// ------------------------------------------------------------- resume
+// A page refresh (or crash) must not kill a running battle: the full
+// classic-game state is checkpointed continuously; online games
+// reconnect over the stable friend ids afterwards.
+
+const RESUME_KEY = "ff-resume";
+const RESUME_MAX_AGE = 3 * 60 * 60 * 1000;
+
+function saveGame() {
+  if (S.phase !== "battle" || !["ai", "hotseat", "online"].includes(S.mode)) return;
+  try {
+    localStorage.setItem(
+      RESUME_KEY,
+      JSON.stringify({
+        ts: Date.now(),
+        mode: S.mode,
+        gameMode: S.gameMode,
+        isHost: S.isHost,
+        worlds: S.worlds,
+        rules: S.rules,
+        powersOn: S.powersOn,
+        cardsOn: S.cardsOn,
+        turn: S.turn,
+        viewer: S.viewer,
+        extraTurn: S.extraTurn,
+        boards: S.boards,
+        shadow: S.shadow,
+        powers: S.powers,
+        customs: S.customs,
+        oppCustom: S.oppCustom,
+        oppTreasures: S.oppTreasures,
+        oppPid: S.oppPid,
+        lastShot: S.lastShot,
+        sonarMap: S.sonarMap,
+        ghostTrack: S.ghostTrack,
+        aiState: S.aiState,
+        journey: S.journey,
+      })
+    );
+  } catch {
+    /* storage full/private — resume is best effort */
+  }
+}
+
+function clearSave() {
+  try {
+    localStorage.removeItem(RESUME_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadSave() {
+  try {
+    const s = JSON.parse(localStorage.getItem(RESUME_KEY) || "null");
+    if (!s || !s.boards?.[0] || Date.now() - (s.ts || 0) > RESUME_MAX_AGE) return null;
+    return s;
+  } catch {
+    return null;
+  }
+}
+
+function restoreSavedGame(saved) {
+  S.mode = saved.mode;
+  S.gameMode = saved.gameMode ?? "classic";
+  S.isHost = !!saved.isHost;
+  S.worlds = saved.worlds ?? ["ozean", "ozean"];
+  S.rules = saved.rules ?? S.rules;
+  S.powersOn = !!saved.powersOn;
+  S.cardsOn = !!saved.cardsOn;
+  S.turn = saved.turn ?? 0;
+  S.viewer = saved.viewer ?? 0;
+  S.extraTurn = saved.extraTurn ?? null;
+  S.boards = saved.boards;
+  S.shadow = saved.shadow ?? null;
+  S.powers = saved.powers ?? [null, null];
+  S.customs = saved.customs ?? [{}, {}];
+  S.oppCustom = saved.oppCustom ?? null;
+  S.oppTreasures = saved.oppTreasures ?? [];
+  S.oppPid = saved.oppPid ?? null;
+  S.lastShot = saved.lastShot ?? [null, null];
+  S.sonarMap = saved.sonarMap ?? [{}, {}];
+  S.ghostTrack = saved.ghostTrack ?? [
+    { count: 0, queue: [] },
+    { count: 0, queue: [] },
+  ];
+  S.aiState = saved.aiState ?? createAiState("leicht");
+  S.journey = saved.journey ?? null;
+  S.phase = "battle";
+  syncRuleChips();
+  applyUiWorld(S.worlds[S.mode === "hotseat" ? S.turn : 0]);
+  SCENE.setupBoard("mine", S.worlds[0]);
+  SCENE.setupBoard("enemy", S.worlds[1]);
+  SCENE.setCustomization("mine", customFor(0));
+  SCENE.setCustomization("enemy", customFor(1));
+  if (flag("powers") && S.powersOn) {
+    SCENE.renderTreasures("mine", (S.boards[0]?.treasures ?? []).filter((t) => t.revealed));
+    SCENE.renderTreasures("enemy", (treasureListFor(1) ?? []).filter((t) => t.revealed));
+  }
+  syncCreatureVisibility();
+  replayMarks(0);
+  replayMarks(1);
+  show(null);
+  $("#btn-shuffle").hidden = true;
+  $("#btn-opts").hidden = true;
+  $("#btn-place-done").hidden = true;
+  $("#btn-endturn").hidden = true;
+  renderPowers();
+}
+
+// refresher side: knock on the opponent's stable id and ask to resume
+function reconnectAfterRefresh() {
+  status("🔌 Verbinde wieder mit deinem Mitspieler …");
+  S.inputLocked = true;
+  S.resumeOk = false;
+  S.net = new Net();
+  wireNet();
+  S.net
+    .join(S.oppPid)
+    .then(() => {
+      let tries = 0;
+      const ping = setInterval(() => {
+        if (S.resumeOk || S.phase !== "battle" || !S.net) {
+          clearInterval(ping);
+          return;
+        }
+        tries += 1;
+        if (tries > 12) {
+          clearInterval(ping);
+          toast("Dein Mitspieler ist nicht mehr erreichbar.", 2800);
+          clearSave();
+          goHome();
+          return;
+        }
+        S.net.send({ t: "resume", pid: PID });
+      }, 2000);
+      S.net.send({ t: "resume", pid: PID });
+    })
+    .catch(() => {
+      toast("Dein Mitspieler ist nicht mehr erreichbar.", 2800);
+      clearSave();
+      goHome();
+    });
+}
+
+// survivor side: the line dropped mid-battle — wait for them to return
+function enterReconnectWait() {
+  status("🔌 Verbindung verloren — warte auf deinen Mitspieler …");
+  S.inputLocked = true;
+  SCENE.clearInteraction();
+  if (S.net) {
+    S.net.destroy();
+    S.net = null;
+  }
+  const net = new Net();
+  S.reconnectNet = net;
+  net.onMessage = (m) => handleNetMessage(m);
+  net.onClose = () => {};
+  net.onStatus = (st) => {
+    if (st === "connected" && S.reconnectNet === net) {
+      S.reconnectNet = null;
+      S.net = net;
+      wireNet();
+    }
+  };
+  net.host(PID).catch(() => {
+    if (S.reconnectNet === net) S.reconnectNet = null;
+  });
+  setTimeout(() => {
+    if (S.reconnectNet === net && S.phase === "battle" && S.mode === "online") {
+      net.destroy();
+      S.reconnectNet = null;
+      toast("Die Verbindung ist weg.", 2600);
+      clearSave();
+      goHome();
+    }
+  }, 120000);
 }
 
 // ------------------------------------------------------------- updates
@@ -3834,11 +4083,31 @@ function boot() {
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) checkForUpdate();
   });
+  // checkpoint the running game when the app is backgrounded or closed
+  window.addEventListener("pagehide", saveGame);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) saveGame();
+  });
+
+  // resume a battle that a refresh (or crash) interrupted — this wins
+  // over a stale ?join= deep link still sitting in the URL
+  const savedGame = loadSave();
+  if (savedGame) {
+    restoreSavedGame(savedGame);
+    if (S.mode === "online") {
+      reconnectAfterRefresh();
+    } else {
+      S.inputLocked = false;
+      beginTurn();
+      if (S.mode === "ai" && S.turn === 1) scheduleRoboTurn();
+      toast("▶️ Spiel fortgesetzt!", 2400);
+    }
+  }
 
   // deep link: ?join=CODE — let the guest pick their world first
   const params = new URLSearchParams(window.location.search);
   const joinCode = normalizeCode(params.get("join"));
-  if (joinCode.length === 4) {
+  if (!savedGame && joinCode.length === 4) {
     S.mode = "online";
     showWorldPick({
       title: "Wähl deine Welt!",

@@ -168,6 +168,26 @@ export function treasureAt(board, x, y) {
   return (board.treasures ?? []).some((t) => t.x === x && t.y === y);
 }
 
+// Chests start buried: they surface when a shot lands right next to
+// them, or once the board has seen enough shots. Works on either a
+// real board's shots or the shooter's shadow marks. Returns the
+// treasures that JUST surfaced.
+export const TREASURE_REVEAL_SHOTS = 6;
+
+export function revealTreasures(treasures, marks, x = null, y = null) {
+  const out = [];
+  const shots = Object.keys(marks ?? {}).length;
+  for (const t of treasures ?? []) {
+    if (t.revealed) continue;
+    const near = x != null && Math.max(Math.abs(t.x - x), Math.abs(t.y - y)) <= 1;
+    if (near || shots >= TREASURE_REVEAL_SHOTS) {
+      t.revealed = true;
+      out.push(t);
+    }
+  }
+  return out;
+}
+
 // ------------------------------------------------------ info helpers
 // (computed on the DEFENDER's board — online they answer over the wire)
 

@@ -894,6 +894,27 @@ export function renderTreasures(slot, positions) {
   }
 }
 
+// a buried chest surfaces mid-game with a sparkle pop
+export function spawnChest(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  if (!d.chests) d.chests = new Map();
+  const key = `${x},${y}`;
+  if (d.chests.has(key)) return;
+  const tile = d.tiles.get(key);
+  if (!tile) return;
+  const chest = buildTreasureChest(d.worldId);
+  chest.position.set(tile.position.x, 0.05, tile.position.z);
+  chest.rotation.y = 0.4;
+  chest.userData.phase = Math.random() * 7;
+  d.root.add(chest);
+  d.chests.set(key, chest);
+  chest.scale.setScalar(0.01);
+  starburst(d, tile.position);
+  ringWave(d, tile.position, 0xffc94d);
+  tween((v) => chest.scale.setScalar(v), { dur: 0.7, ease: Ease.outBack });
+}
+
 // rich dig-up moment: lid flies open, gold fountains out, chest fades
 export function openTreasure(slot, x, y) {
   const d = dioramas[slot];
@@ -1910,31 +1931,42 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
 
   // Board switch: PLATE FLIP. The camera whips over the top of the old
   // board until it looks straight down (board fills the frame), then the
-  // new board tilts up into view on the other side. Fast and direct —
-  // no journey through the sky.
+  // new board tilts up into view on the other side. The user's orbit
+  // azimuth rides along the whole way — no snap when the view was
+  // rotated or tilted beforehand.
   const fromCx = fromPos.x > DIORAMA_GAP / 2 ? DIORAMA_GAP : 0;
   const fromCenter = new THREE.Vector3(fromCx, 0, 0);
   const toCenter = new THREE.Vector3(cx, 0, 0);
   const fromDist = Math.max(9, fromPos.distanceTo(fromCenter));
   const eTop = Math.PI * 0.49; // nearly straight down
-  const orbit = (center, e, r) =>
-    new THREE.Vector3(center.x, Math.sin(e) * r, Math.cos(e) * r);
-  const fromElev = Math.asin(Math.min(1, Math.max(0, (fromPos.y - 0) / fromDist)));
+  const orbitPos = (center, e, r, a) =>
+    new THREE.Vector3(
+      center.x + Math.cos(e) * Math.sin(a) * r,
+      Math.sin(e) * r,
+      Math.cos(e) * Math.cos(a) * r
+    );
+  const fromElev = Math.asin(Math.min(1, Math.max(0, fromPos.y / fromDist)));
+  // current + target azimuth, interpolated along the shortest arc
+  const fromA = Math.atan2(fromPos.x - fromCenter.x, fromPos.z - fromCenter.z);
+  const toA = orbit.azim;
+  let dA = toA - fromA;
+  dA = Math.atan2(Math.sin(dA), Math.cos(dA));
 
   camTween = tween(
     (v) => {
       // one global ease drives both halves so the angular velocity is
       // continuous through the top of the flip — no midpoint hitch
       const E = Ease.inOutCubic(v);
+      const a = fromA + dA * E;
       if (E < 0.5) {
         const k = E * 2;
         const e = fromElev + (eTop - fromElev) * k;
-        camera.position.copy(orbit(fromCenter, e, fromDist));
+        camera.position.copy(orbitPos(fromCenter, e, fromDist, a));
         camBase.look.lerpVectors(fromLook, fromCenter, k);
       } else {
         const k = (E - 0.5) * 2;
         const e = eTop + (elevation - eTop) * k;
-        camera.position.copy(orbit(toCenter, e, dist));
+        camera.position.copy(orbitPos(toCenter, e, dist, a));
         camBase.look.lerpVectors(toCenter, look, k);
       }
       camera.lookAt(camBase.look);
