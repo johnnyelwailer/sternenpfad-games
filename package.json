@@ -2,10 +2,17 @@
   "name": "@sternenpfad/games",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "workspaces": ["games/*", "packages/*"],
   "scripts": {
-    "dev": "node scripts/serve.mjs 8123 .",
+    "dev": "npm --workspace @sternenpfad/sternenpfad run dev",
+    "dev:funkelflotte": "node scripts/serve.mjs 8123 .",
     "dev:peer": "node scripts/peer-server.mjs 9200",
-    "test": "npm run test:unit && npm run test:e2e",
+    "lint": "npm --workspace @sternenpfad/sternenpfad run lint",
+    "test": "npm --workspace @sternenpfad/sternenpfad run test",
+    "test:play": "npm --workspace @sternenpfad/sternenpfad run test:play",
     "test:unit": "node --test \"games/funkelflotte/tests/*.test.mjs\"",
     "test:e2e": "playwright test",
     "build:pages": "node scripts/build-pages.mjs",

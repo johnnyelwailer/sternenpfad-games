@@ -9,8 +9,8 @@ Monorepo scaffold for multiple story-driven programming games.
 - `packages/` — small shared runtime contracts and utilities
 - `docs/` — design, production, and playtest documentation
 
-The first game, Sternenpfad, will be added under `games/sternenpfad/` in the
-next step.
+The first game, Sternenpfad, lives under `games/sternenpfad/` and owns its
+scene, assets, tests, local runtime, and static Pages entrypoint.
 
 ## Games
 
@@ -35,9 +35,10 @@ Development:
 
 ```bash
 npm ci
-npm run dev        # static server on :8123 → /games/funkelflotte/
-npm run dev:peer   # local PeerJS signaling server on :9200 (optional)
-npm test           # unit tests (engine, AI) + Playwright e2e tests
+npm run dev:funkelflotte  # static server on :8123 → /games/funkelflotte/
+npm run dev:peer          # local PeerJS signaling server on :9200 (optional)
+npm run test:unit         # engine + AI unit tests
+npm run test:e2e          # Playwright browser tests (incl. two-device P2P)
 ```
 
 ## Deployment
@@ -49,5 +50,6 @@ GitHub Pages is the deployment target. Pushes to `main` run
 npm run deploy:pages
 ```
 
-The workflow builds `dist/`, uploads it as a Pages artifact, and publishes it
-with GitHub's Pages deployment actions.
+The workflow assembles `dist/` (Sternenpfad at `/`, Funkel-Flotte at
+`/funkelflotte/`), uploads it as a Pages artifact, and publishes it with
+GitHub's Pages deployment actions.
