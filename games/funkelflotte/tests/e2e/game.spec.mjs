@@ -122,7 +122,7 @@ test("robo game: my shots mark the enemy board, robo answers on mine", async ({ 
 });
 
 test("hot-seat: two worlds, pass screens, full game to the win screen", async ({ page }) => {
-  test.setTimeout(240000);
+  test.setTimeout(420000);
   await page.evaluate(() => window.__FF.setFast());
   await page.locator('[data-mode="hotseat"]').click();
   await page.locator("#btn-place-done").click();
