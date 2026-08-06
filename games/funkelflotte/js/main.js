@@ -9,6 +9,7 @@ import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
 import * as PROG from "./progress.js";
 import { flag, setFlag, allFlags } from "./flags.js";
 import { generatePuzzle, PUZZLE_SPADES } from "./puzzle.js";
+import * as CHASE from "./chase.js";
 import * as SND from "./sound.js";
 import * as SCENE from "./scene.js";
 import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
@@ -37,6 +38,8 @@ const S = {
   customs: [{}, {}], // per board index: shipId -> { tint, hat }
   oppCustom: null, // online: opponent's map (arrives with their "ready")
   rules: { decoy: false, sonar: false, ghost: false }, // extra rules
+  gameMode: "classic", // 'classic' | 'chase' — what an online session plays
+  chase: null, // chase-mode state (see startChase)
   extraTurn: null, // player index that may keep shooting after a miss
   ghostTrack: [null, null], // per board: { count, queue } for fading marks
   sonarMap: [{}, {}], // per board: "x,y" -> sonar distance (for replay)
@@ -318,6 +321,8 @@ function startMode(mode) {
   SND.whoosh();
   goFullscreen();
   S.mode = mode;
+  S.gameMode = "classic";
+  S.chase = null;
   S.turn = 0;
   S.viewer = 0;
   S.rematchMine = false;
@@ -521,6 +526,10 @@ function shuffleFleet() {
 
 function placementDone() {
   SND.tap();
+  if (S.mode === "chase") {
+    chaseHidingDone();
+    return;
+  }
   SCENE.clearInteraction();
   closeStylePanel();
   $("#btn-shuffle").hidden = true;
@@ -934,14 +943,23 @@ function handleNetMessage(msg) {
       // guest announces itself (+ its world); host answers idempotently
       if (msg.world) S.worlds[1] = msg.world;
       if (S.isHost) {
-        S.net.send({ t: "hello", v: 2, world: S.worlds[0], rules: S.rules });
-        if (S.phase === "title" || S.phase === "over") beginOnlinePlacement();
+        S.net.send({ t: "hello", v: 2, world: S.worlds[0], rules: S.rules, mode: S.gameMode });
+        if (S.phase === "title" || S.phase === "over" || S.phase === "chase") {
+          if (S.gameMode === "chase") beginChaseOnlineHider();
+          else beginOnlinePlacement();
+        }
       }
       break;
     }
     case "hello": {
-      if (S.phase !== "title" && S.phase !== "over") break;
+      if (S.phase !== "title" && S.phase !== "over" && S.phase !== "chase") break;
       S.worlds[1] = msg.world || "ozean";
+      if (msg.mode === "chase") {
+        S.gameMode = "chase";
+        beginChaseOnlineSeeker();
+        break;
+      }
+      S.gameMode = "classic";
       // the host decides the extra rules for both players
       S.rules = {
         decoy: !!msg.rules?.decoy,
@@ -1059,6 +1077,12 @@ function handleNetMessage(msg) {
       maybeRematch();
       break;
     }
+    case "c-ready":
+    case "c-shot":
+    case "c-res":
+    case "c-moved":
+      handleChaseMessage(msg);
+      break;
     default:
       break;
   }
@@ -1067,8 +1091,364 @@ function handleNetMessage(msg) {
 function maybeRematch() {
   if (!(S.rematchMine && S.rematchTheirs)) return;
   if (S.isHost) {
-    S.net.send({ t: "hello", v: 2, world: S.worlds[0] });
-    beginOnlinePlacement();
+    S.net.send({ t: "hello", v: 2, world: S.worlds[0], rules: S.rules, mode: S.gameMode });
+    if (S.gameMode === "chase") beginChaseOnlineHider();
+    else beginOnlinePlacement();
+  }
+}
+
+// --------------------------------------------------------------- chase
+
+function fridoShip(x, y) {
+  return { id: 4, size: 1, x, y, dir: "h", hits: [] };
+}
+
+function fridoName() {
+  return getWorld(S.worlds[0]).creatures[4]?.name ?? "Frido";
+}
+
+function chaseStatus(prefix = "") {
+  const lead = prefix ? `${prefix} ` : "";
+  const st = S.chase?.st;
+  status(`${lead}Fang ${fridoName()}! 🔦 ${st ? st.shotsLeft : ""} Schüsse übrig`);
+}
+
+function setupChaseBoard() {
+  S.viewer = 0;
+  applyUiWorld(S.worlds[0]);
+  SCENE.setupBoard("mine", S.worlds[0]);
+  SCENE.placeCreatures("mine", []);
+  SCENE.focusBoard("mine");
+  SCENE.clearInteraction();
+  SND.startAmbient(S.worlds[0]);
+  show(null);
+  $("#btn-shuffle").hidden = true;
+  $("#btn-style").hidden = true;
+  $("#btn-endturn").hidden = true;
+  $("#btn-place-done").hidden = true;
+  renderChips(0);
+}
+
+function startChase(kind) {
+  SND.unlock();
+  SND.whoosh();
+  goFullscreen();
+  S.mode = "chase";
+  S.phase = "chase";
+  S.gameMode = "chase";
+  S.chase = { kind, st: CHASE.createChase(), role: "seeker", waiting: false, marks: {} };
+  if (kind === "online") {
+    show("screen-online");
+    return;
+  }
+  setupChaseBoard();
+  if (kind === "ai") {
+    chaseStatus("Ein frecher Freund hat sich versteckt.");
+    SCENE.setTapMode("mine", (x, y) => chaseSeekTap(x, y));
+  } else {
+    // hotseat: player 1 hides first
+    CHASE.placeFrido(S.chase.st, 3, 4);
+    showPass({
+      title: "Spieler 1 versteckt — Spieler 2 schaut weg!",
+      sub: `Setz ${fridoName()} auf ein Feld. Danach wird gesucht!`,
+      btn: "Verstecken!",
+      action: () => beginChaseHiding(),
+    });
+  }
+}
+
+function beginChaseHiding() {
+  const st = S.chase.st;
+  show(null);
+  SCENE.placeCreatures("mine", [fridoShip(st.frido.x, st.frido.y)], { popIn: true });
+  SCENE.setTapMode("mine", (x, y) => {
+    if (CHASE.placeFrido(st, x, y)) {
+      SND.tap();
+      SCENE.moveCreature("mine", fridoShip(x, y));
+    }
+  });
+  status(`Tipp ein Feld an: Wo versteckt sich ${fridoName()}?`);
+  const done = $("#btn-place-done");
+  done.hidden = false;
+  done.disabled = false;
+  done.textContent = "Versteckt!";
+}
+
+function chaseHidingDone() {
+  SCENE.clearInteraction();
+  SCENE.placeCreatures("mine", []);
+  $("#btn-place-done").hidden = true;
+  if (S.chase.kind === "hotseat") {
+    showPass({
+      title: "Gib das Gerät an Spieler 2!",
+      sub: `Spieler 2 hat 🔦 ${S.chase.st.shotsLeft} Schüsse, um ${fridoName()} zu fangen.`,
+      btn: "Ich suche jetzt!",
+      action: () => {
+        show(null);
+        chaseStatus();
+        SCENE.setTapMode("mine", (x, y) => chaseSeekTap(x, y));
+      },
+    });
+  } else {
+    // online hider: tell the seeker we are ready
+    S.net.send({ t: "c-ready" });
+    status(`Der Sucher legt los. Halt die Ohren steif, ${fridoName()}!`);
+  }
+}
+
+// seeker taps (solo + hotseat — the full state is local)
+function chaseSeekTap(x, y) {
+  if (S.phase !== "chase" || S.inputLocked) return;
+  const st = S.chase.st;
+  if (st.marks[E.key(x, y)]) {
+    SND.tap();
+    return;
+  }
+  const res = CHASE.chaseShoot(st, x, y);
+  if (res.result === "over") return;
+  if (navigator.vibrate) navigator.vibrate(res.result === "caught" ? [60, 40, 90] : 15);
+
+  if (res.result === "caught") {
+    SND.fanfare();
+    SCENE.applyShot("mine", x, y, "hit");
+    SCENE.addCreature("mine", { ...fridoShip(x, y), hits: [{ x, y }] }, { popIn: true, found: true });
+    chaseEnd(true);
+    return;
+  }
+  SND.plop();
+  SCENE.applyShot("mine", x, y, "miss", { sonarDist: res.dist });
+  for (const k of res.faded) {
+    const [fx, fy] = k.split(",").map(Number);
+    SCENE.clearMark("mine", fx, fy);
+  }
+  if (res.escaped) {
+    SCENE.addCreature("mine", fridoShip(st.frido.x, st.frido.y), { popIn: true });
+    chaseEnd(false);
+    return;
+  }
+  if (S.chase.kind === "ai") {
+    CHASE.roboMove(st, { x, y });
+    SND.whoosh();
+    chaseStatus("Husch — weitergeflitzt!");
+  } else {
+    // hotseat: the hider secretly moves via the eyes-closed overlay
+    S.inputLocked = true;
+    setTimeout(() => openChaseMove(res.dist), FAST ? 50 : 900);
+  }
+}
+
+function openChaseMove() {
+  $("#chase-move-sub").textContent = `Verstecker: Wohin huscht ${fridoName()}?`;
+  $("#btn-peek").hidden = S.chase.kind === "online";
+  $("#chase-move").hidden = false;
+}
+
+function chaseMoveTap(dx, dy) {
+  const st = S.chase.st;
+  if (CHASE.moveFrido(st, dx, dy)) {
+    SND.whoosh();
+    closeChaseMove();
+    return;
+  }
+  if (CHASE.legalMoves(st).length === 0) {
+    toast(`${fridoName()} ist eingeklemmt und bleibt sitzen! 🙊`);
+    closeChaseMove();
+    return;
+  }
+  SND.sad();
+  toast("Da geht es nicht lang!");
+}
+
+function closeChaseMove() {
+  $("#chase-move").hidden = true;
+  if (S.chase.kind === "online") {
+    // the hider's board shows the creature — animate the sneak
+    SCENE.moveCreature("mine", fridoShip(S.chase.st.frido.x, S.chase.st.frido.y));
+    S.net.send({ t: "c-moved" });
+    chaseHiderStatus();
+    return;
+  }
+  S.inputLocked = false;
+  chaseStatus("Weitersuchen!");
+}
+
+function chaseHiderStatus() {
+  status(`🙈 Versteck dich gut! Der Sucher hat noch 🔦 ${S.chase.st.shotsLeft} Schüsse.`);
+}
+
+function chaseEnd(caught) {
+  S.phase = "over";
+  S.inputLocked = false;
+  SCENE.clearInteraction();
+  $("#chase-move").hidden = true; // never via closeChaseMove — that would send c-moved
+  const stickerBox = $("#win-sticker");
+  stickerBox.hidden = true;
+  const kind = S.chase.kind;
+  const iAmSeeker = S.chase.role === "seeker";
+  const seekerWon = caught;
+  let iWon = true;
+  if (kind === "ai") {
+    iWon = caught;
+    $("#win-title").textContent = caught ? `${fridoName()} gefangen!` : `${fridoName()} ist entwischt!`;
+    $("#win-sub").textContent = caught
+      ? "Gute Nase! Das war flink."
+      : "So ein Schlingel. Gleich nochmal?";
+  } else if (kind === "hotseat") {
+    $("#win-title").textContent = seekerWon
+      ? `Spieler 2 hat ${fridoName()} gefangen!`
+      : `${fridoName()} ist entwischt — Spieler 1 gewinnt!`;
+    $("#win-sub").textContent = "Tauscht die Rollen und spielt nochmal!";
+  } else {
+    iWon = iAmSeeker === seekerWon;
+    $("#win-title").textContent = iWon ? "Du hast gewonnen!" : "Dein Mitspieler hat gewonnen!";
+    $("#win-sub").textContent = seekerWon
+      ? iAmSeeker
+        ? `${fridoName()} gefangen! Tauscht die Geräte für den Rollentausch.`
+        : "Erwischt! Tauscht die Geräte für den Rollentausch."
+      : iAmSeeker
+        ? "Entwischt! Tauscht die Geräte für den Rollentausch."
+        : "Stark versteckt! Tauscht die Geräte für den Rollentausch.";
+  }
+  if (iWon && flag("stickers")) {
+    const r = PROG.awardSticker(S.worlds[0]);
+    const creature = getWorld(r.worldId).creatures[r.idx];
+    stickerBox.innerHTML = "";
+    const img = document.createElement("img");
+    img.alt = creature?.name ?? "";
+    img.src = creatureThumb(r.worldId, r.idx);
+    const label = document.createElement("div");
+    label.className = "sticker-label";
+    label.textContent = r.isNew
+      ? `Neuer Sticker: ${creature?.name}!`
+      : `Sticker: ${creature?.name} (schon im Album)`;
+    stickerBox.appendChild(img);
+    stickerBox.appendChild(label);
+    stickerBox.hidden = false;
+  }
+  $("#btn-rematch").textContent = "Nochmal spielen";
+  show("screen-win");
+  if (iWon) {
+    SND.bigWin();
+    SCENE.confettiRain("mine");
+  } else {
+    SND.sad();
+  }
+}
+
+// ---- online chase ----------------------------------------------------
+
+function beginChaseOnlineHider() {
+  S.mode = "chase";
+  S.phase = "chase";
+  S.chase = { kind: "online", st: CHASE.createChase(), role: "hider", marks: {} };
+  CHASE.placeFrido(S.chase.st, 3, 4);
+  setupChaseBoard();
+  beginChaseHiding();
+  $("#btn-place-done").textContent = "Versteckt!";
+}
+
+function beginChaseOnlineSeeker() {
+  S.mode = "chase";
+  S.phase = "chase";
+  S.chase = { kind: "online", st: null, role: "seeker", marks: {}, ready: false, shotsLeft: CHASE.CHASE_SHOTS };
+  setupChaseBoard();
+  S.inputLocked = true;
+  status("Dein Mitspieler versteckt sich gerade … 🙈");
+  SCENE.setTapMode("mine", (x, y) => chaseOnlineSeekTap(x, y));
+}
+
+function chaseOnlineSeekTap(x, y) {
+  if (S.phase !== "chase" || S.inputLocked || !S.chase.ready) return;
+  if (S.chase.marks[E.key(x, y)]) {
+    SND.tap();
+    return;
+  }
+  S.inputLocked = true;
+  if (!S.net.send({ t: "c-shot", x, y })) S.inputLocked = false;
+}
+
+function handleChaseMessage(msg) {
+  switch (msg.t) {
+    case "c-ready": {
+      if (S.chase?.role !== "seeker") break;
+      S.chase.ready = true;
+      S.inputLocked = false;
+      status(`Los! Fang ${fridoName()}! 🔦 ${S.chase.shotsLeft} Schüsse`);
+      break;
+    }
+    case "c-shot": {
+      // I am the hider — resolve the shot against the real state
+      if (S.chase?.role !== "hider") break;
+      const st = S.chase.st;
+      const res = CHASE.chaseShoot(st, msg.x, msg.y);
+      if (res.result === "over") break;
+      S.net.send({
+        t: "c-res",
+        x: msg.x,
+        y: msg.y,
+        result: res.result,
+        dist: res.dist,
+        faded: res.faded || [],
+        escaped: !!res.escaped,
+        shotsLeft: st.shotsLeft,
+        frido: res.result === "caught" || res.escaped ? st.frido : null,
+      });
+      if (res.result === "caught") {
+        SCENE.applyShot("mine", msg.x, msg.y, "hit");
+        chaseEnd(true);
+        break;
+      }
+      SND.plop();
+      SCENE.applyShot("mine", msg.x, msg.y, "miss", { sonarDist: res.dist });
+      for (const k of res.faded) {
+        const [fx, fy] = k.split(",").map(Number);
+        SCENE.clearMark("mine", fx, fy);
+      }
+      if (res.escaped) {
+        chaseEnd(false);
+        break;
+      }
+      openChaseMove();
+      break;
+    }
+    case "c-res": {
+      if (S.chase?.role !== "seeker") break;
+      S.chase.shotsLeft = msg.shotsLeft;
+      if (msg.result === "caught") {
+        SND.fanfare();
+        SCENE.applyShot("mine", msg.x, msg.y, "hit");
+        SCENE.addCreature(
+          "mine",
+          { ...fridoShip(msg.x, msg.y), hits: [{ x: msg.x, y: msg.y }] },
+          { popIn: true, found: true }
+        );
+        chaseEnd(true);
+        break;
+      }
+      SND.plop();
+      S.chase.marks[E.key(msg.x, msg.y)] = true;
+      SCENE.applyShot("mine", msg.x, msg.y, "miss", { sonarDist: msg.dist });
+      for (const k of msg.faded || []) {
+        delete S.chase.marks[k];
+        const [fx, fy] = k.split(",").map(Number);
+        SCENE.clearMark("mine", fx, fy);
+      }
+      if (msg.escaped) {
+        if (msg.frido) SCENE.addCreature("mine", fridoShip(msg.frido.x, msg.frido.y), { popIn: true });
+        chaseEnd(false);
+        break;
+      }
+      status(`Er huscht gerade weiter … 🔦 ${msg.shotsLeft} Schüsse übrig`);
+      break;
+    }
+    case "c-moved": {
+      if (S.chase?.role !== "seeker") break;
+      S.inputLocked = false;
+      status(`Weitersuchen! 🔦 ${S.chase.shotsLeft} Schüsse übrig`);
+      break;
+    }
+    default:
+      break;
   }
 }
 
@@ -1330,7 +1710,11 @@ function rematch() {
     startPuzzle();
     return;
   }
-  if (S.mode === "online") {
+  if (S.mode === "chase" && S.chase?.kind !== "online") {
+    startChase(S.chase.kind);
+    return;
+  }
+  if (S.mode === "online" || S.chase?.kind === "online") {
     S.rematchMine = true;
     S.net.send({ t: "rematch" });
     $("#btn-rematch").disabled = true;
@@ -1351,8 +1735,11 @@ function goHome() {
   S.boards = [null, null];
   S.shadow = null;
   S.puzzle = null;
+  S.chase = null;
+  S.gameMode = "classic";
   S.customs = [{}, {}];
   S.oppCustom = null;
+  $("#chase-move").hidden = true;
   SCENE.resetScene();
   closeStylePanel();
   $("#btn-rematch").disabled = false;
@@ -1376,6 +1763,34 @@ function boot() {
   $("#btn-album").hidden = !flag("stickers");
   $("#btn-puzzle").hidden = !flag("puzzle");
   $("#btn-puzzle").addEventListener("click", startPuzzle);
+  $("#btn-chase").hidden = !flag("chase");
+  $("#btn-chase").addEventListener("click", () => {
+    SND.tap();
+    show("screen-chase");
+  });
+  document.querySelectorAll("[data-chase]").forEach((btn) => {
+    btn.addEventListener("click", () => startChase(btn.dataset.chase));
+  });
+  document.querySelectorAll("[data-move]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const [dx, dy] = btn.dataset.move.split(",").map(Number);
+      chaseMoveTap(dx, dy);
+    });
+  });
+  const peek = $("#btn-peek");
+  peek.addEventListener("pointerdown", () => {
+    const st = S.chase?.st;
+    if (!st) return;
+    SCENE.placeCreatures("mine", [fridoShip(st.frido.x, st.frido.y)]);
+  });
+  const unpeek = () => {
+    if (S.chase && S.phase === "chase" && S.chase.kind !== "online") {
+      SCENE.placeCreatures("mine", []);
+    }
+  };
+  peek.addEventListener("pointerup", unpeek);
+  peek.addEventListener("pointercancel", unpeek);
+  peek.addEventListener("pointerleave", unpeek);
   for (const [id, k] of [
     ["#rule-decoy", "decoy"],
     ["#rule-sonar", "sonar"],
@@ -1503,6 +1918,8 @@ function boot() {
     },
     tap: (x, y) => handleTap(x, y),
     puzzleTap: (x, y) => puzzleTap(x, y),
+    chaseTap: (x, y) => chaseSeekTap(x, y),
+    chaseNetTap: (x, y) => chaseOnlineSeekTap(x, y),
     setStyle: (id, tint, hat) => setShipCustom(id, { tint, hat }),
     setRules: (r) => {
       Object.assign(S.rules, r);

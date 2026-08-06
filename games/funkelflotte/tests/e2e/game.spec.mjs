@@ -299,6 +299,107 @@ test("Knobel-Insel: running out of spades reveals the layout", async ({ page }) 
   await expect(page.locator("#win-title")).toContainText("Schaufeln");
 });
 
+test("Fang mich: catching the sneak wins, letting it escape loses", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator("#btn-chase").click();
+  await page.locator('[data-chase="ai"]').click();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("chase");
+
+  // cheat: read the hidden position and pounce
+  const frido = await page.evaluate(() => window.__FF.state.chase.st.frido);
+  await page.evaluate(([x, y]) => window.__FF.chaseTap(x, y), [frido.x, frido.y]);
+  await expect(page.locator("#screen-win")).toHaveClass(/active/, { timeout: 10000 });
+  await expect(page.locator("#win-title")).toContainText("gefangen");
+
+  // round 2: always shoot far away until the budget runs out
+  await page.locator("#btn-rematch").click();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("chase");
+  for (let i = 0; i < 12; i += 1) {
+    const done = await page.evaluate(() => window.__FF.state.phase !== "chase");
+    if (done) break;
+    await page.evaluate(() => {
+      const st = window.__FF.state.chase.st;
+      // farthest unmarked corner from the sneak
+      let best = null;
+      let bestD = -1;
+      for (const [x, y] of [[0, 0], [7, 0], [0, 7], [7, 7], [3, 3], [4, 4]]) {
+        if (st.marks[`${x},${y}`]) continue;
+        const d = Math.max(Math.abs(st.frido.x - x), Math.abs(st.frido.y - y));
+        if (d > bestD) {
+          bestD = d;
+          best = [x, y];
+        }
+      }
+      if (best && bestD > 0) window.__FF.chaseTap(best[0], best[1]);
+    });
+    await page.waitForTimeout(150);
+  }
+  await expect(page.locator("#screen-win")).toHaveClass(/active/, { timeout: 10000 });
+  await expect(page.locator("#win-title")).toContainText("entwischt");
+});
+
+test("Fang mich online: hide, sneak-move, and get caught across devices", async ({ browser }) => {
+  test.setTimeout(180000);
+  const ctxA = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const ctxB = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const host = await ctxA.newPage();
+  const guest = await ctxB.newPage();
+  for (const p of [host, guest]) {
+    await p.addInitScript(() => localStorage.setItem("ff-muted", "1"));
+  }
+
+  await host.goto(`${GAME}?${PS}`);
+  await host.waitForFunction(() => !!window.__FF);
+  await host.evaluate(() => window.__FF.setFast());
+  await host.locator("#btn-chase").click();
+  await host.locator('[data-chase="online"]').click();
+  await host.locator("#btn-host").click();
+  await expect(host.locator("#host-code")).not.toHaveText("····", { timeout: 20000 });
+  const code = (await host.locator("#host-code").textContent()).trim();
+
+  await guest.goto(`${GAME}?${PS}&join=${code}`);
+  await guest.waitForFunction(() => !!window.__FF);
+  await guest.evaluate(() => window.__FF.setFast());
+  await guest.locator("#btn-worldpick-go").click();
+
+  // host hides at a known spot and confirms
+  await expect(host.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
+  await host.evaluate(() => {
+    window.__FF.state.chase.st.frido = { x: 5, y: 5 };
+  });
+  await host.locator("#btn-place-done").click();
+
+  // guest gets the go signal, misses once → host must sneak-move
+  await expect
+    .poll(() => guest.evaluate(() => window.__FF.state.chase?.ready), { timeout: 20000 })
+    .toBe(true);
+  await guest.evaluate(() => window.__FF.chaseNetTap(0, 0));
+  await expect(host.locator("#chase-move")).toBeVisible({ timeout: 15000 });
+  // press arrows until one works (walls/marks bounce)
+  for (const dir of ["1,0", "0,1", "-1,0", "0,-1"]) {
+    if (await host.locator("#chase-move").isHidden()) break;
+    await host.locator(`[data-move="${dir}"]`).click().catch(() => {});
+    await host.waitForTimeout(200);
+  }
+  await expect(host.locator("#chase-move")).toBeHidden();
+
+  // guest pounces on the true position read from the host's state
+  await expect
+    .poll(() => guest.evaluate(() => window.__FF.state.inputLocked), { timeout: 15000 })
+    .toBe(false);
+  const frido = await host.evaluate(() => window.__FF.state.chase.st.frido);
+  await guest.evaluate(([x, y]) => window.__FF.chaseNetTap(x, y), [frido.x, frido.y]);
+
+  await expect(guest.locator("#screen-win")).toHaveClass(/active/, { timeout: 15000 });
+  await expect(guest.locator("#win-title")).toContainText("Du hast gewonnen");
+  await expect(host.locator("#screen-win")).toHaveClass(/active/, { timeout: 15000 });
+  await expect(host.locator("#win-title")).toContainText("Mitspieler");
+
+  await ctxA.close();
+  await ctxB.close();
+});
+
 test("hot-seat: two worlds, pass screens, full game to the win screen", async ({ page }) => {
   test.setTimeout(420000);
   await page.evaluate(() => window.__FF.setFast());
