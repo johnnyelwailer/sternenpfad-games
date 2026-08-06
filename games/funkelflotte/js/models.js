@@ -515,6 +515,7 @@ function funkelstern(size) {
   const s = size * 0.38 + 0.3;
   starG.scale.setScalar(s);
   starG.position.y = 0.62;
+  starG.rotation.x = -Math.PI / 2; // lie flat, face up — reads from every angle
   g.add(starG);
 
   const blinkEyes = makeEyes(starG, -0.16, 0.02, 0.16, 0.14, 0.075);
@@ -528,7 +529,7 @@ function funkelstern(size) {
   }
 
   g.userData.animate = (t) => {
-    starG.rotation.z = Math.sin(t * 1.3) * 0.2;
+    starG.rotation.z = t * 0.4; // slow lazy spin like a compass needle
     starG.position.y = 0.62 + Math.sin(t * 2.1) * 0.05;
     star.material.emissiveIntensity = 0.6 + Math.sin(t * 3.1) * 0.25;
     orbiters.forEach((o, i) => {
@@ -937,11 +938,12 @@ function flossi(size) {
 
   g.userData.animate = (t) => {
     tail.rotation.y = Math.sin(t * 3.6) * 0.5;
-    g.rotation.y = Math.sin(t * 3.6) * 0.02;
+    g.rotation.y = 0.35 + Math.sin(t * 3.6) * 0.02;
     g.position.y = Math.sin(t * 1.7) * 0.06;
     topFin.rotation.z = Math.sin(t * 2.4) * 0.12;
     blinkEyes(t);
   };
+  g.rotation.y = 0.35;
   return g;
 }
 
