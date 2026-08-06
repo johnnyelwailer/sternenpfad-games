@@ -1,0 +1,1015 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#1a1424" />
+  <title>Procedural Fox Sandbox</title>
+  <link rel="icon" href="data:," />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #1a1424;
+      color: #fff;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #view, #fallback {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #fallback-screen {
+      position: fixed;
+      inset: 0;
+      background: #1a1424;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px;
+      text-align: center;
+    }
+    #fallback-screen[hidden] { display: none; }
+    #fallback-screen h2 { font-size: 18px; color: #ffd966; letter-spacing: 0.3px; }
+    #fallback-screen p { font-size: 13px; color: #b8a8c8; max-width: 320px; line-height: 1.5; }
+    #fallback-screen canvas { width: min(86vw, 480px); height: auto; border-radius: 12px; background: #241830; }
+
+    #hud {
+      position: fixed;
+      top: calc(10px + env(safe-area-inset-top, 0px));
+      left: 0;
+      right: 0;
+      padding: 0 14px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      pointer-events: none;
+      z-index: 5;
+    }
+    #state-pill {
+      background: rgba(0, 0, 0, 0.45);
+      border-radius: 999px;
+      padding: 6px 14px 6px 10px;
+      font-size: 13px;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #state-pill .ico { font-size: 22px; line-height: 1; transition: transform 0.18s; }
+    #state-pill .lbl { color: #ffd966; letter-spacing: 0.8px; text-transform: uppercase; font-weight: 600; }
+    #state-pill[data-state="jump"] .ico { transform: translateY(-2px); }
+    #state-pill[data-state="celebrate"] .ico { transform: scale(1.15); }
+
+    #brand {
+      position: fixed;
+      top: calc(10px + env(safe-area-inset-top, 0px));
+      left: 14px;
+      pointer-events: none;
+      z-index: 5;
+      font-size: 11px;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      color: rgba(255, 240, 208, 0.55);
+      background: rgba(0, 0, 0, 0.35);
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+    #brand span { color: #ffd966; }
+
+    #controls {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #dpad {
+      position: absolute;
+      bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+      left: calc(20px + env(safe-area-inset-left, 0px));
+      display: grid;
+      grid-template-columns: repeat(3, 56px);
+      grid-template-rows: repeat(3, 56px);
+      gap: 6px;
+      pointer-events: auto;
+    }
+    #dpad button {
+      background: rgba(255, 255, 255, 0.10);
+      border: 2px solid rgba(255, 255, 255, 0.22);
+      border-radius: 14px;
+      color: #fff;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+      touch-action: none;
+      transition: background 0.1s, transform 0.08s;
+      padding: 0;
+      font-family: inherit;
+    }
+    #dpad button[data-dir="up"]    { grid-column: 2; grid-row: 1; }
+    #dpad button[data-dir="left"]  { grid-column: 1; grid-row: 2; }
+    #dpad button[data-dir="right"] { grid-column: 3; grid-row: 2; }
+    #dpad button[data-dir="down"]  { grid-column: 2; grid-row: 3; }
+    #dpad button.active,
+    #dpad button:active {
+      background: rgba(255, 200, 100, 0.45);
+      transform: scale(0.92);
+    }
+    #action {
+      position: absolute;
+      bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+      right: calc(36px + env(safe-area-inset-right, 0px));
+      width: 92px;
+      height: 92px;
+      border-radius: 50%;
+      background: rgba(255, 200, 100, 0.18);
+      border: 2px solid rgba(255, 220, 120, 0.55);
+      color: #fff8de;
+      font-size: 36px;
+      line-height: 1;
+      cursor: pointer;
+      touch-action: none;
+      pointer-events: auto;
+      transition: background 0.1s, transform 0.08s;
+      padding: 0;
+      animation: actionPulse 2s ease-in-out infinite;
+      font-family: inherit;
+    }
+    #action.active,
+    #action:active {
+      background: rgba(255, 200, 100, 0.55);
+      transform: scale(0.92);
+    }
+    @keyframes actionPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 200, 100, 0.45); }
+      50%      { box-shadow: 0 0 0 14px rgba(255, 200, 100, 0); }
+    }
+    @media (max-width: 480px) {
+      #dpad {
+        grid-template-columns: repeat(3, 50px);
+        grid-template-rows: repeat(3, 50px);
+        gap: 4px;
+        bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+        left: calc(12px + env(safe-area-inset-left, 0px));
+      }
+      #dpad button { font-size: 20px; }
+      #action { width: 80px; height: 80px; font-size: 30px; bottom: calc(40px + env(safe-area-inset-bottom, 0px)); right: calc(14px + env(safe-area-inset-right, 0px)); }
+      #brand, #state-pill { font-size: 11px; }
+    }
+    @media (min-width: 900px) {
+      #dpad { grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(3, 64px); }
+      #dpad button { font-size: 24px; }
+      #action { width: 100px; height: 100px; font-size: 40px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #action { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="fallback-screen" hidden>
+    <h2>WebGL not available</h2>
+    <p>Your browser couldn't start a WebGL context, so this 3D sandbox cannot run. Try a recent Chrome, Firefox, or Safari build, or enable hardware acceleration.</p>
+    <canvas id="fallback" width="640" height="360"></canvas>
+  </div>
+
+  <div id="brand"><span>Procedural</span> Fox · Test Sandbox</div>
+
+  <div id="hud">
+    <div id="state-pill" data-state="idle"><span class="ico">🦊</span><span class="lbl">idle</span></div>
+  </div>
+
+  <div id="controls">
+    <div id="dpad">
+      <button data-dir="up" aria-label="Walk forward">▲</button>
+      <button data-dir="left" aria-label="Walk left">◀</button>
+      <button data-dir="right" aria-label="Walk right">▶</button>
+      <button data-dir="down" aria-label="Walk back">▼</button>
+    </div>
+    <button id="action" aria-label="Jump and climb">⤴</button>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    // ============================================================
+    // WebGL detection + 2D fallback
+    // ============================================================
+    function hasWebGL() {
+      try {
+        const c = document.createElement('canvas');
+        return !!(window.WebGLRenderingContext && (c.getContext('webgl') || c.getContext('experimental-webgl')));
+      } catch (e) { return false; }
+    }
+
+    function showFallback() {
+      const screen = document.getElementById('fallback-screen');
+      screen.hidden = false;
+      const fb = document.getElementById('fallback');
+      const ctx = fb.getContext('2d');
+      drawFallbackFox(ctx, fb.width, fb.height);
+    }
+
+    function drawFallbackFox(ctx, w, h) {
+      ctx.fillStyle = '#241830';
+      ctx.fillRect(0, 0, w, h);
+      // ground
+      ctx.fillStyle = '#3a4d2a';
+      ctx.fillRect(0, h * 0.72, w, h * 0.28);
+      // stones
+      ctx.fillStyle = '#7a7d80';
+      [[0.10, 0.78], [0.30, 0.72], [0.50, 0.65], [0.70, 0.58], [0.90, 0.50]].forEach(([px, py]) => {
+        ctx.beginPath();
+        ctx.ellipse(w * px, h * py, w * 0.06, h * 0.04, 0, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      // glowing goal
+      const gr = 18 + Math.sin(Date.now() / 250) * 3;
+      const grad = ctx.createRadialGradient(w * 0.9, h * 0.46, 2, w * 0.9, h * 0.46, gr * 2);
+      grad.addColorStop(0, 'rgba(255, 220, 100, 0.9)');
+      grad.addColorStop(1, 'rgba(255, 220, 100, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(w * 0.8, h * 0.36, w * 0.2, h * 0.2);
+      ctx.fillStyle = '#ffd966';
+      ctx.beginPath();
+      ctx.arc(w * 0.9, h * 0.46, 8, 0, Math.PI * 2);
+      ctx.fill();
+      const cx = w * 0.34, cy = h * 0.6;
+      // body
+      ctx.fillStyle = '#d97a32';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 56, 26, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // legs
+      ctx.fillStyle = '#8a4513';
+      ctx.fillRect(cx - 32, cy + 16, 11, 24);
+      ctx.fillRect(cx + 21, cy + 16, 11, 24);
+      ctx.fillRect(cx - 10, cy + 16, 11, 24);
+      ctx.fillRect(cx + 43, cy + 16, 11, 24);
+      // head
+      ctx.fillStyle = '#d97a32';
+      ctx.beginPath();
+      ctx.arc(cx + 48, cy - 16, 24, 0, Math.PI * 2);
+      ctx.fill();
+      // ears
+      ctx.beginPath();
+      ctx.moveTo(cx + 32, cy - 34);
+      ctx.lineTo(cx + 28, cy - 54);
+      ctx.lineTo(cx + 42, cy - 38);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + 56, cy - 38);
+      ctx.lineTo(cx + 64, cy - 56);
+      ctx.lineTo(cx + 72, cy - 36);
+      ctx.closePath();
+      ctx.fill();
+      // snout
+      ctx.fillStyle = '#f6dcb5';
+      ctx.beginPath();
+      ctx.ellipse(cx + 64, cy - 8, 13, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // nose
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath();
+      ctx.arc(cx + 74, cy - 10, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      // eye
+      ctx.fillStyle = '#111';
+      ctx.beginPath();
+      ctx.arc(cx + 56, cy - 20, 3, 0, Math.PI * 2);
+      ctx.fill();
+      // tail
+      ctx.fillStyle = '#fff0d0';
+      ctx.beginPath();
+      ctx.moveTo(cx - 55, cy - 4);
+      ctx.lineTo(cx - 92, cy - 28);
+      ctx.lineTo(cx - 84, cy + 4);
+      ctx.closePath();
+      ctx.fill();
+      // caption
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('procedural fox (static 2D fallback)', w / 2, h * 0.94);
+    }
+
+    // ============================================================
+    // Main Three.js app
+    // ============================================================
+    function start() {
+      const canvas = document.getElementById('view');
+      const renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        powerPreference: 'high-performance',
+      });
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x1a1424);
+      scene.fog = new THREE.Fog(0x1a1424, 18, 55);
+
+      const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 120);
+      // Front-right 3/4 angle: the camera lives in the fox's local
+      // frame so it always shows the snout from the same relative
+      // viewpoint. Placing the offset in +X +Z ahead of the fox (not
+      // behind it) keeps the front of the character visible from the
+      // very first frame and puts the stepping stones behind the
+      // camera instead of between the camera and the fox.
+      camera.position.set(4, 4, 4);
+      camera.lookAt(0, 1.2, 0);
+
+      // ----- lights -----
+      const hemi = new THREE.HemisphereLight(0xfff4d6, 0x3a2540, 0.75);
+      scene.add(hemi);
+      const sun = new THREE.DirectionalLight(0xfff0c0, 1.05);
+      sun.position.set(8, 16, 6);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(1024, 1024);
+      sun.shadow.camera.left = -22;
+      sun.shadow.camera.right = 22;
+      sun.shadow.camera.top = 22;
+      sun.shadow.camera.bottom = -22;
+      sun.shadow.camera.near = 0.5;
+      sun.shadow.camera.far = 40;
+      sun.shadow.bias = -0.0008;
+      scene.add(sun);
+
+      // ----- ground -----
+      const ground = new THREE.Mesh(
+        new THREE.CircleGeometry(28, 32),
+        new THREE.MeshStandardMaterial({ color: 0x3a4d2a, roughness: 0.95 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      // ----- fox -----
+      const fox = buildFox();
+      scene.add(fox.root);
+
+      // ----- playground -----
+      const playground = buildPlayground();
+      scene.add(playground);
+
+      // ----- goal -----
+      const goal = buildGoal();
+      scene.add(goal.group);
+
+      // ----- input -----
+      const input = createInput();
+
+      // ----- animation state -----
+      const anim = createAnimState();
+
+      // ----- controller -----
+      const ctrl = {
+        pos: new THREE.Vector3(0, 0, 0),
+        vy: 0,
+        facing: 0,
+        grounded: true,
+        moveSpeed: 5.0,
+        turnSpeed: 7.0,
+        jumpVel: 8.5,
+        gravity: -22,
+      };
+
+      // ----- resize -----
+      function resize() {
+        const w = window.innerWidth, h = window.innerHeight;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      resize();
+      window.addEventListener('resize', resize);
+      window.addEventListener('orientationchange', () => setTimeout(resize, 120));
+
+      // ----- game loop -----
+      const clock = new THREE.Clock();
+      let goalReached = false;
+      let celebrateTimer = 0;
+      let lastAction = false;
+      let goalPulse = 0;
+
+      const STATE_LABEL = {
+        idle: 'idle',
+        walk: 'walk',
+        jump: 'jump',
+        celebrate: 'win',
+      };
+      const STATE_ICON = {
+        idle: '🦊',
+        walk: '🐾',
+        jump: '⤴',
+        celebrate: '✨',
+      };
+      const statePill = document.getElementById('state-pill');
+      const pillIco = statePill.querySelector('.ico');
+      const pillLbl = statePill.querySelector('.lbl');
+
+      function loop() {
+        requestAnimationFrame(loop);
+        const dt = Math.min(0.05, clock.getDelta());
+        const t = clock.elapsedTime;
+
+        // input direction
+        const dx = (input.dir.right ? 1 : 0) - (input.dir.left ? 1 : 0);
+        const dz = (input.dir.up ? 1 : 0) - (input.dir.down ? 1 : 0);
+        const moving = (dx !== 0 || dz !== 0) && !goalReached;
+
+        // action edge (press event)
+        if (input.action && !lastAction && ctrl.grounded && !goalReached) {
+          ctrl.vy = ctrl.jumpVel;
+          ctrl.grounded = false;
+        }
+        lastAction = input.action;
+
+        // movement
+        if (moving) {
+          const len = Math.hypot(dx, dz) || 1;
+          const nx = dx / len, nz = dz / len;
+          const target = Math.atan2(nx, nz);
+          let diff = target - ctrl.facing;
+          while (diff > Math.PI) diff -= 2 * Math.PI;
+          while (diff < -Math.PI) diff += 2 * Math.PI;
+          ctrl.facing += diff * Math.min(1, dt * ctrl.turnSpeed);
+          ctrl.pos.x += nx * ctrl.moveSpeed * dt;
+          ctrl.pos.z += nz * ctrl.moveSpeed * dt;
+        }
+
+        // gravity
+        if (!ctrl.grounded) {
+          ctrl.vy += ctrl.gravity * dt;
+          ctrl.pos.y += ctrl.vy * dt;
+        }
+
+        // collide with surface
+        const groundH = playground.surfaceAt(ctrl.pos.x, ctrl.pos.z);
+        if (ctrl.pos.y <= groundH) {
+          if (ctrl.grounded === false && ctrl.vy < -2) {
+            anim.landBounce = 0.35;
+          }
+          ctrl.pos.y = groundH;
+          ctrl.vy = 0;
+          ctrl.grounded = true;
+        } else {
+          ctrl.grounded = false;
+        }
+
+        // fox transform
+        fox.root.position.copy(ctrl.pos);
+        fox.root.rotation.y = ctrl.facing;
+
+        // goal check
+        if (!goalReached) {
+          const d = Math.hypot(ctrl.pos.x - goal.pos.x, ctrl.pos.z - goal.pos.z);
+          const dy = (ctrl.pos.y + 1.0) - goal.pos.y;
+          if (d < 1.2 && dy < 1.6 && dy > -0.3) {
+            goalReached = true;
+            celebrateTimer = 3.0;
+            goalPulse = 1.0;
+          }
+        } else {
+          celebrateTimer -= dt;
+          if (celebrateTimer <= 0) {
+            goalReached = false;
+          }
+        }
+
+        // state machine
+        if (goalReached)         setState(anim, 'celebrate');
+        else if (!ctrl.grounded)  setState(anim, 'jump');
+        else if (moving)          setState(anim, 'walk');
+        else                      setState(anim, 'idle');
+
+        // animation
+        applyAnimation(dt, fox, anim, t);
+
+        // goal pulse
+        const baseSize = 1 + Math.sin(t * 3) * 0.08;
+        goal.crystal.scale.setScalar(baseSize + goalPulse * 0.4);
+        goal.crystal.rotation.y = t * 0.6;
+        goal.crystal.rotation.x = Math.sin(t * 0.4) * 0.2;
+        goalPulse *= Math.exp(-dt * 2.5);
+        goal.light.intensity = 0.9 + Math.sin(t * 4) * 0.2 + goalPulse * 1.6;
+        goal.ring.material.opacity = 0.3 + Math.sin(t * 3) * 0.1 + goalPulse * 0.4;
+
+        // camera follow — fox-local offset rotated by the fox's
+        // facing so the camera always trails to the front-right at
+        // a 3/4 angle. The local Y component lifts the camera above
+        // the fox; the local +Z component sits it in front of the
+        // snout, which is what makes the facing direction readable
+        // from the first frame.
+        const localCamOffset = goalReached
+          ? new THREE.Vector3(7, 8, 8)
+          : new THREE.Vector3(4, 4, 4);
+        const worldCamOffset = localCamOffset.clone().applyEuler(new THREE.Euler(0, ctrl.facing, 0));
+        const desiredCam = ctrl.pos.clone().add(worldCamOffset);
+        camera.position.lerp(desiredCam, 1 - Math.exp(-dt * 3.5));
+        const lookAt = goalReached
+          ? new THREE.Vector3(ctrl.pos.x, ctrl.pos.y + 1.4, ctrl.pos.z)
+          : new THREE.Vector3(ctrl.pos.x, ctrl.pos.y + 1.2, ctrl.pos.z);
+        camera.lookAt(lookAt);
+
+        // HUD update (only when state changes)
+        if (anim.current !== statePill.dataset.state) {
+          statePill.dataset.state = anim.current;
+          pillIco.textContent = STATE_ICON[anim.current];
+          pillLbl.textContent = STATE_LABEL[anim.current];
+        }
+
+        renderer.render(scene, camera);
+      }
+
+      loop();
+    }
+
+    // ============================================================
+    // Fox construction
+    //   Hierarchical bones so each animated body part can be
+    //   transformed independently while the root carries the
+    //   world position and facing.
+    // ============================================================
+    function buildFox() {
+      const fox = { root: new THREE.Group(), bones: {} };
+
+      const mat = {
+        fur:   new THREE.MeshStandardMaterial({ color: 0xd97a32, roughness: 0.7 }),
+        belly: new THREE.MeshStandardMaterial({ color: 0xf6dcb5, roughness: 0.7 }),
+        dark:  new THREE.MeshStandardMaterial({ color: 0x8a4513, roughness: 0.7 }),
+        tip:   new THREE.MeshStandardMaterial({ color: 0xfff0d0, roughness: 0.6 }),
+        eye:   new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.3 }),
+        nose:  new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.3 }),
+        lid:   new THREE.MeshStandardMaterial({ color: 0xd97a32, roughness: 0.7 }),
+      };
+
+      // ----- body -----
+      const body = new THREE.Group();
+      body.position.y = 0.9;
+      const bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.78, 1.45), mat.fur);
+      bodyMesh.castShadow = true;
+      bodyMesh.receiveShadow = true;
+      body.add(bodyMesh);
+      const belly = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.45, 1.25), mat.belly);
+      belly.position.y = -0.18;
+      belly.castShadow = true;
+      body.add(belly);
+      fox.root.add(body);
+      fox.bones.body = body;
+
+      // ----- head -----
+      const head = new THREE.Group();
+      head.position.set(0, 0.22, 0.7);
+      const headMesh = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.65, 0.65), mat.fur);
+      headMesh.castShadow = true;
+      head.add(headMesh);
+      // snout
+      const snout = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.42, 4), mat.belly);
+      snout.rotation.x = Math.PI / 2;
+      snout.position.set(0, -0.05, 0.42);
+      snout.castShadow = true;
+      head.add(snout);
+      // nose
+      const nose = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.1, 0.08), mat.nose);
+      nose.position.set(0, -0.05, 0.6);
+      head.add(nose);
+      // ears
+      const earGeo = new THREE.ConeGeometry(0.17, 0.38, 4);
+      const earL = new THREE.Mesh(earGeo, mat.dark);
+      earL.position.set(-0.22, 0.4, -0.05);
+      earL.castShadow = true;
+      const earR = new THREE.Mesh(earGeo, mat.dark);
+      earR.position.set(0.22, 0.4, -0.05);
+      earR.castShadow = true;
+      head.add(earL);
+      head.add(earR);
+      fox.bones.earL = earL;
+      fox.bones.earR = earR;
+      // eyes
+      const eyeGeo = new THREE.SphereGeometry(0.075, 12, 8);
+      const eyeL = new THREE.Mesh(eyeGeo, mat.eye);
+      eyeL.position.set(-0.14, 0.06, 0.32);
+      const eyeR = new THREE.Mesh(eyeGeo, mat.eye);
+      eyeR.position.set(0.14, 0.06, 0.32);
+      head.add(eyeL);
+      head.add(eyeR);
+      fox.bones.eyeL = eyeL;
+      fox.bones.eyeR = eyeR;
+      // eyelids (start hidden, scale.y grows on blink)
+      const lidGeo = new THREE.BoxGeometry(0.18, 0.16, 0.04);
+      const lidL = new THREE.Mesh(lidGeo, mat.lid);
+      lidL.position.set(-0.14, 0.06, 0.34);
+      lidL.scale.y = 0.05;
+      const lidR = new THREE.Mesh(lidGeo, mat.lid);
+      lidR.position.set(0.14, 0.06, 0.34);
+      lidR.scale.y = 0.05;
+      head.add(lidL);
+      head.add(lidR);
+      fox.bones.lidL = lidL;
+      fox.bones.lidR = lidR;
+
+      body.add(head);
+      fox.bones.head = head;
+
+      // ----- tail -----
+      const tail = new THREE.Group();
+      tail.position.set(0, 0.22, -0.78);
+      tail.rotation.x = -0.45;
+      const tailMain = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.75, 6), mat.fur);
+      tailMain.rotation.x = Math.PI / 2;
+      tailMain.position.z = -0.32;
+      tailMain.castShadow = true;
+      tail.add(tailMain);
+      const tailTip = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.32, 6), mat.tip);
+      tailTip.rotation.x = Math.PI / 2;
+      tailTip.position.z = -0.7;
+      tailTip.castShadow = true;
+      tail.add(tailTip);
+      body.add(tail);
+      fox.bones.tail = tail;
+
+      // ----- legs -----
+      // Each leg is a Group pivoted at the hip. The mesh hangs
+      // down so rotating the group swings the leg forward/back
+      // around the X axis (perpendicular to forward).
+      const legGeo = new THREE.BoxGeometry(0.18, 0.6, 0.18);
+      const legPositions = [
+        { n: 'legFL', x: -0.22, z:  0.5 },
+        { n: 'legFR', x:  0.22, z:  0.5 },
+        { n: 'legBL', x: -0.22, z: -0.5 },
+        { n: 'legBR', x:  0.22, z: -0.5 },
+      ];
+      for (const l of legPositions) {
+        const g = new THREE.Group();
+        g.position.set(l.x, -0.3, l.z);
+        const mesh = new THREE.Mesh(legGeo, mat.dark);
+        mesh.position.y = -0.3;
+        mesh.castShadow = true;
+        g.add(mesh);
+        body.add(g);
+        fox.bones[l.n] = g;
+      }
+
+      return fox;
+    }
+
+    // ============================================================
+    // Playground construction
+    // ============================================================
+    function buildPlayground() {
+      const group = new THREE.Group();
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x7a7d80, roughness: 0.85 });
+      const capMat = new THREE.MeshStandardMaterial({ color: 0xa0a4a8, roughness: 0.7 });
+
+      // stepping stones — neatly spaced so the fox can climb
+      // from one to the next with a single jump.
+      const stones = [
+        { x:  0.0, y: 0.4,  z:  4.0, h: 0.8, r: 1.5 },
+        { x:  0.5, y: 0.7,  z:  8.0, h: 1.4, r: 1.4 },
+        { x: -0.4, y: 1.0,  z: 12.0, h: 2.0, r: 1.3 },
+        { x:  0.5, y: 1.3,  z: 16.0, h: 2.6, r: 1.2 },
+        { x:  0.0, y: 1.6,  z: 20.0, h: 3.2, r: 1.2 },
+      ];
+
+      for (const s of stones) {
+        const stone = new THREE.Mesh(
+          new THREE.CylinderGeometry(s.r, s.r * 1.08, s.h, 7),
+          stoneMat
+        );
+        stone.position.set(s.x, s.y, s.z);
+        stone.castShadow = true;
+        stone.receiveShadow = true;
+        group.add(stone);
+
+        // flat cap so the fox has a clear landing surface
+        const cap = new THREE.Mesh(
+          new THREE.CylinderGeometry(s.r * 0.96, s.r * 0.96, 0.06, 7),
+          capMat
+        );
+        cap.position.set(s.x, s.y + s.h / 2 + 0.03, s.z);
+        cap.castShadow = true;
+        cap.receiveShadow = true;
+        group.add(cap);
+      }
+
+      // decorative rocks scattered around the path
+      const rockMat = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, roughness: 0.9 });
+      // small deterministic pseudo-random so the scene is stable
+      let seed = 1337;
+      function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+      const rockData = [
+        [-3.5, 2], [3.5, 2.5], [-2.5, 5.5], [ 3.0, 7.5], [-3.0, 9.5],
+        [ 2.5, 11.5], [-2.5, 14], [ 3.0, 17.5], [-3.0, 18.5], [ 3.0, 22],
+        [-4.0, 22], [ 4.5, 0], [-3.5, 25], [ 4.0, 25], [ 0.0, 28],
+        [-5.5, 12], [ 5.5, 14],
+      ];
+      for (const [x, z] of rockData) {
+        const rock = new THREE.Mesh(
+          new THREE.DodecahedronGeometry(0.25 + rand() * 0.25, 0),
+          rockMat
+        );
+        rock.position.set(x, 0.18, z);
+        rock.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
+        rock.scale.y = 0.6 + rand() * 0.4;
+        rock.castShadow = true;
+        rock.receiveShadow = true;
+        group.add(rock);
+      }
+
+      // grass tufts around the path
+      const grassMat = new THREE.MeshStandardMaterial({ color: 0x5a7a3a, roughness: 0.9 });
+      for (let i = 0; i < 36; i++) {
+        const angle = (i / 36) * Math.PI * 2 + rand() * 0.3;
+        const r = 6 + (i % 6) * 1.5;
+        const tuft = new THREE.Mesh(
+          new THREE.ConeGeometry(0.18, 0.4, 4),
+          grassMat
+        );
+        tuft.position.set(Math.cos(angle) * r, 0.2, Math.sin(angle) * r + 12);
+        tuft.rotation.y = rand() * Math.PI;
+        group.add(tuft);
+      }
+
+      // surface height query used for jumping / landing
+      const tops = stones.map((s) => ({
+        x: s.x, z: s.z, r: s.r * 0.92, top: s.y + s.h / 2,
+      }));
+      group.surfaceAt = function (x, z) {
+        let h = 0;
+        for (const t of tops) {
+          if (Math.hypot(x - t.x, z - t.z) < t.r && t.top > h) {
+            h = t.top;
+          }
+        }
+        return h;
+      };
+
+      return group;
+    }
+
+    // ============================================================
+    // Goal construction
+    // ============================================================
+    function buildGoal() {
+      const group = new THREE.Group();
+      const goalMat = new THREE.MeshStandardMaterial({
+        color: 0xffe066,
+        emissive: 0xffaa00,
+        emissiveIntensity: 0.7,
+        roughness: 0.2,
+        metalness: 0.5,
+      });
+      const crystal = new THREE.Mesh(new THREE.IcosahedronGeometry(0.4, 0), goalMat);
+      crystal.position.set(0, 3.5, 20);
+      crystal.castShadow = true;
+      group.add(crystal);
+
+      const light = new THREE.PointLight(0xffaa00, 1.0, 10);
+      light.position.copy(crystal.position);
+      group.add(light);
+
+      // halo ring on top of the last stone
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.7, 0.95, 24),
+        new THREE.MeshBasicMaterial({
+          color: 0xffd966,
+          transparent: true,
+          opacity: 0.4,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(0, 2.81, 20);
+      group.add(ring);
+
+      return { group, crystal, light, ring, pos: crystal.position };
+    }
+
+    // ============================================================
+    // Input
+    //   Pointer events for touch + mouse, KeyboardEvent for
+    //   desktop fallback. The D-pad is screen-fixed; the
+    //   action button fires once per press (edge-detected in
+    //   the loop).
+    // ============================================================
+    function createInput() {
+      const input = {
+        dir: { up: false, down: false, left: false, right: false },
+        action: false,
+      };
+
+      const dpad = document.getElementById('dpad');
+      dpad.querySelectorAll('button[data-dir]').forEach((btn) => {
+        const dir = btn.dataset.dir;
+        const onDown = (e) => { e.preventDefault(); input.dir[dir] = true; btn.classList.add('active'); };
+        const onUp = (e) => { e.preventDefault(); input.dir[dir] = false; btn.classList.remove('active'); };
+        btn.addEventListener('pointerdown', onDown);
+        btn.addEventListener('pointerup', onUp);
+        btn.addEventListener('pointercancel', onUp);
+        btn.addEventListener('pointerleave', onUp);
+      });
+
+      const actionBtn = document.getElementById('action');
+      const onActionDown = (e) => { e.preventDefault(); input.action = true; actionBtn.classList.add('active'); };
+      const onActionUp = (e) => { e.preventDefault(); input.action = false; actionBtn.classList.remove('active'); };
+      actionBtn.addEventListener('pointerdown', onActionDown);
+      actionBtn.addEventListener('pointerup', onActionUp);
+      actionBtn.addEventListener('pointercancel', onActionUp);
+
+      const keyMap = {
+        'ArrowUp': 'up', 'KeyW': 'up',
+        'ArrowDown': 'down', 'KeyS': 'down',
+        'ArrowLeft': 'left', 'KeyA': 'left',
+        'ArrowRight': 'right', 'KeyD': 'right',
+      };
+      window.addEventListener('keydown', (e) => {
+        if (keyMap[e.code]) {
+          e.preventDefault();
+          input.dir[keyMap[e.code]] = true;
+        }
+        if (e.code === 'Space' || e.code === 'Enter') {
+          e.preventDefault();
+          input.action = true;
+        }
+      });
+      window.addEventListener('keyup', (e) => {
+        if (keyMap[e.code]) input.dir[keyMap[e.code]] = false;
+        if (e.code === 'Space' || e.code === 'Enter') input.action = false;
+      });
+
+      return input;
+    }
+
+    // ============================================================
+    // Animation
+    //   Each pose contributes additive deltas to bone transforms.
+    //   State weights are smoothly lerped toward a one-hot target
+    //   so transitions are continuous. Blink is a separate overlay
+    //   that can run on top of any state.
+    // ============================================================
+    function createAnimState() {
+      return {
+        current: 'idle',
+        weights: { idle: 1, walk: 0, jump: 0, celebrate: 0 },
+        target:   { idle: 1, walk: 0, jump: 0, celebrate: 0 },
+        walkPhase: 0,
+        blink: 0,
+        blinkTarget: 0,
+        blinkTimer: 2 + Math.random() * 2,
+        landBounce: 0,
+      };
+    }
+
+    function setState(anim, name) {
+      if (anim.current === name) return;
+      anim.current = name;
+      for (const k of Object.keys(anim.target)) anim.target[k] = 0;
+      anim.target[name] = 1;
+    }
+
+    function applyAnimation(dt, fox, anim, t) {
+      const b = fox.bones;
+      const w = anim.weights;
+
+      // smooth state weights between poses
+      const k = 1 - Math.exp(-dt * 10);
+      for (const name of Object.keys(w)) {
+        w[name] += (anim.target[name] - w[name]) * k;
+      }
+
+      // reset each frame, then re-apply contributions
+      b.body.position.y = 0.9;
+      b.body.rotation.set(0, 0, 0);
+      b.body.scale.set(1, 1, 1);
+      b.head.rotation.set(0, 0, 0);
+      b.tail.rotation.set(0, 0, 0);
+      b.legFL.rotation.x = 0;
+      b.legFR.rotation.x = 0;
+      b.legBL.rotation.x = 0;
+      b.legBR.rotation.x = 0;
+      b.earL.rotation.set(0, 0, 0);
+      b.earR.rotation.set(0, 0, 0);
+      b.lidL.scale.y = 0.05;
+      b.lidR.scale.y = 0.05;
+
+      // ----- IDLE -----
+      if (w.idle > 0.001) {
+        const ww = w.idle;
+        b.body.position.y += Math.sin(t * 1.8) * 0.04 * ww;
+        b.body.rotation.z += Math.sin(t * 1.2) * 0.02 * ww;
+        b.tail.rotation.y += Math.sin(t * 1.0) * 0.14 * ww;
+        b.tail.rotation.x += Math.sin(t * 0.7) * 0.05 * ww;
+        const twitch = Math.max(0, Math.sin(t * 0.6) - 0.92) * 15;
+        b.earL.rotation.x += twitch * 0.25 * ww;
+        b.earR.rotation.x += twitch * 0.25 * ww;
+      }
+
+      // ----- WALK -----
+      if (w.walk > 0.001) {
+        const ww = w.walk;
+        anim.walkPhase += dt * 9;
+        const ph = anim.walkPhase;
+        b.body.position.y += Math.sin(ph * 2) * 0.06 * ww;
+        b.body.rotation.z += Math.sin(ph) * 0.05 * ww;
+        b.body.rotation.x += Math.sin(ph * 2) * 0.02 * ww;
+        // diagonal pairs (front-left + back-right, front-right + back-left)
+        b.legFL.rotation.x += Math.sin(ph) * 0.75 * ww;
+        b.legFR.rotation.x += Math.sin(ph + Math.PI) * 0.75 * ww;
+        b.legBL.rotation.x += Math.sin(ph + Math.PI) * 0.75 * ww;
+        b.legBR.rotation.x += Math.sin(ph) * 0.75 * ww;
+        b.tail.rotation.y += Math.sin(ph * 2) * 0.35 * ww;
+        b.head.rotation.x += Math.sin(ph * 2 + Math.PI) * 0.05 * ww;
+      }
+
+      // ----- JUMP (in-air tuck) -----
+      if (w.jump > 0.001) {
+        const ww = w.jump;
+        b.legFL.rotation.x += 0.9 * ww;
+        b.legFR.rotation.x += 0.9 * ww;
+        b.legBL.rotation.x += -0.5 * ww;
+        b.legBR.rotation.x += -0.5 * ww;
+        b.tail.rotation.x += 0.6 * ww;
+        b.body.rotation.x += -0.12 * ww;
+        b.head.rotation.x += -0.18 * ww;
+        b.earL.rotation.x += -0.15 * ww;
+        b.earR.rotation.x += -0.15 * ww;
+      }
+
+      // ----- CELEBRATE -----
+      if (w.celebrate > 0.001) {
+        const ww = w.celebrate;
+        const bounce = Math.abs(Math.sin(t * 9));
+        b.body.position.y += bounce * 0.3 * ww;
+        b.body.scale.y = 1 + Math.sin(t * 9) * 0.08 * ww;
+        b.body.scale.x = 1 - Math.sin(t * 9) * 0.04 * ww;
+        b.tail.rotation.y += Math.sin(t * 14) * 0.55 * ww;
+        b.tail.rotation.x += Math.sin(t * 7) * 0.3 * ww;
+        b.earL.rotation.x += -0.45 * ww;
+        b.earR.rotation.x += -0.45 * ww;
+      }
+
+      // ----- LANDING BOUNCE (additive transient) -----
+      if (anim.landBounce > 0.001) {
+        b.body.scale.y = 1 - anim.landBounce * 0.18;
+        b.body.scale.x = 1 + anim.landBounce * 0.12;
+        anim.landBounce *= Math.exp(-dt * 8);
+      }
+
+      // ----- BLINK (overlay) -----
+      anim.blinkTimer -= dt;
+      if (anim.blinkTimer <= 0) {
+        if (anim.blinkTarget === 0) {
+          anim.blinkTarget = 1;
+        } else if (anim.blink > 0.9) {
+          anim.blinkTarget = 0;
+          anim.blinkTimer = 2 + Math.random() * 3;
+        }
+      }
+      anim.blink += (anim.blinkTarget - anim.blink) * (1 - Math.exp(-dt * 30));
+      const lidScale = 0.05 + anim.blink * 1.0;
+      b.lidL.scale.y = lidScale;
+      b.lidR.scale.y = lidScale;
+    }
+
+    // ============================================================
+    // Boot
+    // ============================================================
+    if (!hasWebGL()) {
+      showFallback();
+    } else {
+      start();
+    }
+  </script>
+</body>
+</html>
