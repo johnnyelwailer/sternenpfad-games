@@ -67,43 +67,67 @@ test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async
   expect(stillValid).toBe(true);
 });
 
-test("customizer: full view with tints, hats, locks — persists", async ({ page }) => {
-  await page.locator('[data-mode="ai"]').click();
+test("customizer lives in the aquarium; styles carry into battles", async ({ page }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      "ff-progress",
+      JSON.stringify({ stickers: { "ozean-0": 1, "dino-2": 1 }, wins: 2 })
+    )
+  );
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await page.locator("#btn-aquarium").click();
+  await expect(page.locator("#btn-style")).toBeVisible();
   await page.locator("#btn-style").click();
   await expect(page.locator("#customizer")).toBeVisible();
-  await expect(page.locator("#cust-count")).toContainText("1 / 5");
+  await expect(page.locator("#cust-count")).toContainText("1 / 2");
 
-  // pick the 2nd tint and the next hat for the first creature
+  // pick the 2nd tint and the next hat for the first friend (ozean-0)
   await page.locator("#cust-tints .tint-dot").nth(1).click();
   await page.locator("#cust-hat-next").click();
   await expect(page.locator("#cust-tints .tint-dot").nth(1)).toHaveClass(/selected/);
   await expect(page.locator("#cust-hat-name")).not.toHaveText("Ohne Hut");
-
-  const custom = await page.evaluate(() => window.__FF.state.customs[0]);
-  expect(custom[0]).toEqual({ tint: 1, hat: 1 });
   const stored = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem(`ff-custom-${window.__FF.state.worlds[0]}`) || "{}")
+    JSON.parse(localStorage.getItem("ff-custom-ozean") || "{}")
   );
   expect(stored[0]).toEqual({ tint: 1, hat: 1 });
 
   // sticker-locked items show locked and cannot be picked yet
   await expect(page.locator("#cust-tints .tint-dot.locked").first()).toBeVisible();
-  await page.locator("#cust-tints .tint-dot").nth(4).click(); // locked tint
-  expect((await page.evaluate(() => window.__FF.state.customs[0]))[0].tint).toBe(1);
+  await page.locator("#cust-tints .tint-dot").nth(5).click(); // locked tint
+  const still = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("ff-custom-ozean") || "{}")
+  );
+  expect(still[0].tint).toBe(1);
 
-  // creature switcher moves through the fleet
+  // switcher moves through the collection
   await page.locator("#cust-next").click();
-  await expect(page.locator("#cust-count")).toContainText("2 / 5");
-
+  await expect(page.locator("#cust-count")).toContainText("2 / 2");
   await page.locator("#btn-cust-done").click();
   await expect(page.locator("#customizer")).toBeHidden();
 
-  // survives a reload (placement reloads the saved map)
-  await page.reload();
-  await page.waitForFunction(() => !!window.__FF);
+  // the fleet wears the aquarium styles in the next battle
+  await page.locator("#btn-home").click();
   await page.locator('[data-mode="ai"]').click();
-  const reloaded = await page.evaluate(() => window.__FF.state.customs[0]);
-  expect(reloaded[0]).toEqual({ tint: 1, hat: 1 });
+  const applied = await page.evaluate(() => window.__FF.state.customs[0]);
+  expect(applied[0]).toEqual({ tint: 1, hat: 1 });
+});
+
+test("placement: world can be swapped where Stil used to be", async ({ page }) => {
+  await page.locator('[data-mode="ai"]').click();
+  await expect(page.locator("#btn-world")).toBeVisible();
+  await expect(page.locator("#btn-opts")).toBeVisible();
+  await page.locator("#btn-world").click();
+  await expect(page.locator("#screen-worldpick")).toHaveClass(/active/);
+  await page.locator('#world-grid-2 [data-world="dino"]').click();
+  await page.locator("#btn-worldpick-go").click();
+  await expect(page.locator("#btn-place-done")).toBeVisible();
+  expect(await page.evaluate(() => window.__FF.state.worlds[0])).toBe("dino");
+  // the options screen opens from placement and returns to the game
+  await page.locator("#btn-opts").click();
+  await expect(page.locator("#screen-options")).toHaveClass(/active/);
+  await page.locator("#btn-options-back").click();
+  await expect(page.locator("#btn-place-done")).toBeVisible();
 });
 
 test("robo game: my shots mark the enemy board, robo answers on mine", async ({ page }) => {
@@ -542,9 +566,25 @@ test("Aquarium: collected creatures live together and hop on tap", async ({ page
   await expect(page.locator("#status")).toContainText("2 Freunde");
   const count = await page.evaluate(() => window.__FF.state.aquarium.length);
   expect(count).toBe(2);
-  // tapping the first resident makes it hop and greets by name
-  await page.evaluate(() => window.__FF.aquariumTap(0, 1));
-  await expect(page.locator("#toast")).toContainText("freut sich");
+  // tapping near a wandering resident makes it hop and greet by name
+  const hit = await page.evaluate(() => {
+    // aim at the current position of the first resident
+    const tapped = [];
+    for (let y = 0; y < 8; y += 1) {
+      for (let x = 0; x < 8; x += 1) tapped.push([x, y]);
+    }
+    return tapped;
+  });
+  let greeted = false;
+  for (const [x, y] of hit) {
+    await page.evaluate(([tx, ty]) => window.__FF.aquariumTap(tx, ty), [x, y]);
+    const toastText = await page.locator("#toast").textContent();
+    if (/freut sich/.test(toastText || "")) {
+      greeted = true;
+      break;
+    }
+  }
+  expect(greeted).toBe(true);
 });
 
 test("Monster-Jagd: five wounds defeat the prowling boss", async ({ page }) => {

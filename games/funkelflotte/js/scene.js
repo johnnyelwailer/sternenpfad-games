@@ -181,6 +181,7 @@ export function initScene(canvasEl) {
         for (const c of d.creatures.values()) {
           if (c.model.userData.animate) c.model.userData.animate(clockT + c.phase);
           c.holder.position.y = c.baseY + Math.sin(clockT * 1.4 + c.phase) * 0.05;
+          if (c.wander) updateWander(c, dt);
         }
         updateBursts(d, dt);
       }
@@ -209,7 +210,7 @@ function dioramaX(slot) {
   return slot === "mine" ? 0 : DIORAMA_GAP;
 }
 
-export function setupBoard(slot, worldId) {
+export function setupBoard(slot, worldId, { bare = false } = {}) {
   disposeDiorama(slot);
   const world = getWorld(worldId);
   const root = new THREE.Group();
@@ -218,34 +219,36 @@ export function setupBoard(slot, worldId) {
   const env = buildEnvironment(worldId, SPAN * 0.72);
   root.add(env);
 
-  // soft dark mat under the play area so grid + pads read clearly
-  const mat = new THREE.Mesh(
-    new THREE.PlaneGeometry(SPAN * 1.6, SPAN * 1.6),
-    new THREE.MeshBasicMaterial({
-      map: radialTexture("rgba(0,10,20,0.26)", "rgba(0,10,20,0)"),
-      transparent: true,
-      depthWrite: false,
-    })
-  );
-  mat.rotation.x = -Math.PI / 2;
-  mat.position.y = 0.035;
-  root.add(mat);
+  if (!bare) {
+    // soft dark mat under the play area so grid + pads read clearly
+    const mat = new THREE.Mesh(
+      new THREE.PlaneGeometry(SPAN * 1.6, SPAN * 1.6),
+      new THREE.MeshBasicMaterial({
+        map: radialTexture("rgba(0,10,20,0.26)", "rgba(0,10,20,0)"),
+        transparent: true,
+        depthWrite: false,
+      })
+    );
+    mat.rotation.x = -Math.PI / 2;
+    mat.position.y = 0.035;
+    root.add(mat);
 
-  // --- crisp dotted grid, drawn once into a canvas texture ---------------
-  const grid = new THREE.Mesh(
-    new THREE.PlaneGeometry(SPAN, SPAN),
-    new THREE.MeshBasicMaterial({
-      map: gridTexture(world.colors.gridLine ?? 0xffffff),
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-    })
-  );
-  grid.rotation.x = -Math.PI / 2;
-  grid.position.y = 0.06;
-  root.add(grid);
+    // --- crisp dotted grid, drawn once into a canvas texture -------------
+    const grid = new THREE.Mesh(
+      new THREE.PlaneGeometry(SPAN, SPAN),
+      new THREE.MeshBasicMaterial({
+        map: gridTexture(world.colors.gridLine ?? 0xffffff),
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      })
+    );
+    grid.rotation.x = -Math.PI / 2;
+    grid.position.y = 0.06;
+    root.add(grid);
+  }
 
-  // --- nearly invisible pick/state cells ---------------------------------
+  // --- nearly invisible pick/state cells (fully invisible when bare) -----
   const tiles = new Map();
   const tileGeo = new THREE.PlaneGeometry(TILE * 0.98, TILE * 0.98);
   tileGeo.rotateX(-Math.PI / 2);
@@ -257,7 +260,7 @@ export function setupBoard(slot, worldId) {
         new THREE.MeshBasicMaterial({
           color: 0xffffff,
           transparent: true,
-          opacity: 0.045,
+          opacity: bare ? 0 : 0.045,
           depthWrite: false,
         })
       );
@@ -403,16 +406,17 @@ export function populateAquarium(slot, list) {
   if (!d) return;
   d.creaturesGroup.clear();
   d.creatures.clear();
-  const perRow = 5;
   list.forEach((item, i) => {
-    const model = buildCreature(item.worldId, item.idx, 1.6, item.custom ?? null);
-    model.rotation.y = 0.16;
+    const model = buildCreature(item.worldId, item.idx, 1.7, item.custom ?? null);
     const holder = new THREE.Group();
     holder.add(model);
-    const col = i % perRow;
-    const row = Math.floor(i / perRow);
-    holder.position.set(col * 1.7 - 3.4, 0.1, row * 1.9 - 2.6);
-    holder.rotation.y = ((i % 3) - 1) * 0.35;
+    // organic golden-angle scatter instead of a grid
+    const r = 0.9 + 2.7 * Math.sqrt((i + 0.5) / Math.max(1, list.length));
+    const a = i * 2.399963;
+    const cx = Math.cos(a) * r * 1.12;
+    const cz = Math.sin(a) * r * 0.8;
+    holder.position.set(cx, 0.1, cz);
+    holder.rotation.y = Math.random() * Math.PI * 2;
     const blob = new THREE.Mesh(
       new THREE.CircleGeometry(0.4, 16),
       new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.16, depthWrite: false })
@@ -422,10 +426,114 @@ export function populateAquarium(slot, list) {
     blob.scale.set(1.4, 0.9, 1);
     holder.add(blob);
     holder.scale.setScalar(0.01);
-    tween((v) => holder.scale.setScalar(v), { dur: 0.6, delay: i * 0.05, ease: Ease.outBack });
+    const scale = 0.9 + Math.random() * 0.25;
+    tween((v) => holder.scale.setScalar(scale * v), { dur: 0.6, delay: i * 0.05, ease: Ease.outBack });
     d.creaturesGroup.add(holder);
-    d.creatures.set(item.key, { model, holder, baseY: 0.1, phase: Math.random() * 7, ship: null });
+    d.creatures.set(item.key, {
+      model,
+      holder,
+      baseY: 0.1,
+      phase: Math.random() * 7,
+      ship: null,
+      // everyone slowly meanders around their favourite spot
+      wander: {
+        cx,
+        cz,
+        rx: 0.6 + Math.random() * 0.9,
+        rz: 0.5 + Math.random() * 0.7,
+        sp: 0.12 + Math.random() * 0.18,
+        ph: Math.random() * 7,
+      },
+    });
   });
+}
+
+function updateWander(c, dt) {
+  const w = c.wander;
+  let tx;
+  let tz;
+  let sp;
+  if (c.lure) {
+    tx = c.lure.x;
+    tz = c.lure.z;
+    sp = 2.4;
+  } else {
+    tx = w.cx + Math.cos(clockT * w.sp + w.ph) * w.rx;
+    tz = w.cz + Math.sin(clockT * w.sp * 1.27 + w.ph) * w.rz;
+    sp = 0.7;
+  }
+  const dx = tx - c.holder.position.x;
+  const dz = tz - c.holder.position.z;
+  const dist = Math.hypot(dx, dz);
+  if (c.lure && dist < 0.3) {
+    const arrived = c.lure.onArrive;
+    c.lure = null;
+    if (arrived) arrived();
+    return;
+  }
+  if (dist < 0.02) return;
+  const step = Math.min(dist, sp * dt);
+  c.holder.position.x += (dx / dist) * step;
+  c.holder.position.z += (dz / dist) * step;
+  // creatures face -X locally — turn smoothly into the travel direction
+  const targetRy = Math.atan2(dz, -dx);
+  let diff = targetRy - c.holder.rotation.y;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  c.holder.rotation.y += diff * Math.min(1, dt * 2.5);
+}
+
+// a snack drops in; the closest resident comes over and does a happy hop
+export function dropFood(slot, px, pz) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const pellet = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.11, 0),
+    new THREE.MeshStandardMaterial({ color: 0xffc94d, roughness: 0.5, flatShading: true })
+  );
+  pellet.position.set(px, 2.4, pz);
+  d.root.add(pellet);
+  tween(
+    (v) => {
+      pellet.position.y = 2.4 - v * 2.25;
+      pellet.rotation.x = v * 5;
+    },
+    {
+      dur: 0.55,
+      ease: Ease.outQuad,
+      onDone: () => {
+        ringWave(d, { x: px, z: pz }, 0xffc94d);
+        setTimeout(() => {
+          tween((v) => pellet.scale.setScalar(Math.max(0.01, 1 - v)), {
+            dur: 0.4,
+            ease: Ease.outQuad,
+            onDone: () => {
+              d.root.remove(pellet);
+              pellet.geometry.dispose();
+              pellet.material.dispose();
+            },
+          });
+        }, 1600);
+      },
+    }
+  );
+}
+
+export function lureNearest(slot, px, pz) {
+  const d = dioramas[slot];
+  if (!d) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (const [key, c] of d.creatures) {
+    const dist = Math.hypot(c.holder.position.x - px, c.holder.position.z - pz);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = key;
+    }
+  }
+  if (!best) return null;
+  const c = d.creatures.get(best);
+  c.lure = { x: px, z: pz, onArrive: () => hopCreature(slot, best) };
+  return best;
 }
 
 // which aquarium resident is closest to the tapped cell?

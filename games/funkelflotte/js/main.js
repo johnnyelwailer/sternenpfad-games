@@ -501,12 +501,31 @@ function startPlacement(player) {
   status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
   show(null);
   $("#btn-shuffle").hidden = false;
-  $("#btn-style").hidden = !flag("styles");
+  $("#btn-world").hidden = false;
+  $("#btn-opts").hidden = false;
+  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = false;
   $("#btn-place-done").disabled = false;
   $("#btn-place-done").textContent = "Fertig!";
   $("#btn-endturn").hidden = true;
   renderChips(other(S.viewer));
+}
+
+// swap your world any time during placement — layout and styles carry over
+function changeMyWorld() {
+  SND.tap();
+  const idx = S.placingPlayer;
+  showWorldPick({
+    title: "Wähl deine Welt!",
+    selected: S.worlds[idx],
+    onDone: (worldId) => {
+      if (worldId !== S.worlds[idx]) {
+        S.worlds[idx] = worldId;
+        if (S.mode === "online") S.net.send({ t: "world", world: worldId });
+      }
+      startPlacement(idx);
+    },
+  });
 }
 
 // ----------------------------------------------------------- style panel
@@ -528,12 +547,19 @@ function setShipCustom(shipId, patch) {
 }
 
 // full-view customizer: one big live 3D creature, tints + hats with
-// sticker locks, ‹ › to flip through the fleet
+// sticker locks. Lives in the AQUARIUM — you style your collected
+// friends there, and your fleet wears the styles in every battle.
 let custPreview = null;
-const cust = { i: 0, lockedHat: null };
+const cust = { i: 0, lockedHat: null, list: [] };
 
 function openCustomizer(startIdx = 0) {
   SND.tap();
+  cust.list = (S.aquarium ?? []).map((e) => ({
+    worldId: e.worldId,
+    idx: e.idx,
+    name: e.name,
+  }));
+  if (!cust.list.length) return;
   cust.i = startIdx;
   cust.lockedHat = null;
   $("#customizer").hidden = false;
@@ -550,22 +576,34 @@ function closeStylePanel() {
   }
 }
 
-function currentCustShip() {
-  const ships = S.boards[S.placingPlayer]?.ships ?? [];
-  cust.i = ((cust.i % ships.length) + ships.length) % ships.length;
-  return ships[cust.i];
+function currentCustItem() {
+  const n = cust.list.length;
+  if (!n) return null;
+  cust.i = ((cust.i % n) + n) % n;
+  return cust.list[cust.i];
+}
+
+function customOf(item) {
+  return loadCustom(item.worldId)[item.idx] || { tint: 0, hat: 0 };
+}
+
+function applyCustomPatch(item, patch) {
+  const map = loadCustom(item.worldId);
+  const cur = map[item.idx] || { tint: 0, hat: 0 };
+  const next = { ...cur, ...patch };
+  if (!next.tint && !next.hat) delete map[item.idx];
+  else map[item.idx] = next;
+  saveCustom(item.worldId, map);
+  refreshAquarium();
 }
 
 function renderCustomizer() {
-  const idx = S.placingPlayer;
-  const worldId = S.worlds[idx];
-  const world = getWorld(worldId);
-  const ship = currentCustShip();
-  if (!ship) return;
-  const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
-  $("#cust-name").textContent = world.creatures[ship.id]?.name ?? "";
-  $("#cust-count").textContent = `${cust.i + 1} / ${S.boards[idx].ships.length}`;
-  custPreview.show(worldId, ship.id, ship.size, cur.tint || cur.hat ? cur : null);
+  const item = currentCustItem();
+  if (!item) return;
+  const cur = customOf(item);
+  $("#cust-name").textContent = item.name;
+  $("#cust-count").textContent = `${cust.i + 1} / ${cust.list.length}`;
+  custPreview.show(item.worldId, item.idx, item.idx === 0 ? 3.4 : 2.6, cur.tint || cur.hat ? cur : null);
 
   const dots = $("#cust-tints");
   dots.innerHTML = "";
@@ -583,7 +621,7 @@ function renderCustomizer() {
       }
       SND.tap();
       cust.lockedHat = null;
-      setShipCustom(ship.id, { tint: ti });
+      applyCustomPatch(item, { tint: ti });
       renderCustomizer();
     });
     dots.appendChild(dot);
@@ -598,10 +636,9 @@ function renderCustomizer() {
 }
 
 function cycleHat(step) {
-  const idx = S.placingPlayer;
-  const ship = currentCustShip();
-  if (!ship) return;
-  const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
+  const item = currentCustItem();
+  if (!item) return;
+  const cur = customOf(item);
   let h = cust.lockedHat ?? cur.hat;
   h = (h + step + ACCESSORIES.length) % ACCESSORIES.length;
   if (flag("stickers") && !PROG.isHatUnlocked(h)) {
@@ -616,7 +653,7 @@ function cycleHat(step) {
   }
   cust.lockedHat = null;
   SND.sparkle();
-  setShipCustom(ship.id, { hat: h });
+  applyCustomPatch(item, { hat: h });
   renderCustomizer();
 }
 
@@ -643,6 +680,8 @@ function placementDone() {
   SCENE.clearInteraction();
   closeStylePanel();
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
@@ -985,6 +1024,8 @@ function startBattle(firstTurn) {
   closeStylePanel();
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
@@ -1993,6 +2034,8 @@ function setupChaseBoard() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
@@ -2374,6 +2417,8 @@ function setupBossBoard() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
@@ -3026,6 +3071,14 @@ function journeyAdvance(won) {
 
 // ------------------------------------------------------------ aquarium
 
+function refreshAquarium() {
+  if (S.mode !== "aquarium" || !S.aquarium) return;
+  SCENE.populateAquarium(
+    "mine",
+    S.aquarium.map((e) => ({ ...e, custom: loadCustom(e.worldId)[e.idx] ?? null }))
+  );
+}
+
 function openAquarium() {
   SND.unlock();
   SND.whoosh();
@@ -3034,46 +3087,58 @@ function openAquarium() {
   S.phase = "aquarium";
   S.viewer = 0;
   applyUiWorld(S.worlds[0]);
-  SCENE.setupBoard("mine", S.worlds[0]);
+  // no grid, no mat — just the living world
+  SCENE.setupBoard("mine", S.worlds[0], { bare: true });
 
   const p = PROG.loadProgress();
   const list = [];
   for (const world of Object.values(WORLDS)) {
     world.creatures.forEach((c, i) => {
       if (PROG.stickerCount(world.id, i, p) > 0) {
-        list.push({
-          key: `${world.id}-${i}`,
-          worldId: world.id,
-          idx: i,
-          custom: loadCustom(world.id)[i] ?? null,
-          name: c.name,
-        });
+        list.push({ key: `${world.id}-${i}`, worldId: world.id, idx: i, name: c.name });
       }
     });
   }
   S.aquarium = list;
-  SCENE.populateAquarium("mine", list);
+  S.aquariumIdx = 0;
+  refreshAquarium();
   SCENE.focusBoard("mine");
   SCENE.clearInteraction();
   S.aquariumTap = (x, y) => {
     const key = SCENE.nearestAquariumKey("mine", x, y);
-    if (!key) return;
-    SND.sparkle();
-    SCENE.hopCreature("mine", key);
-    const item = list.find((e) => e.key === key);
-    if (item) toast(`${item.name} freut sich! 💛`, 1400);
+    if (key) {
+      SND.sparkle();
+      SCENE.hopCreature("mine", key);
+      const i = list.findIndex((e) => e.key === key);
+      if (i >= 0) {
+        S.aquariumIdx = i;
+        toast(`${list[i].name} freut sich! 💛`, 1400);
+      }
+      return;
+    }
+    if (!list.length) return;
+    // tap the water: drop a snack, the closest friend swims over
+    const px = x - 4 + 0.5;
+    const pz = y - 4 + 0.5;
+    SND.plop();
+    SCENE.dropFood("mine", px, pz);
+    const fed = SCENE.lureNearest("mine", px, pz);
+    const item = list.find((e) => e.key === fed);
+    if (item) status(`🍪 ${item.name} hat den Snack entdeckt!`);
   };
   SCENE.setTapMode("mine", S.aquariumTap);
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-style").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
+  $("#btn-style").hidden = !flag("styles") || list.length === 0;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
   status(
     list.length
-      ? `Dein Aquarium: ${list.length} ${list.length === 1 ? "Freund" : "Freunde"} — tipp sie an!`
+      ? `Dein Aquarium: ${list.length} ${list.length === 1 ? "Freund" : "Freunde"} — antippen oder füttern!`
       : "Noch ganz leer! Gewinne Spiele und sammle Sticker-Freunde."
   );
 }
@@ -3189,6 +3254,8 @@ function goHome() {
   $("#btn-rematch").textContent = "Nochmal spielen";
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   applyUiWorld(S.worlds[0]);
@@ -3217,10 +3284,17 @@ function boot() {
   });
   $("#btn-options").addEventListener("click", () => {
     SND.tap();
+    optionsReturn = null;
+    $("#options-note").hidden = true;
     show("screen-options");
   });
   $("#btn-options-back").addEventListener("click", () => {
     SND.tap();
+    if (optionsReturn === "game") {
+      optionsReturn = null;
+      show(null); // back into the running game HUD
+      return;
+    }
     show("screen-title");
   });
   $("#btn-powers-legend").addEventListener("click", () => {
@@ -3334,8 +3408,16 @@ function boot() {
   });
 
   $("#btn-shuffle").addEventListener("click", shuffleFleet);
+  $("#btn-world").addEventListener("click", changeMyWorld);
+  let optionsReturn = null;
+  $("#btn-opts").addEventListener("click", () => {
+    SND.tap();
+    optionsReturn = "game";
+    $("#options-note").hidden = false;
+    show("screen-options");
+  });
   $("#btn-style").addEventListener("click", () => {
-    if ($("#customizer").hidden) openCustomizer(0);
+    if ($("#customizer").hidden) openCustomizer(S.aquariumIdx ?? 0);
     else closeStylePanel();
   });
   $("#btn-cust-done").addEventListener("click", () => {
