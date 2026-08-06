@@ -3,7 +3,16 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "node scripts/serve.mjs 8123 .",
+    "dev:peer": "node scripts/peer-server.mjs 9200",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test \"games/funkelflotte/tests/*.test.mjs\"",
+    "test:e2e": "playwright test",
     "build:pages": "node scripts/build-pages.mjs",
     "deploy:pages": "bash scripts/deploy-pages.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "peer": "^1.0.2"
   }
 }

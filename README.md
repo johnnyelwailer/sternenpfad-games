@@ -12,6 +12,34 @@ Monorepo scaffold for multiple story-driven programming games.
 The first game, Sternenpfad, will be added under `games/sternenpfad/` in the
 next step.
 
+## Games
+
+### 🐳 Funkel-Flotte (`games/funkelflotte/`)
+
+A kid-friendly "Schiffe versenken" (battleship) built with plain browser
+tech — no framework, no build step. Instead of sinking ships, kids search
+for hidden friends across four themed worlds (ocean, space, candy land,
+dino jungle). Mobile first, fullscreen, with physics-based particle
+effects and a WebAudio sound synth.
+
+Modes:
+
+- **Alleine gegen Robo** — play against a friendly AI
+- **Zu zweit abwechselnd** — hot-seat on one device with a pass screen
+- **Mit zwei Geräten** — peer-to-peer over WebRTC (PeerJS). The host
+  shows a QR code / 4-letter code, the guest scans or types it. Signaling
+  uses the free public PeerJS cloud by default; `?ps=host:port` switches
+  to a self-hosted `scripts/peer-server.mjs`.
+
+Development:
+
+```bash
+npm ci
+npm run dev        # static server on :8123 → /games/funkelflotte/
+npm run dev:peer   # local PeerJS signaling server on :9200 (optional)
+npm test           # unit tests (engine, AI) + Playwright e2e tests
+```
+
 ## Deployment
 
 GitHub Pages is the deployment target. Pushes to `main` run

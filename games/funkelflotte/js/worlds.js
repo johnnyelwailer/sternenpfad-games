@@ -1,0 +1,136 @@
+// The four Funkel-Flotte worlds. Each reskins the classic fleet
+// (4, 3, 3, 2, 2) as friendly creatures a kid searches for.
+// Creature order matches DEFAULT_FLEET order by size.
+
+export const WORLDS = {
+  ozean: {
+    id: "ozean",
+    name: "Ozean",
+    tagline: "Finde die Meerestiere!",
+    icon: "🐳",
+    hiddenIcon: "🌊",
+    missIcon: "💧",
+    hitIcon: "💥",
+    colors: {
+      bg1: "#0b3d6b",
+      bg2: "#0a5a8a",
+      cell: "#1d6fa5",
+      cellFound: "#71d1f0",
+      accent: "#ffd447",
+      text: "#f2fbff",
+    },
+    ambient: "bubbles",
+    creatures: [
+      { size: 4, name: "Wanda Wal", icon: "🐳" },
+      { size: 3, name: "Otto Oktopus", icon: "🐙" },
+      { size: 3, name: "Rita Robbe", icon: "🦭" },
+      { size: 2, name: "Theo Schildkröte", icon: "🐢" },
+      { size: 2, name: "Susi Seepferdchen", icon: "🌟" },
+    ],
+    words: {
+      miss: "Platsch! Nur Wasser.",
+      hit: "Blubb! Da versteckt sich was!",
+      sunk: "gefunden!",
+      win: "Alle Meerestiere gefunden!",
+    },
+  },
+  weltraum: {
+    id: "weltraum",
+    name: "Weltraum",
+    tagline: "Finde die Raumschiffe!",
+    icon: "🚀",
+    hiddenIcon: "✨",
+    missIcon: "💫",
+    hitIcon: "⚡",
+    colors: {
+      bg1: "#160f33",
+      bg2: "#2b1a54",
+      cell: "#3b2a6e",
+      cellFound: "#9d7bff",
+      accent: "#ffe066",
+      text: "#f4efff",
+    },
+    ambient: "stars",
+    creatures: [
+      { size: 4, name: "Mega-Mondbasis", icon: "🛸" },
+      { size: 3, name: "Rakete Rosi", icon: "🚀" },
+      { size: 3, name: "Alien Albi", icon: "👽" },
+      { size: 2, name: "Robo Rixi", icon: "🤖" },
+      { size: 2, name: "Sternchen", icon: "⭐" },
+    ],
+    words: {
+      miss: "Nur Sternenstaub!",
+      hit: "Piep piep! Da funkt was!",
+      sunk: "entdeckt!",
+      win: "Alle Raumschiffe entdeckt!",
+    },
+  },
+  bonbon: {
+    id: "bonbon",
+    name: "Bonbonland",
+    tagline: "Finde die Leckereien!",
+    icon: "🍭",
+    hiddenIcon: "🍥",
+    missIcon: "🫧",
+    hitIcon: "✨",
+    colors: {
+      bg1: "#8a2f6b",
+      bg2: "#c2447e",
+      cell: "#d9679b",
+      cellFound: "#ffd1e8",
+      accent: "#fff3a3",
+      text: "#fff6fb",
+    },
+    ambient: "sprinkles",
+    creatures: [
+      { size: 4, name: "Riesen-Regenbogenlolli", icon: "🍭" },
+      { size: 3, name: "Kuchen Karlo", icon: "🍰" },
+      { size: 3, name: "Donut Dana", icon: "🍩" },
+      { size: 2, name: "Keks Kiki", icon: "🍪" },
+      { size: 2, name: "Bonbon Bo", icon: "🍬" },
+    ],
+    words: {
+      miss: "Nur Zuckerwatte!",
+      hit: "Mmmh! Hier duftet es süß!",
+      sunk: "gefunden!",
+      win: "Alle Leckereien gefunden!",
+    },
+  },
+  dino: {
+    id: "dino",
+    name: "Dino-Dschungel",
+    tagline: "Finde die Dinos!",
+    icon: "🦕",
+    hiddenIcon: "🌿",
+    missIcon: "🍃",
+    hitIcon: "💢",
+    colors: {
+      bg1: "#14421f",
+      bg2: "#1f5c2d",
+      cell: "#2e7d3f",
+      cellFound: "#a8e063",
+      accent: "#ffcf4d",
+      text: "#f3ffee",
+    },
+    ambient: "leaves",
+    creatures: [
+      { size: 4, name: "Langhals Lulu", icon: "🦕" },
+      { size: 3, name: "Rexi", icon: "🦖" },
+      { size: 3, name: "Trixi Triceratops", icon: "🐲" },
+      { size: 2, name: "Flitzi Flugsaurier", icon: "🦅" },
+      { size: 2, name: "Baby Bibo", icon: "🥚" },
+    ],
+    words: {
+      miss: "Nur Blätter!",
+      hit: "Raschel raschel! Da brummt was!",
+      sunk: "gefunden!",
+      win: "Alle Dinos gefunden!",
+    },
+  },
+};
+
+export const WORLD_IDS = Object.keys(WORLDS);
+
+export function getWorld(id) {
+  return WORLDS[id] || WORLDS.ozean;
+}

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#0b3d6b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Funkel-Flotte — Suchen &amp; Finden</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐳</text></svg>" />
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <canvas id="fx"></canvas>
+    <div id="toast" role="status"></div>
+
+    <button id="btn-mute" class="btn icon-btn" aria-label="Ton an oder aus">🔊</button>
+    <button id="btn-home" class="btn icon-btn secondary" aria-label="Zurück zum Start" hidden>🏠</button>
+
+    <!-- Title / world + mode selection -->
+    <section id="screen-title" class="screen active">
+      <h1 class="logo"><span class="spark">✨</span> Funkel-Flotte <span class="spark">✨</span></h1>
+      <p class="subtitle">Wer findet alle Versteckten zuerst?</p>
+      <div class="world-grid" id="world-grid"></div>
+      <div class="btn-row">
+        <button class="btn big" data-mode="ai">🤖 Alleine gegen Robo</button>
+        <button class="btn big" data-mode="hotseat">👫 Zu zweit abwechselnd</button>
+        <button class="btn big" data-mode="online">📱✨📱 Mit zwei Geräten</button>
+      </div>
+    </section>
+
+    <!-- Online: host or join -->
+    <section id="screen-online" class="screen">
+      <h2 class="screen-title-small">📱✨📱 Mit zwei Geräten</h2>
+      <div class="bigmoji" aria-hidden="true">🔮</div>
+      <div class="btn-row" id="online-choice">
+        <button class="btn big" id="btn-host">✨ Neues Spiel zaubern</button>
+        <button class="btn big secondary" id="btn-join">🔑 Ich habe einen Code</button>
+      </div>
+      <p class="hint">Ein Gerät zaubert das Spiel, das andere macht mit — per QR-Code oder Zauber-Code. Beide Geräte brauchen Internet.</p>
+    </section>
+
+    <!-- Online: host waiting room -->
+    <section id="screen-host" class="screen">
+      <h2 class="screen-title-small">Zeig das deinem Freund! 👇</h2>
+      <div class="qr-box" id="qr-box"></div>
+      <div class="game-code" id="host-code">····</div>
+      <p class="hint">Mit der Kamera den QR-Code scannen<br />oder den Zauber-Code eintippen.</p>
+      <div class="spinner"></div>
+      <p id="host-status">Warte auf Mitspieler …</p>
+    </section>
+
+    <!-- Online: guest join -->
+    <section id="screen-join" class="screen">
+      <h2 class="screen-title-small">🔑 Zauber-Code eingeben</h2>
+      <div class="bigmoji" aria-hidden="true">🗝️</div>
+      <input class="code-input" id="join-code" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="ABCD" />
+      <p class="error-msg" id="join-error"></p>
+      <button class="btn big" id="btn-join-go">Los! 🚀</button>
+    </section>
+
+    <!-- Placement -->
+    <section id="screen-place" class="screen">
+      <div class="statusbar" id="place-status"></div>
+      <div class="board-wrap">
+        <div class="board" id="place-board"></div>
+      </div>
+      <p class="hint">Ziehen = verschieben · Antippen = drehen</p>
+      <div class="btn-row">
+        <button class="btn" id="btn-shuffle">🎲 Mischen</button>
+        <button class="btn" id="btn-place-done">✅ Fertig!</button>
+      </div>
+    </section>
+
+    <!-- Pass device (hot-seat privacy) -->
+    <section id="screen-pass" class="screen">
+      <div class="bigmoji" id="pass-emoji">🙈</div>
+      <div class="pass-title" id="pass-title">Weitergeben!</div>
+      <p class="pass-sub" id="pass-sub">Gib das Gerät weiter. Nicht spicken!</p>
+      <button class="btn big" id="btn-pass-go">Ich bin dran! 👋</button>
+    </section>
+
+    <!-- Battle -->
+    <section id="screen-battle" class="screen">
+      <div class="statusbar" id="battle-status"></div>
+      <div class="fleet-status" id="fleet-status"></div>
+      <div class="board-wrap">
+        <div class="board" id="enemy-board"></div>
+      </div>
+      <div class="miniboard-label" id="own-label">Dein Versteck:</div>
+      <div class="board-wrap miniboard">
+        <div class="board" id="own-board"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn big" id="btn-endturn" hidden>Weitergeben ➡️</button>
+      </div>
+    </section>
+
+    <!-- Win / lose -->
+    <section id="screen-win" class="screen">
+      <div class="bigmoji" id="win-emoji">🏆</div>
+      <div class="win-title" id="win-title">Gewonnen!</div>
+      <p class="pass-sub" id="win-sub"></p>
+      <div class="btn-row">
+        <button class="btn big" id="btn-rematch">🔁 Nochmal spielen</button>
+        <button class="btn big secondary" id="btn-win-home">🏠 Zum Start</button>
+      </div>
+    </section>
+
+    <script src="vendor/qrcode.js"></script>
+    <script src="vendor/peerjs.min.js"></script>
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>
