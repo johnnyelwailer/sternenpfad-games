@@ -10,9 +10,12 @@ permissions:
   pages: write
   id-token: write
 
+# Never cancel an in-flight Pages deployment: aborting mid-deploy leaves
+# GitHub Pages' server-side queue in a stuck state that fails the next
+# deployments. Queue runs instead.
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
