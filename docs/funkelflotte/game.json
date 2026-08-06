@@ -1,0 +1,10 @@
+{
+  "id": "funkelflotte",
+  "title": "Funkel-Flotte",
+  "emoji": "🐳",
+  "tagline": "Suchen & Finden",
+  "description": "Schiffe versenken für Kinder in 3D — finde die versteckten Freunde. Jeder Spieler kämpft aus seiner eigenen Welt: Ozean, Weltraum oder Dino-Dschungel.",
+  "accent": ["#1d6fa5", "#0b3d6b"],
+  "locales": ["de"],
+  "pages": { "type": "static" }
+}

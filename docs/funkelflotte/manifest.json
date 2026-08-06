@@ -1,0 +1,17 @@
+{
+  "name": "Funkel-Flotte — Suchen & Finden",
+  "short_name": "Funkel-Flotte",
+  "description": "Schiffe versenken für Kinder: Finde die versteckten Freunde!",
+  "lang": "de",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0b3d6b",
+  "theme_color": "#0b3d6b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,18 +1,18 @@
 name: Deploy to GitHub Pages
 
+# Everything lives on main: pushes build the site and commit the output
+# to docs/ on main itself. Pages serves main:/docs (Settings → Pages →
+# Source: Deploy from a branch → main → /docs — one-time, admin-only).
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
 
-# Publish by force-pushing the built site to the gh-pages branch
-# (classic branch-based Pages). The actions/deploy-pages API path
-# proved unreliable for this site — deployments were accepted and then
-# stuck in GitHub's queue until timeout.
 concurrency:
   group: github-pages
   cancel-in-progress: false
@@ -31,18 +31,21 @@ jobs:
         run: npm ci
       - name: Build static Pages site
         run: npm run build:pages
-      - name: Publish dist/ to the gh-pages branch
+      - name: Commit built site to docs/ on main
         run: |
-          cd dist
-          git init -b gh-pages
+          # docs/ holds the generated site; hand-written *.md files survive
+          rsync -a --delete --exclude='*.md' --exclude='.gitkeep' dist/ docs/
+          if git diff --quiet -- docs; then
+            echo "site unchanged, nothing to publish"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Deploy ${GITHUB_SHA}"
-          git push --force \
-            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
-            gh-pages
-      # NOTE: the Pages *source* setting (Settings → Pages → "Deploy from
-      # a branch": gh-pages) is admin-only and cannot be set by a workflow
-      # token — it must be flipped once by hand. After that, pushes to
-      # gh-pages publish automatically.
+          git add docs
+          git commit -m "Publish site to docs/ [skip ci]"
+          # tolerate concurrent pushes to main
+          for i in 1 2 3 4; do
+            git push origin HEAD:main && exit 0
+            git pull --rebase origin main
+          done
+          exit 1
