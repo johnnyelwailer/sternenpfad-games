@@ -458,6 +458,20 @@ function renderBattle(animateEnemyKey = null, animateOwnKey = null) {
 
   renderFleetChips(foundSetOnEnemy(me));
   updateStatus();
+  syncEnemyLock();
+}
+
+// Dim the enemy board whenever tapping it can't do anything, so kids
+// always see where the action is.
+function syncEnemyLock() {
+  let locked;
+  if (S.mode === "hotseat") {
+    locked = S.inputLocked; // waiting for "Weitergeben"
+  } else {
+    locked = S.turn !== 0;
+  }
+  $("#enemy-wrap").classList.toggle("locked", locked && S.phase === "battle");
+  $("#enemy-label").textContent = locked ? "Gleich bist du dran …" : "Hier suchen! 👇";
 }
 
 function updateStatus() {
@@ -540,10 +554,12 @@ function handleLocalResult(shooter, x, y, res) {
     if (S.mode === "hotseat") {
       S.inputLocked = true;
       $("#btn-endturn").hidden = false;
+      syncEnemyLock();
     } else {
       // robo's turn
       S.turn = 1;
       S.inputLocked = true;
+      syncEnemyLock();
       setTimeout(() => {
         updateStatus();
         scheduleRoboTurn();
@@ -602,6 +618,7 @@ function scheduleRoboTurn() {
       S.turn = 0;
       S.inputLocked = false;
       updateStatus();
+      syncEnemyLock();
     } else {
       const creature = res.ship ? creatureFor(res.ship) : null;
       statusFlash(
@@ -759,6 +776,7 @@ function handleNetMessage(msg) {
         S.turn = 0;
         S.inputLocked = false;
         updateStatus();
+        syncEnemyLock();
         toast("Du bist dran! 🎯");
       } else {
         statusFlash("Dein Freund hat was gefunden und sucht weiter …");
@@ -783,6 +801,7 @@ function handleNetMessage(msg) {
       } else if (msg.result === E.MISS) {
         S.turn = 1;
         updateStatus();
+        syncEnemyLock();
       } else if (msg.result === E.SUNK && msg.ship) {
         const creature = creatureFor(msg.ship);
         statusFlash(`${creature.icon} ${creature.name} ${S.world.words.sunk} Nochmal! 🎯`);

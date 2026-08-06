@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: "/sternenpfad-games/",
+  base: "/sternenpfad-games/sternenpfad/",
   root: resolve(import.meta.dirname, "static"),
   publicDir: resolve(import.meta.dirname, "public"),
   plugins: [react()],

@@ -8,8 +8,8 @@ test("builds a static GitHub Pages shell for the 3D Sternenpfad controls", async
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
   assert.match(html, /<html lang="de">/i);
   assert.match(html, /<title>Sternenpfad · Programmieren für kleine Entdecker<\/title>/i);
-  assert.match(html, /sternenpfad-games\/assets\/index-[^"']+\.js/);
-  assert.match(html, /sternenpfad-games\/assets\/index-[^"']+\.css/);
+  assert.match(html, /sternenpfad-games\/sternenpfad\/assets\/index-[^"']+\.js/);
+  assert.match(html, /sternenpfad-games\/sternenpfad\/assets\/index-[^"']+\.css/);
 });
 
 test("keeps the 3D runtime, spatial preview, and browser-test contract", async () => {

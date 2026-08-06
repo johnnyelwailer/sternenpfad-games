@@ -5,6 +5,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 :root {
   --bg1: #0b3d6b;
   --bg2: #0a5a8a;
@@ -58,6 +62,17 @@ body {
   animation: screenIn 0.35s ease;
 }
 
+/* center content vertically when there is spare room; "safe" keeps
+   tall content scrollable from the top on small screens */
+#screen-place.active,
+#screen-pass.active,
+#screen-win.active,
+#screen-online.active,
+#screen-join.active,
+#screen-host.active {
+  justify-content: safe center;
+}
+
 @keyframes screenIn {
   from {
     opacity: 0;
@@ -70,7 +85,8 @@ body {
 }
 
 h1.logo {
-  font-size: clamp(2rem, 9vw, 3.2rem);
+  font-size: clamp(1.8rem, 8vw, 3.2rem);
+  white-space: nowrap;
   text-align: center;
   margin-top: 4vh;
   text-shadow: 0 3px 0 rgba(0, 0, 0, 0.25);
@@ -446,6 +462,22 @@ h1.logo .spark {
   filter: grayscale(1) brightness(0.7);
   opacity: 0.6;
   text-decoration: line-through;
+}
+
+.board-label {
+  font-weight: 800;
+  font-size: clamp(0.95rem, 4vw, 1.1rem);
+  margin: 2px 0 4px;
+}
+
+#enemy-wrap {
+  transition: opacity 0.3s, filter 0.3s;
+}
+
+#enemy-wrap.locked {
+  opacity: 0.55;
+  filter: saturate(0.6);
+  pointer-events: none;
 }
 
 .miniboard-label {

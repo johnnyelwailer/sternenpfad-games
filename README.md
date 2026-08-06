@@ -50,6 +50,6 @@ GitHub Pages is the deployment target. Pushes to `main` run
 npm run deploy:pages
 ```
 
-The workflow assembles `dist/` (Sternenpfad at `/`, Funkel-Flotte at
-`/funkelflotte/`), uploads it as a Pages artifact, and publishes it with
-GitHub's Pages deployment actions.
+The workflow assembles `dist/` with a launcher at `/` and every game under
+its own path (`/sternenpfad/`, `/funkelflotte/`), uploads it as a Pages
+artifact, and publishes it with GitHub's Pages deployment actions.
