@@ -163,6 +163,16 @@ export function startAmbient(worldId) {
   if (worldId === "ozean") {
     addNoise(420, 0.6, 0.045, 0.14, 0.03); // rolling waves
     addNoise(1600, 1.2, 0.012, 0.23, 0.008); // spray
+  } else if (worldId === "teich") {
+    addNoise(520, 0.9, 0.025, 0.17, 0.015); // gentle lapping
+    const croak = () => {
+      if (muted || !ambient) return;
+      for (let i = 0; i < 2; i += 1) {
+        tone(140 + Math.random() * 40, i * 0.18, 0.16, "sawtooth", 0.025, 95);
+      }
+      timers.push(setTimeout(croak, 3000 + Math.random() * 6000));
+    };
+    timers.push(setTimeout(croak, 1500));
   } else if (worldId === "weltraum") {
     for (const f of [55, 55.7, 110.3]) {
       const osc = ctx.createOscillator();

@@ -25,7 +25,7 @@ async function firstUnknownCell(page, boardIdx) {
 
 test("title screen shows worlds and modes, world picking re-themes", async ({ page }) => {
   await expect(page.locator("h1.logo")).toContainText("Funkel-Flotte");
-  await expect(page.locator("#world-grid .world-card")).toHaveCount(3);
+  await expect(page.locator("#world-grid .world-card")).toHaveCount(4);
   await expect(page.locator('[data-mode="ai"]')).toBeVisible();
   const before = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue("--ui").trim()
