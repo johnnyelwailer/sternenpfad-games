@@ -6,19 +6,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
-# Never cancel an in-flight Pages deployment: aborting mid-deploy leaves
-# GitHub Pages' server-side queue in a stuck state that fails the next
-# deployments. Queue runs instead.
+# Publish by force-pushing the built site to the gh-pages branch
+# (classic branch-based Pages). The actions/deploy-pages API path
+# proved unreliable for this site — deployments were accepted and then
+# stuck in GitHub's queue until timeout.
 concurrency:
   group: github-pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-publish:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -29,46 +28,16 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm ci
-      - name: Build static Pages artifact
+      - name: Build static Pages site
         run: npm run build:pages
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: ./dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      # A cancelled/timed-out Pages deployment can stay "in progress"
-      # server-side and block every following deployment. Deployment IDs
-      # equal the commit SHA, so try to cancel any recent leftovers.
-      - name: Clear stuck Pages deployments
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish dist/ to the gh-pages branch
         run: |
-          for sha in $(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/commits?per_page=10" \
-              | jq -r '.[].sha'); do
-            # NEVER cancel the deployment id we are about to create ourselves
-            if [ "$sha" = "${{ github.sha }}" ]; then
-              echo "skip own sha $sha"
-              continue
-            fi
-            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/pages/deployments/$sha/cancel")
-            echo "cancel $sha -> HTTP $code"
-          done
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - name: Deploy Pages artifact
-        id: deployment
-        uses: actions/deploy-pages@v4
+          cd dist
+          git init -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Deploy ${GITHUB_SHA}"
+          git push --force \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            gh-pages
