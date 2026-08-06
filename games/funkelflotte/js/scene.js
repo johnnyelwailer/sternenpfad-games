@@ -297,10 +297,12 @@ export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   const d = dioramas[slot];
   if (!d) return null;
   const model = buildCreature(d.worldId, ship.id, ship.size);
+  model.rotation.y = 0.16; // subtle 3/4 turn so faces catch the camera
   const holder = new THREE.Group();
   holder.add(model);
   holder.position.copy(shipAnchor(ship));
-  holder.rotation.y = ship.dir === "v" ? -Math.PI / 2 : 0;
+  // +90° for vertical ships keeps their faces toward the camera
+  holder.rotation.y = ship.dir === "v" ? Math.PI / 2 : 0;
 
   // occupancy pads: one soft glowing disc per occupied cell
   const padTex = padTexture();
@@ -418,7 +420,7 @@ export function moveCreature(slot, ship, { animate = true } = {}) {
   if (!c) return;
   c.ship = { ...ship };
   const target = shipAnchor(ship);
-  const targetRot = ship.dir === "v" ? -Math.PI / 2 : 0;
+  const targetRot = ship.dir === "v" ? Math.PI / 2 : 0;
   if (!animate) {
     c.holder.position.copy(target);
     c.holder.rotation.y = targetRot;
@@ -622,31 +624,45 @@ export function revealShip(slot, ship) {
   starburst(d, center);
   burst(d, worldPos, d.world.colors.accent, { count: 40 });
 
-  // --- creature entrance: leap out, one clean spin, land with a bounce ---
-  holder.position.y = -1.6;
-  holder.scale.setScalar(0.5);
-  const leapH = w === "teich" ? 1.6 : 1.1; // hooked fish jumps higher
+  // --- creature entrance: emerge, one joyful hop with a single spin,
+  // land with a squash-and-stretch bounce ---------------------------------
+  holder.position.y = -1.4;
+  holder.scale.setScalar(0.6);
+  const leapH = w === "teich" ? 1.5 : 1.05; // hooked pond fish jump higher
   tween(
     (v) => {
-      const lift =
-        v < 0.55
-          ? (v / 0.55) * (1.7 + leapH) - 1.6
-          : 0.1 + Math.cos(((v - 0.55) / 0.45) * Math.PI * 0.5) * leapH;
-      holder.position.y = lift;
-      holder.scale.setScalar(0.5 + Math.min(1, v * 1.6) * 0.5);
-      holder.rotation.y = baseRot + Math.PI * 2 * Ease.inOutQuad(v);
+      if (v < 0.3) {
+        // emerge from the board, decelerating (ends at zero velocity)
+        const k = Ease.outQuad(v / 0.3);
+        holder.position.y = -1.4 + k * 1.5;
+        holder.scale.setScalar(0.6 + 0.4 * k);
+      } else {
+        // ballistic hop + exactly one spin, both easing out to rest
+        const k = (v - 0.3) / 0.7;
+        holder.position.y = 0.1 + Math.sin(Math.PI * k) * leapH;
+        holder.rotation.y = baseRot + Math.PI * 2 * Ease.inOutQuad(k);
+        holder.scale.setScalar(1);
+      }
     },
     {
-      dur: 1.1,
+      dur: 1.15,
       ease: Ease.linear,
       onDone: () => {
         holder.rotation.y = baseRot;
         holder.position.y = 0.1;
         entry.baseY = 0.1;
+        // squash & stretch landing
+        tween(
+          (u) => {
+            const sq = Math.sin(Math.PI * u);
+            holder.scale.set(1 + 0.16 * sq, 1 - 0.22 * sq, 1 + 0.16 * sq);
+          },
+          { dur: 0.28, ease: Ease.outQuad }
+        );
         ringWave(d, center, d.world.colors.accent);
         const ring = addFoundRing(d, holder, ship);
         ring.scale.setScalar(0.01);
-        tween((v) => ring.scale.set(ship.size * 0.78 * v, 0.9 * v, v), { dur: 0.4, ease: Ease.outBack });
+        tween((v2) => ring.scale.set(ship.size * 0.78 * v2, 0.9 * v2, v2), { dur: 0.4, ease: Ease.outBack });
         camKick = Math.max(camKick, 0.3);
       },
     }
@@ -957,13 +973,16 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
 
   camTween = tween(
     (v) => {
-      if (v < 0.5) {
-        const k = Ease.inOutQuad(v * 2);
+      // one global ease drives both halves so the angular velocity is
+      // continuous through the top of the flip — no midpoint hitch
+      const E = Ease.inOutCubic(v);
+      if (E < 0.5) {
+        const k = E * 2;
         const e = fromElev + (eTop - fromElev) * k;
         camera.position.copy(orbit(fromCenter, e, fromDist));
         camBase.look.lerpVectors(fromLook, fromCenter, k);
       } else {
-        const k = Ease.inOutQuad((v - 0.5) * 2);
+        const k = (E - 0.5) * 2;
         const e = eTop + (elevation - eTop) * k;
         camera.position.copy(orbit(toCenter, e, dist));
         camBase.look.lerpVectors(toCenter, look, k);
@@ -972,7 +991,7 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
       lerpSky(v);
     },
     {
-      dur: 0.5,
+      dur: 0.55,
       ease: Ease.linear,
       onDone: () => {
         camBase.pos.copy(pos);
