@@ -342,7 +342,7 @@ h1.logo {
 }
 
 /* landscape: actions to the right so they never cover the board */
-@media (orientation: landscape) and (max-height: 560px) {
+@media (min-aspect-ratio: 13/10) {
   #hud {
     flex-direction: row;
     align-items: flex-start;
