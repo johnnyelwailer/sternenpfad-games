@@ -678,7 +678,24 @@ function joinGame(code) {
   S.net
     .join(code)
     .then(() => {
-      // wait for hello (world info) — handled in wireNet
+      // ask the host to (re)send its hello until it arrives — the very
+      // first data-channel message can get lost right after opening
+      let tries = 0;
+      const ping = setInterval(() => {
+        if (S.phase !== "title" || !S.net) {
+          clearInterval(ping);
+          return;
+        }
+        tries += 1;
+        if (tries > 8) {
+          clearInterval(ping);
+          toast("Verbindung klappt nicht. Probiert es nochmal! 🙈", 2600);
+          goHome();
+          return;
+        }
+        S.net.send({ t: "hi" });
+      }, 1500);
+      S.net.send({ t: "hi" });
     })
     .catch((err) => {
       btn.disabled = false;
@@ -744,8 +761,15 @@ function onlineShoot(x, y) {
 
 function handleNetMessage(msg) {
   switch (msg.t) {
+    case "hi": {
+      // guest asks for (another) hello — answer idempotently
+      if (S.isHost) S.net.send({ t: "hello", v: 1, world: S.world.id });
+      break;
+    }
     case "hello": {
-      // guest receives world choice
+      // guest receives the world choice — only valid before placement
+      // (initial join) or after a finished round (rematch)
+      if (S.phase !== "title" && S.phase !== "over") break;
       applyWorld(getWorld(msg.world));
       beginOnlinePlacement();
       break;
@@ -958,6 +982,11 @@ function boot() {
     syncMute();
     if (!SND.isMuted()) SND.tap();
   });
+
+  // offline support (hot-seat + robo work without internet once visited)
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
 
   // deep link: ?join=CODE
   const params = new URLSearchParams(window.location.search);

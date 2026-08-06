@@ -112,6 +112,24 @@ test("hot-seat: full game to the win screen with pass-device flow", async ({ pag
   await expect(page.locator("#win-title")).toContainText("gewonnen");
 });
 
+test("works offline after the first visit (PWA)", async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  await page.addInitScript(() => localStorage.setItem("ff-muted", "1"));
+  await page.goto(GAME);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.waitForTimeout(600); // let the precache finish
+
+  await ctx.setOffline(true);
+  await page.reload();
+  await expect(page.locator("h1.logo")).toContainText("Funkel-Flotte");
+  // robo mode is fully playable offline
+  await page.locator('[data-mode="ai"]').click();
+  await expect(page.locator("#screen-place")).toHaveClass(/active/);
+  await expect(page.locator("#place-board .creature")).toHaveCount(5);
+  await ctx.close();
+});
+
 // Online tests run against the local signaling server (scripts/peer-server.mjs)
 // via ?ps=localhost:9200 — real WebRTC, no external network needed.
 const PS = "ps=localhost:9200";
