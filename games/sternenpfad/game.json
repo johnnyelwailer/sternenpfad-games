@@ -1,6 +1,10 @@
 {
   "id": "sternenpfad",
   "title": "Sternenpfad",
+  "emoji": "🦊",
+  "tagline": "Programmieren für kleine Entdecker",
+  "description": "Führe Lumi den Fuchs mit Befehlen, Schleifen und Funktionen durch Sternenwald, Moosgärten und Wolkenwerk.",
+  "accent": ["#4b3591", "#160f33"],
   "sourceRoot": "app",
   "assetRoot": "public",
   "testCommand": "npm run test:play",

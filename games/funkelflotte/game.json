@@ -1,0 +1,10 @@
+{
+  "id": "funkelflotte",
+  "title": "Funkel-Flotte",
+  "emoji": "🐳",
+  "tagline": "Suchen & Finden",
+  "description": "Schiffe versenken für Kinder — finde die versteckten Freunde in fünf Welten. Alleine, zu zweit oder mit zwei Geräten.",
+  "accent": ["#1d6fa5", "#0b3d6b"],
+  "locales": ["de"],
+  "pages": { "type": "static" }
+}
