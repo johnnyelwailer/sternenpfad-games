@@ -489,6 +489,132 @@ h1.logo {
   }
 }
 
+/* ----------------------------------------------------- sticker album */
+
+.album-total {
+  font-weight: 900;
+  font-size: clamp(1.05rem, 4.5vw, 1.3rem);
+}
+
+#album-worlds {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(94vw, 520px);
+  margin-bottom: 1vh;
+}
+
+.album-section {
+  background: rgba(0, 0, 0, 0.24);
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius);
+  padding: 10px 12px 12px;
+}
+
+.album-world-name {
+  font-weight: 900;
+  margin-bottom: 8px;
+}
+
+.album-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.album-slot {
+  position: relative;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 6px 2px 4px;
+  text-align: center;
+}
+
+.album-slot img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.35));
+}
+
+.album-slot.locked img {
+  filter: grayscale(1) brightness(0.18);
+  opacity: 0.85;
+}
+
+.album-slot-name {
+  font-size: 0.62rem;
+  font-weight: 800;
+  opacity: 0.9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.album-slot.locked .album-slot-name {
+  opacity: 0.45;
+}
+
+.album-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: var(--accent);
+  color: #4a2c00;
+  font-size: 0.68rem;
+  font-weight: 900;
+  border-radius: 999px;
+  padding: 2px 7px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+/* sticker reward on the win screen */
+
+#win-sticker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px dashed rgba(255, 255, 255, 0.35);
+  border-radius: 18px;
+  padding: 10px 18px;
+}
+
+#win-sticker img {
+  width: 74px;
+  height: 74px;
+  object-fit: contain;
+  animation: stickerPop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+@keyframes stickerPop {
+  from {
+    transform: scale(0) rotate(-16deg);
+  }
+  to {
+    transform: scale(1) rotate(0);
+  }
+}
+
+.sticker-label {
+  font-weight: 800;
+  font-size: 0.95rem;
+}
+
+.sticker-unlock {
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: var(--accent);
+}
+
+.style-hint {
+  font-size: 0.85rem;
+  font-weight: 700;
+  opacity: 0.85;
+  margin-bottom: 8px;
+}
+
 /* -------------------------------------------------------- style panel */
 
 #style-panel {
