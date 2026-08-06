@@ -54,7 +54,7 @@ function defaultElevation() {
 function pose(slot) {
   const cx = dioramaX(slot);
   const e = clampNum(orbit.elev ?? defaultElevation(), 0.42, 1.35);
-  const a = clampNum(orbit.azim, -1.1, 1.1);
+  const a = orbit.azim; // full 360° — spin all the way around
   // tilting low zooms in, top-down pulls back — plus manual pinch zoom
   const angleZoom = 0.78 + 0.5 * ((e - 0.42) / (1.35 - 0.42));
   const dist = framingDistance() * angleZoom * clampNum(orbit.zoom, 0.55, 1.5);
@@ -63,7 +63,9 @@ function pose(slot) {
     dist * Math.sin(e),
     dist * Math.cos(e) * Math.cos(a)
   );
-  const lookV = new THREE.Vector3(cx, -0.2, -2.0 * Math.cos(a));
+  // look slightly past the board center, away from the camera, so the
+  // board sits low in the frame at every rotation angle
+  const lookV = new THREE.Vector3(cx - 2.0 * Math.sin(a), -0.2, -2.0 * Math.cos(a));
   return { pos: posV, look: lookV, elev: e, dist };
 }
 
@@ -1185,7 +1187,7 @@ function onPointerMove(e) {
     if (gesture === "maybe-orbit" && total < 9) return;
     gesture = "orbit";
     // drag to look around: horizontal = orbit, vertical = tilt
-    orbit.azim = clampNum(orbit.azim - dx * 0.0045, -1.1, 1.1);
+    orbit.azim = (orbit.azim - dx * 0.0045) % (Math.PI * 2);
     orbit.elev = clampNum((orbit.elev ?? defaultElevation()) + dy * 0.004, 0.42, 1.35);
   }
 }
