@@ -53,3 +53,9 @@ npm run deploy:pages
 The workflow assembles `dist/` with a launcher at `/` and every game under
 its own path (`/sternenpfad/`, `/funkelflotte/`), uploads it as a Pages
 artifact, and publishes it with GitHub's Pages deployment actions.
+
+Cloudflare multiplayer-service authentication and the phone-only remote login
+flow are documented in [`docs/cloudflare-auth.md`](docs/cloudflare-auth.md).
+The generic service workflow is manually triggered with
+`.github/workflows/deploy-cloudflare-service.yml` after the two Cloudflare
+secrets have been added to GitHub.
