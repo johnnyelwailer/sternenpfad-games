@@ -16,11 +16,13 @@ scene, assets, tests, local runtime, and static Pages entrypoint.
 
 ### 🐳 Funkel-Flotte (`games/funkelflotte/`)
 
-A kid-friendly "Schiffe versenken" (battleship) built with plain browser
-tech — no framework, no build step. Instead of sinking ships, kids search
-for hidden friends across four themed worlds (ocean, space, candy land,
-dino jungle). Mobile first, fullscreen, with physics-based particle
-effects and a WebAudio sound synth.
+A kid-friendly 3D "Schiffe versenken" (battleship) built with three.js
+and plain browser tech — no framework, no build step. Instead of sinking
+ships, kids search for hidden friends. Every player fights from their own
+themed world (ocean lagoon, deep space, dino jungle) — the camera flies
+between the two dioramas. Procedural low-poly creatures with alive
+animations, GLSL water, layered backdrops, particle effects, ambient
+soundscapes, PWA offline support.
 
 Modes:
 
