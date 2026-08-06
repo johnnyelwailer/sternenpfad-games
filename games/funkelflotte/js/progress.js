@@ -6,10 +6,29 @@ const KEY = "ff-progress";
 const CREATURES_PER_WORLD = 5;
 
 // must match ACCESSORIES in models.js (index-for-index)
-export const HAT_KINDS = [null, "party", "krone", "propeller", "blume", "schleife"];
+export const HAT_KINDS = [null, "party", "krone", "propeller", "blume", "schleife", "kappe", "zauberhut"];
 
 // total stickers needed to unlock each hat
-export const HAT_UNLOCKS = { party: 0, blume: 2, schleife: 4, krone: 7, propeller: 10 };
+export const HAT_UNLOCKS = { party: 0, blume: 2, schleife: 4, kappe: 6, krone: 7, propeller: 10, zauberhut: 13 };
+
+// tint indexes (into TINTS in models.js) that need stickers; the rest
+// are free. 0 = natural colors, always available.
+export const TINT_UNLOCKS = { 4: 3, 5: 6, 6: 9 };
+
+export function isTintUnlocked(tintIdx, p = loadProgress()) {
+  const at = TINT_UNLOCKS[tintIdx];
+  if (at === undefined) return true;
+  return totalStickers(p) >= at;
+}
+
+export function tintUnlockAt(tintIdx) {
+  return TINT_UNLOCKS[tintIdx];
+}
+
+export function hatUnlockAt(hatIdx) {
+  const kind = HAT_KINDS[hatIdx];
+  return kind ? HAT_UNLOCKS[kind] ?? 0 : 0;
+}
 
 function defaultStore() {
   return {

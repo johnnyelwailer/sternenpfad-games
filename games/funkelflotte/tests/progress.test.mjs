@@ -54,13 +54,26 @@ test("awarding prefers missing creatures until the world is complete", () => {
 
 test("hats unlock at their thresholds and are reported once", () => {
   const collected = [];
-  for (let i = 0; i < HAT_UNLOCKS.propeller; i += 1) {
-    const r = awardSticker(i < 5 ? "ozean" : "dino", () => 0.5);
+  for (let i = 0; i < HAT_UNLOCKS.zauberhut; i += 1) {
+    const r = awardSticker(i < 5 ? "ozean" : i < 10 ? "dino" : "teich", () => 0.5);
     collected.push(...r.newHats);
   }
-  assert.deepEqual(collected.sort(), ["blume", "krone", "propeller", "schleife"].sort());
-  assert.equal(isHatUnlocked(HAT_KINDS.indexOf("propeller")), true);
+  assert.deepEqual(
+    collected.sort(),
+    ["blume", "kappe", "krone", "propeller", "schleife", "zauberhut"].sort()
+  );
+  assert.equal(isHatUnlocked(HAT_KINDS.indexOf("zauberhut")), true);
   assert.equal(nextUnlock(), null);
+});
+
+test("tints have their own unlock ladder", async () => {
+  const { isTintUnlocked } = await import("../js/progress.js");
+  assert.equal(isTintUnlocked(1), true); // free tints
+  assert.equal(isTintUnlocked(3), true);
+  assert.equal(isTintUnlocked(4), false);
+  for (let i = 0; i < 3; i += 1) awardSticker("ozean", () => 0.5);
+  assert.equal(isTintUnlocked(4), true);
+  assert.equal(isTintUnlocked(6), false);
 });
 
 test("nextUnlock counts down to the closest locked hat", () => {

@@ -67,18 +67,17 @@ test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async
   expect(stillValid).toBe(true);
 });
 
-test("style panel: tint + hat customize, persists and applies", async ({ page }) => {
+test("customizer: full view with tints, hats, locks — persists", async ({ page }) => {
   await page.locator('[data-mode="ai"]').click();
   await page.locator("#btn-style").click();
-  await expect(page.locator("#style-panel")).toBeVisible();
-  await expect(page.locator(".style-row")).toHaveCount(5);
+  await expect(page.locator("#customizer")).toBeVisible();
+  await expect(page.locator("#cust-count")).toContainText("1 / 5");
 
-  // pick the 2nd tint and one hat for the first creature
-  const firstRow = page.locator(".style-row").first();
-  await firstRow.locator(".tint-dot").nth(1).click();
-  await firstRow.locator(".hat-btn").click();
-  await expect(firstRow.locator(".tint-dot").nth(1)).toHaveClass(/selected/);
-  await expect(firstRow.locator(".hat-btn")).not.toHaveText("Ohne Hut");
+  // pick the 2nd tint and the next hat for the first creature
+  await page.locator("#cust-tints .tint-dot").nth(1).click();
+  await page.locator("#cust-hat-next").click();
+  await expect(page.locator("#cust-tints .tint-dot").nth(1)).toHaveClass(/selected/);
+  await expect(page.locator("#cust-hat-name")).not.toHaveText("Ohne Hut");
 
   const custom = await page.evaluate(() => window.__FF.state.customs[0]);
   expect(custom[0]).toEqual({ tint: 1, hat: 1 });
@@ -87,10 +86,19 @@ test("style panel: tint + hat customize, persists and applies", async ({ page })
   );
   expect(stored[0]).toEqual({ tint: 1, hat: 1 });
 
-  await page.locator("#btn-style-close").click();
-  await expect(page.locator("#style-panel")).toBeHidden();
+  // sticker-locked items show locked and cannot be picked yet
+  await expect(page.locator("#cust-tints .tint-dot.locked").first()).toBeVisible();
+  await page.locator("#cust-tints .tint-dot").nth(4).click(); // locked tint
+  expect((await page.evaluate(() => window.__FF.state.customs[0]))[0].tint).toBe(1);
 
-  // survives into battle and a reload (placement reloads the saved map)
+  // creature switcher moves through the fleet
+  await page.locator("#cust-next").click();
+  await expect(page.locator("#cust-count")).toContainText("2 / 5");
+
+  await page.locator("#btn-cust-done").click();
+  await expect(page.locator("#customizer")).toBeHidden();
+
+  // survives a reload (placement reloads the saved map)
   await page.reload();
   await page.waitForFunction(() => !!window.__FF);
   await page.locator('[data-mode="ai"]').click();

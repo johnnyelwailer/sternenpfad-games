@@ -1384,6 +1384,32 @@ export function clearInteraction() {
   tapHandler = null;
   placement = null;
   drag = null;
+  hideBlockedCells();
+}
+
+// subtle red wash on the cells the dragged creature must keep clear
+let blockedTiles = [];
+function showBlockedCells(slot, cells) {
+  hideBlockedCells();
+  const d = dioramas[slot];
+  if (!d || !cells) return;
+  for (const c of cells) {
+    const tile = d.tiles.get(`${c.x},${c.y}`);
+    if (!tile || tile.userData.state !== "unknown") continue;
+    tile.material.color.setHex(0xff5060);
+    tile.material.opacity = 0.17;
+    blockedTiles.push(tile);
+  }
+}
+
+function hideBlockedCells() {
+  for (const tile of blockedTiles) {
+    if (tile.userData.state === "unknown") {
+      tile.material.color.setHex(0xffffff);
+      tile.material.opacity = 0.045;
+    }
+  }
+  blockedTiles = [];
 }
 
 function raycastTiles(e, slot) {
@@ -1412,29 +1438,62 @@ function onPointerDown(e) {
 
   if (placement) {
     const cell = raycastTiles(e, placement.slot);
-    if (cell) {
-      const d = dioramas[placement.slot];
+    const d = dioramas[placement.slot];
+    let picked = null;
+    let grabDx = 0;
+    let grabDy = 0;
+    if (cell && d) {
       for (const [, entry] of d.creatures) {
         const sh = entry.ship;
         for (let i = 0; i < sh.size; i += 1) {
           const cx = sh.dir === "h" ? sh.x + i : sh.x;
           const cy = sh.dir === "v" ? sh.y + i : sh.y;
           if (cx === cell.x && cy === cell.y) {
-            drag = {
-              entry,
-              grabDx: cell.x - sh.x,
-              grabDy: cell.y - sh.y,
-              startX: e.clientX,
-              startY: e.clientY,
-              moved: false,
-              previewX: sh.x,
-              previewY: sh.y,
-            };
-            gesture = "ship";
-            return;
+            picked = entry;
+            grabDx = cell.x - sh.x;
+            grabDy = cell.y - sh.y;
+            break;
           }
         }
+        if (picked) break;
       }
+    }
+    if (!picked && d) {
+      // models are chunkier than their cells and the camera may be
+      // tilted — grab whatever creature mesh is under the finger
+      const hits = raycaster.intersectObjects(d.creaturesGroup.children, true);
+      if (hits.length) {
+        for (const [, entry] of d.creatures) {
+          let node = hits[0].object;
+          while (node) {
+            if (node === entry.holder) {
+              picked = entry;
+              break;
+            }
+            node = node.parent;
+          }
+          if (picked) break;
+        }
+      }
+    }
+    if (picked) {
+      const sh = picked.ship;
+      drag = {
+        entry: picked,
+        grabDx,
+        grabDy,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+        previewX: sh.x,
+        previewY: sh.y,
+      };
+      gesture = "ship";
+      // show where this friend may NOT go (the keep-one-gap rule)
+      if (placement.blockedCells) {
+        showBlockedCells(placement.slot, placement.blockedCells(sh.id));
+      }
+      return;
     }
   }
   // empty space (or battle board): candidate for orbit / tap
@@ -1496,6 +1555,7 @@ function onPointerUp(e) {
     const sh = entry.ship;
     drag = null;
     gesture = null;
+    hideBlockedCells();
     setCreatureInvalid(placement.slot, sh.id, false);
     if (moved) {
       placement.onMove(sh.id, previewX, previewY, sh.dir);
@@ -1517,6 +1577,74 @@ function onPointerUp(e) {
       if (cell) tapHandler.handler(cell.x, cell.y);
     }
   }
+}
+
+// ------------------------------------------------------- live preview
+// A small self-contained renderer for the customizer: one creature,
+// softly turning, with its idle animation running.
+
+export function createPreview(canvas) {
+  const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  r.outputColorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
+  cam.position.set(-2.6, 2.0, 3.6);
+  cam.lookAt(0, 0.65, 0);
+  s.add(new THREE.HemisphereLight(0xffffff, 0x667788, 1.15));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.6);
+  dl.position.set(-3, 5, 4);
+  s.add(dl);
+
+  let model = null;
+  let running = true;
+
+  const dispose = (root) =>
+    root.traverse((o) => {
+      if (o.isMesh) {
+        o.geometry?.dispose?.();
+        o.material?.dispose?.();
+      }
+    });
+
+  const loop = (now) => {
+    if (!running) return;
+    const w = canvas.clientWidth || 240;
+    const h = canvas.clientHeight || 240;
+    if (canvas.width !== w * r.getPixelRatio()) {
+      r.setSize(w, h, false);
+      cam.aspect = w / h;
+      cam.updateProjectionMatrix();
+    }
+    const t = now / 1000;
+    if (model) {
+      if (model.userData.animate) model.userData.animate(t);
+      model.rotation.y = 0.25 + Math.sin(t * 0.7) * 0.55;
+    }
+    r.render(s, cam);
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+
+  return {
+    show(worldId, index, size, custom) {
+      if (model) {
+        s.remove(model);
+        dispose(model);
+      }
+      model = buildCreature(worldId, index, size, custom);
+      s.add(model);
+    },
+    stop() {
+      running = false;
+      if (model) {
+        s.remove(model);
+        dispose(model);
+        model = null;
+      }
+      r.dispose();
+    },
+  };
 }
 
 // ------------------------------------------------------------- thumbnails
