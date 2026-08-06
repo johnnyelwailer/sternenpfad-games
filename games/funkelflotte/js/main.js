@@ -10,6 +10,7 @@ import * as PROG from "./progress.js";
 import { flag, setFlag, allFlags } from "./flags.js";
 import { generatePuzzle, PUZZLE_SPADES } from "./puzzle.js";
 import * as CHASE from "./chase.js";
+import * as BOSS from "./boss.js";
 import * as SND from "./sound.js";
 import * as SCENE from "./scene.js";
 import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
@@ -38,8 +39,9 @@ const S = {
   customs: [{}, {}], // per board index: shipId -> { tint, hat }
   oppCustom: null, // online: opponent's map (arrives with their "ready")
   rules: { decoy: false, sonar: false, ghost: false }, // extra rules
-  gameMode: "classic", // 'classic' | 'chase' — what an online session plays
+  gameMode: "classic", // 'classic' | 'chase' | 'boss' — what an online session plays
   chase: null, // chase-mode state (see startChase)
+  boss: null, // boss-mode state (see startBoss)
   extraTurn: null, // player index that may keep shooting after a miss
   ghostTrack: [null, null], // per board: { count, queue } for fading marks
   sonarMap: [{}, {}], // per board: "x,y" -> sonar distance (for replay)
@@ -323,6 +325,7 @@ function startMode(mode) {
   S.mode = mode;
   S.gameMode = "classic";
   S.chase = null;
+  S.boss = null;
   S.turn = 0;
   S.viewer = 0;
   S.rematchMine = false;
@@ -528,6 +531,10 @@ function placementDone() {
   SND.tap();
   if (S.mode === "chase") {
     chaseHidingDone();
+    return;
+  }
+  if (S.mode === "boss") {
+    bossPlacingDone();
     return;
   }
   SCENE.clearInteraction();
@@ -944,19 +951,25 @@ function handleNetMessage(msg) {
       if (msg.world) S.worlds[1] = msg.world;
       if (S.isHost) {
         S.net.send({ t: "hello", v: 2, world: S.worlds[0], rules: S.rules, mode: S.gameMode });
-        if (S.phase === "title" || S.phase === "over" || S.phase === "chase") {
+        if (["title", "over", "chase", "boss"].includes(S.phase)) {
           if (S.gameMode === "chase") beginChaseOnlineHider();
+          else if (S.gameMode === "boss") beginBossOnlineMonster();
           else beginOnlinePlacement();
         }
       }
       break;
     }
     case "hello": {
-      if (S.phase !== "title" && S.phase !== "over" && S.phase !== "chase") break;
+      if (!["title", "over", "chase", "boss"].includes(S.phase)) break;
       S.worlds[1] = msg.world || "ozean";
       if (msg.mode === "chase") {
         S.gameMode = "chase";
         beginChaseOnlineSeeker();
+        break;
+      }
+      if (msg.mode === "boss") {
+        S.gameMode = "boss";
+        beginBossOnlineHunter();
         break;
       }
       S.gameMode = "classic";
@@ -1083,6 +1096,12 @@ function handleNetMessage(msg) {
     case "c-moved":
       handleChaseMessage(msg);
       break;
+    case "b-ready":
+    case "b-shot":
+    case "b-res":
+    case "b-moved":
+      handleBossMessage(msg);
+      break;
     default:
       break;
   }
@@ -1093,6 +1112,7 @@ function maybeRematch() {
   if (S.isHost) {
     S.net.send({ t: "hello", v: 2, world: S.worlds[0], rules: S.rules, mode: S.gameMode });
     if (S.gameMode === "chase") beginChaseOnlineHider();
+    else if (S.gameMode === "boss") beginBossOnlineMonster();
     else beginOnlinePlacement();
   }
 }
@@ -1176,7 +1196,9 @@ function beginChaseHiding() {
 
 function chaseHidingDone() {
   SCENE.clearInteraction();
-  SCENE.placeCreatures("mine", []);
+  // hotseat must hide the creature (shared screen); online hiders keep
+  // seeing their own creature — their device is secret anyway
+  if (S.chase.kind === "hotseat") SCENE.placeCreatures("mine", []);
   $("#btn-place-done").hidden = true;
   if (S.chase.kind === "hotseat") {
     showPass({
@@ -1233,14 +1255,25 @@ function chaseSeekTap(x, y) {
   } else {
     // hotseat: the hider secretly moves via the eyes-closed overlay
     S.inputLocked = true;
-    setTimeout(() => openChaseMove(res.dist), FAST ? 50 : 900);
+    setTimeout(() => openMoveOverlay("chase"), FAST ? 50 : 900);
   }
 }
 
-function openChaseMove() {
-  $("#chase-move-sub").textContent = `Verstecker: Wohin huscht ${fridoName()}?`;
-  $("#btn-peek").hidden = S.chase.kind === "online";
+// shared eyes-closed overlay for the chase hider and the boss monster
+function openMoveOverlay(mode) {
+  if (mode === "boss") {
+    $("#chase-move-sub").textContent = `Monster: Wohin stapft ${bossName()}?`;
+    $("#btn-peek").hidden = S.boss.kind === "online";
+  } else {
+    $("#chase-move-sub").textContent = `Verstecker: Wohin huscht ${fridoName()}?`;
+    $("#btn-peek").hidden = S.chase.kind === "online";
+  }
   $("#chase-move").hidden = false;
+}
+
+function moveOverlayTap(dx, dy) {
+  if (S.mode === "boss") bossMoveTap(dx, dy);
+  else if (S.mode === "chase") chaseMoveTap(dx, dy);
 }
 
 function chaseMoveTap(dx, dy) {
@@ -1408,7 +1441,7 @@ function handleChaseMessage(msg) {
         chaseEnd(false);
         break;
       }
-      openChaseMove();
+      openMoveOverlay("chase");
       break;
     }
     case "c-res": {
@@ -1445,6 +1478,374 @@ function handleChaseMessage(msg) {
       if (S.chase?.role !== "seeker") break;
       S.inputLocked = false;
       status(`Weitersuchen! 🔦 ${S.chase.shotsLeft} Schüsse übrig`);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------- boss
+
+const BOSS_IDX = { ozean: 1, weltraum: 2, dino: 1, teich: 3 }; // Oktopus, UFO, Rexi, Frosch
+
+function bossIdx() {
+  return BOSS_IDX[S.worlds[0]] ?? 1;
+}
+
+function bossName() {
+  return `König ${getWorld(S.worlds[0]).creatures[bossIdx()]?.name ?? "Monster"}`;
+}
+
+function bossShipOf(st) {
+  return { id: bossIdx(), size: BOSS.BOSS_SIZE, x: st.boss.x, y: st.boss.y, dir: st.boss.dir, hits: [] };
+}
+
+function bossHunterStatus(wounds, shotsLeft, prefix = "") {
+  const lead = prefix ? `${prefix} ` : "";
+  status(`${lead}${bossName()}: ${"❤️".repeat(BOSS.BOSS_SIZE - wounds)} · 🔦 ${shotsLeft}`);
+}
+
+function setupBossBoard() {
+  S.viewer = 0;
+  applyUiWorld(S.worlds[0]);
+  SCENE.setupBoard("mine", S.worlds[0]);
+  // the monster wears the king look: menacing tint + crown
+  SCENE.setCustomization("mine", { [bossIdx()]: { tint: 4, hat: 2 } });
+  SCENE.placeCreatures("mine", []);
+  SCENE.focusBoard("mine");
+  SCENE.clearInteraction();
+  SND.startAmbient(S.worlds[0]);
+  show(null);
+  $("#btn-shuffle").hidden = true;
+  $("#btn-style").hidden = true;
+  $("#btn-endturn").hidden = true;
+  $("#btn-place-done").hidden = true;
+  renderChips(0);
+}
+
+function startBoss(kind) {
+  SND.unlock();
+  SND.whoosh();
+  goFullscreen();
+  S.mode = "boss";
+  S.phase = "boss";
+  S.gameMode = "boss";
+  S.boss = { kind, st: BOSS.createBoss(), role: "hunter", marks: {}, shotsLeft: BOSS.BOSS_SHOTS, wounds: 0 };
+  if (kind === "online") {
+    show("screen-online");
+    return;
+  }
+  setupBossBoard();
+  if (kind === "ai") {
+    bossHunterStatus(0, S.boss.st.shotsLeft, `${bossName()} stapft irgendwo herum!`);
+    SCENE.setTapMode("mine", (x, y) => bossSeekTap(x, y));
+  } else {
+    showPass({
+      title: "Spieler 1 ist das Monster — Spieler 2 schaut weg!",
+      sub: `Setz ${bossName()} aufs Brett. Tipp aufs Monster zum Drehen.`,
+      btn: "Monster aufstellen!",
+      action: () => beginBossPlacing(),
+    });
+  }
+}
+
+function beginBossPlacing() {
+  const st = S.boss.st;
+  show(null);
+  SCENE.placeCreatures("mine", [bossShipOf(st)], { popIn: true });
+  SCENE.setTapMode("mine", (x, y) => {
+    if (BOSS.segmentAt(st, x, y) >= 0) {
+      const dir = st.boss.dir === "h" ? "v" : "h";
+      BOSS.placeBoss(st, st.boss.x, st.boss.y, dir);
+    } else {
+      const ax = st.boss.dir === "h" ? x - 2 : x;
+      const ay = st.boss.dir === "v" ? y - 2 : y;
+      BOSS.placeBoss(st, ax, ay);
+    }
+    SND.tap();
+    SCENE.moveCreature("mine", bossShipOf(st));
+  });
+  status(`Wo lauert ${bossName()}? Tipp ein Feld an — aufs Monster tippen dreht es.`);
+  const done = $("#btn-place-done");
+  done.hidden = false;
+  done.disabled = false;
+  done.textContent = "Bereit!";
+}
+
+function bossPlacingDone() {
+  SCENE.clearInteraction();
+  if (S.boss.kind === "hotseat") SCENE.placeCreatures("mine", []);
+  $("#btn-place-done").hidden = true;
+  if (S.boss.kind === "hotseat") {
+    showPass({
+      title: "Gib das Gerät an Spieler 2!",
+      sub: `Spieler 2 jagt mit 🔦 ${S.boss.st.shotsLeft} Schüssen. Fünf Treffer besiegen das Monster!`,
+      btn: "Auf die Jagd!",
+      action: () => {
+        show(null);
+        bossHunterStatus(0, S.boss.st.shotsLeft);
+        SCENE.setTapMode("mine", (x, y) => bossSeekTap(x, y));
+      },
+    });
+  } else {
+    S.net.send({ t: "b-ready" });
+    status(`Der Jäger legt los. Stapf clever, ${bossName()}!`);
+  }
+}
+
+// hunter taps — solo + hotseat (full state is local)
+function bossSeekTap(x, y) {
+  if (S.phase !== "boss" || S.inputLocked) return;
+  const st = S.boss.st;
+  const res = BOSS.bossShoot(st, x, y);
+  if (res.result === "over") return;
+  if (navigator.vibrate) navigator.vibrate(res.result === "hit" ? [50, 30, 70] : 15);
+  SCENE.clearMark("mine", x, y); // the monster may prowl over old marks
+
+  if (res.result === "hit") {
+    SND.fanfare();
+    SCENE.applyShot("mine", x, y, "hit");
+    if (res.defeated) {
+      const ship = bossShipOf(st);
+      SCENE.addCreature("mine", ship, { popIn: true, found: true });
+      st.wounds.forEach((seg) => SCENE.markWound("mine", ship.id, seg, BOSS.BOSS_SIZE));
+      bossEnd(true);
+      return;
+    }
+    if (res.escaped) {
+      SCENE.addCreature("mine", bossShipOf(st), { popIn: true });
+      bossEnd(false);
+      return;
+    }
+    bossHunterStatus(res.wounds, st.shotsLeft, "Getroffen! Es brüllt und stapft weiter …");
+  } else {
+    SND.plop();
+    SCENE.applyShot("mine", x, y, "miss", { sonarDist: res.dist });
+    for (const k of res.faded) {
+      const [fx, fy] = k.split(",").map(Number);
+      SCENE.clearMark("mine", fx, fy);
+    }
+    if (res.escaped) {
+      SCENE.addCreature("mine", bossShipOf(st), { popIn: true });
+      bossEnd(false);
+      return;
+    }
+    bossHunterStatus(res.wounds, st.shotsLeft, "Daneben!");
+  }
+
+  if (S.boss.kind === "ai") {
+    BOSS.roboBossMove(st, { x, y });
+    SND.whoosh();
+  } else {
+    S.inputLocked = true;
+    setTimeout(() => openMoveOverlay("boss"), FAST ? 50 : 900);
+  }
+}
+
+function bossMoveTap(dx, dy) {
+  const st = S.boss.st;
+  if (BOSS.moveBoss(st, dx, dy)) {
+    SND.whoosh();
+    $("#chase-move").hidden = true;
+    if (S.boss.kind === "online") {
+      SCENE.moveCreature("mine", bossShipOf(st));
+      S.net.send({ t: "b-moved" });
+      status(`🙈 Stapf clever! Der Jäger hat noch 🔦 ${st.shotsLeft} Schüsse.`);
+    } else {
+      S.inputLocked = false;
+      bossHunterStatus(st.wounds.length, st.shotsLeft, "Weiterjagen!");
+    }
+    return;
+  }
+  if (BOSS.legalBossMoves(st).length === 0) {
+    toast(`${bossName()} ist eingeklemmt und bleibt stehen! 🙊`);
+    $("#chase-move").hidden = true;
+    if (S.boss.kind === "online") {
+      S.net.send({ t: "b-moved" });
+    } else {
+      S.inputLocked = false;
+    }
+    return;
+  }
+  SND.sad();
+  toast("Da passt das Monster nicht hin!");
+}
+
+function bossEnd(hunterWon) {
+  S.phase = "over";
+  S.inputLocked = false;
+  SCENE.clearInteraction();
+  $("#chase-move").hidden = true;
+  const stickerBox = $("#win-sticker");
+  stickerBox.hidden = true;
+  const kind = S.boss.kind;
+  const iAmHunter = S.boss.role === "hunter";
+  let iWon = true;
+  if (kind === "ai") {
+    iWon = hunterWon;
+    $("#win-title").textContent = hunterWon ? `${bossName()} besiegt!` : `${bossName()} ist entkommen!`;
+    $("#win-sub").textContent = hunterWon
+      ? "Was für eine Jagd! Stark."
+      : "Es stapft davon … Gleich nochmal?";
+  } else if (kind === "hotseat") {
+    $("#win-title").textContent = hunterWon
+      ? `Spieler 2 hat ${bossName()} besiegt!`
+      : `${bossName()} ist entkommen — Spieler 1 gewinnt!`;
+    $("#win-sub").textContent = "Tauscht die Rollen und spielt nochmal!";
+  } else {
+    iWon = iAmHunter === hunterWon;
+    $("#win-title").textContent = iWon ? "Du hast gewonnen!" : "Dein Mitspieler hat gewonnen!";
+    $("#win-sub").textContent = "Tauscht die Geräte für den Rollentausch!";
+  }
+  if (iWon && flag("stickers")) {
+    const r = PROG.awardSticker(S.worlds[0]);
+    const creature = getWorld(r.worldId).creatures[r.idx];
+    stickerBox.innerHTML = "";
+    const img = document.createElement("img");
+    img.alt = creature?.name ?? "";
+    img.src = creatureThumb(r.worldId, r.idx);
+    const label = document.createElement("div");
+    label.className = "sticker-label";
+    label.textContent = r.isNew
+      ? `Neuer Sticker: ${creature?.name}!`
+      : `Sticker: ${creature?.name} (schon im Album)`;
+    stickerBox.appendChild(img);
+    stickerBox.appendChild(label);
+    stickerBox.hidden = false;
+  }
+  $("#btn-rematch").textContent = "Nochmal spielen";
+  show("screen-win");
+  if (iWon) {
+    SND.bigWin();
+    SCENE.confettiRain("mine");
+  } else {
+    SND.sad();
+  }
+}
+
+// ---- online boss -------------------------------------------------------
+
+function beginBossOnlineMonster() {
+  S.mode = "boss";
+  S.phase = "boss";
+  S.boss = { kind: "online", st: BOSS.createBoss(), role: "monster", marks: {} };
+  setupBossBoard();
+  beginBossPlacing();
+}
+
+function beginBossOnlineHunter() {
+  S.mode = "boss";
+  S.phase = "boss";
+  S.boss = {
+    kind: "online",
+    st: null,
+    role: "hunter",
+    marks: {},
+    ready: false,
+    shotsLeft: BOSS.BOSS_SHOTS,
+    wounds: 0,
+  };
+  setupBossBoard();
+  S.inputLocked = true;
+  status("Das Monster sucht sich einen Platz … 🙈");
+  SCENE.setTapMode("mine", (x, y) => bossOnlineSeekTap(x, y));
+}
+
+function bossOnlineSeekTap(x, y) {
+  if (S.phase !== "boss" || S.inputLocked || !S.boss.ready) return;
+  S.inputLocked = true;
+  if (!S.net.send({ t: "b-shot", x, y })) S.inputLocked = false;
+}
+
+function handleBossMessage(msg) {
+  switch (msg.t) {
+    case "b-ready": {
+      if (S.boss?.role !== "hunter") break;
+      S.boss.ready = true;
+      S.inputLocked = false;
+      bossHunterStatus(0, S.boss.shotsLeft, "Die Jagd beginnt!");
+      break;
+    }
+    case "b-shot": {
+      if (S.boss?.role !== "monster") break;
+      const st = S.boss.st;
+      const res = BOSS.bossShoot(st, msg.x, msg.y);
+      if (res.result === "over") break;
+      S.net.send({
+        t: "b-res",
+        x: msg.x,
+        y: msg.y,
+        result: res.result,
+        dist: res.dist ?? null,
+        faded: res.faded || [],
+        wounds: res.wounds,
+        defeated: !!res.defeated,
+        escaped: !!res.escaped,
+        shotsLeft: st.shotsLeft,
+        boss: res.defeated || res.escaped ? st.boss : null,
+        woundSegs: res.defeated || res.escaped ? st.wounds : null,
+      });
+      SCENE.clearMark("mine", msg.x, msg.y);
+      if (res.result === "hit") {
+        SND.sad();
+        SCENE.applyShot("mine", msg.x, msg.y, "hit");
+        SCENE.markWound("mine", bossIdx(), res.seg, BOSS.BOSS_SIZE);
+        if (res.defeated) {
+          bossEnd(true);
+          break;
+        }
+        if (res.escaped) {
+          bossEnd(false);
+          break;
+        }
+      } else {
+        SND.plop();
+        SCENE.applyShot("mine", msg.x, msg.y, "miss", { sonarDist: res.dist });
+        for (const k of res.faded) {
+          const [fx, fy] = k.split(",").map(Number);
+          SCENE.clearMark("mine", fx, fy);
+        }
+        if (res.escaped) {
+          bossEnd(false);
+          break;
+        }
+      }
+      openMoveOverlay("boss");
+      break;
+    }
+    case "b-res": {
+      if (S.boss?.role !== "hunter") break;
+      S.boss.shotsLeft = msg.shotsLeft;
+      S.boss.wounds = msg.wounds;
+      SCENE.clearMark("mine", msg.x, msg.y);
+      if (msg.result === "hit") {
+        SND.fanfare();
+        SCENE.applyShot("mine", msg.x, msg.y, "hit");
+      } else {
+        SND.plop();
+        SCENE.applyShot("mine", msg.x, msg.y, "miss", { sonarDist: msg.dist });
+        for (const k of msg.faded || []) {
+          const [fx, fy] = k.split(",").map(Number);
+          SCENE.clearMark("mine", fx, fy);
+        }
+      }
+      if (msg.defeated || msg.escaped) {
+        if (msg.boss) {
+          const ship = { id: bossIdx(), size: BOSS.BOSS_SIZE, x: msg.boss.x, y: msg.boss.y, dir: msg.boss.dir, hits: [] };
+          SCENE.addCreature("mine", ship, { popIn: true, found: msg.defeated });
+          for (const seg of msg.woundSegs || []) SCENE.markWound("mine", ship.id, seg, BOSS.BOSS_SIZE);
+        }
+        bossEnd(!!msg.defeated);
+        break;
+      }
+      bossHunterStatus(msg.wounds, msg.shotsLeft, msg.result === "hit" ? "Getroffen! Es brüllt …" : "Daneben!");
+      break;
+    }
+    case "b-moved": {
+      if (S.boss?.role !== "hunter") break;
+      S.inputLocked = false;
+      bossHunterStatus(S.boss.wounds, S.boss.shotsLeft, "Es ist weitergestapft — jag es!");
       break;
     }
     default:
@@ -1714,7 +2115,11 @@ function rematch() {
     startChase(S.chase.kind);
     return;
   }
-  if (S.mode === "online" || S.chase?.kind === "online") {
+  if (S.mode === "boss" && S.boss?.kind !== "online") {
+    startBoss(S.boss.kind);
+    return;
+  }
+  if (S.mode === "online" || S.chase?.kind === "online" || S.boss?.kind === "online") {
     S.rematchMine = true;
     S.net.send({ t: "rematch" });
     $("#btn-rematch").disabled = true;
@@ -1736,6 +2141,7 @@ function goHome() {
   S.shadow = null;
   S.puzzle = null;
   S.chase = null;
+  S.boss = null;
   S.gameMode = "classic";
   S.customs = [{}, {}];
   S.oppCustom = null;
@@ -1771,20 +2177,31 @@ function boot() {
   document.querySelectorAll("[data-chase]").forEach((btn) => {
     btn.addEventListener("click", () => startChase(btn.dataset.chase));
   });
+  $("#btn-boss").hidden = !flag("boss");
+  $("#btn-boss").addEventListener("click", () => {
+    SND.tap();
+    show("screen-boss");
+  });
+  document.querySelectorAll("[data-boss]").forEach((btn) => {
+    btn.addEventListener("click", () => startBoss(btn.dataset.boss));
+  });
   document.querySelectorAll("[data-move]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const [dx, dy] = btn.dataset.move.split(",").map(Number);
-      chaseMoveTap(dx, dy);
+      moveOverlayTap(dx, dy);
     });
   });
   const peek = $("#btn-peek");
   peek.addEventListener("pointerdown", () => {
-    const st = S.chase?.st;
-    if (!st) return;
-    SCENE.placeCreatures("mine", [fridoShip(st.frido.x, st.frido.y)]);
+    if (S.mode === "boss" && S.boss?.st) {
+      SCENE.placeCreatures("mine", [bossShipOf(S.boss.st)]);
+    } else if (S.chase?.st) {
+      SCENE.placeCreatures("mine", [fridoShip(S.chase.st.frido.x, S.chase.st.frido.y)]);
+    }
   });
   const unpeek = () => {
-    if (S.chase && S.phase === "chase" && S.chase.kind !== "online") {
+    const active = S.mode === "boss" ? S.boss : S.chase;
+    if (active && (S.phase === "chase" || S.phase === "boss") && active.kind !== "online") {
       SCENE.placeCreatures("mine", []);
     }
   };
@@ -1920,6 +2337,8 @@ function boot() {
     puzzleTap: (x, y) => puzzleTap(x, y),
     chaseTap: (x, y) => chaseSeekTap(x, y),
     chaseNetTap: (x, y) => chaseOnlineSeekTap(x, y),
+    bossTap: (x, y) => bossSeekTap(x, y),
+    bossNetTap: (x, y) => bossOnlineSeekTap(x, y),
     setStyle: (id, tint, hat) => setShipCustom(id, { tint, hat }),
     setRules: (r) => {
       Object.assign(S.rules, r);

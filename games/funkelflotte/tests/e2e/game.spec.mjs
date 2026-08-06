@@ -400,6 +400,107 @@ test("Fang mich online: hide, sneak-move, and get caught across devices", async 
   await ctxB.close();
 });
 
+test("Monster-Jagd: five wounds defeat the prowling boss", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator("#btn-boss").click();
+  await page.locator('[data-boss="ai"]').click();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("boss");
+
+  // hunt by cheating: read the monster's live cells and keep striking
+  for (let i = 0; i < 30; i += 1) {
+    const done = await page.evaluate(() => window.__FF.state.phase !== "boss");
+    if (done) break;
+    await page.evaluate(() => {
+      const st = window.__FF.state.boss.st;
+      const cells = [];
+      for (let s = 0; s < 5; s += 1) {
+        cells.push(
+          st.boss.dir === "h"
+            ? { x: st.boss.x + s, y: st.boss.y, s }
+            : { x: st.boss.x, y: st.boss.y + s, s }
+        );
+      }
+      const fresh = cells.find((c) => !st.wounds.includes(c.s));
+      if (fresh) window.__FF.bossTap(fresh.x, fresh.y);
+    });
+    await page.waitForTimeout(120);
+  }
+  await expect(page.locator("#screen-win")).toHaveClass(/active/, { timeout: 10000 });
+  await expect(page.locator("#win-title")).toContainText("besiegt");
+});
+
+test("Monster-Jagd online: monster places, moves, and is defeated", async ({ browser }) => {
+  test.setTimeout(180000);
+  const ctxA = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const ctxB = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const host = await ctxA.newPage();
+  const guest = await ctxB.newPage();
+  for (const p of [host, guest]) {
+    await p.addInitScript(() => localStorage.setItem("ff-muted", "1"));
+  }
+
+  await host.goto(`${GAME}?${PS}`);
+  await host.waitForFunction(() => !!window.__FF);
+  await host.evaluate(() => window.__FF.setFast());
+  await host.locator("#btn-boss").click();
+  await host.locator('[data-boss="online"]').click();
+  await host.locator("#btn-host").click();
+  await expect(host.locator("#host-code")).not.toHaveText("····", { timeout: 20000 });
+  const code = (await host.locator("#host-code").textContent()).trim();
+
+  await guest.goto(`${GAME}?${PS}&join=${code}`);
+  await guest.waitForFunction(() => !!window.__FF);
+  await guest.evaluate(() => window.__FF.setFast());
+  await guest.locator("#btn-worldpick-go").click();
+
+  await expect(host.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
+  await host.locator("#btn-place-done").click();
+
+  await expect
+    .poll(() => guest.evaluate(() => window.__FF.state.boss?.ready), { timeout: 20000 })
+    .toBe(true);
+
+  // hunt across devices: read live cells from the host each round
+  for (let i = 0; i < 30; i += 1) {
+    const phase = await guest.evaluate(() => window.__FF.state.phase);
+    if (phase !== "boss") break;
+    const locked = await guest.evaluate(() => window.__FF.state.inputLocked);
+    if (locked) {
+      // maybe the monster owes a move — press arrows until one works
+      if (await host.locator("#chase-move").isVisible().catch(() => false)) {
+        for (const dir of ["1,0", "0,1", "-1,0", "0,-1"]) {
+          if (await host.locator("#chase-move").isHidden()) break;
+          await host.locator(`[data-move="${dir}"]`).click().catch(() => {});
+          await host.waitForTimeout(150);
+        }
+      }
+      await guest.waitForTimeout(200);
+      continue;
+    }
+    const target = await host.evaluate(() => {
+      const st = window.__FF.state.boss.st;
+      for (let s = 0; s < 5; s += 1) {
+        if (st.wounds.includes(s)) continue;
+        return st.boss.dir === "h"
+          ? { x: st.boss.x + s, y: st.boss.y }
+          : { x: st.boss.x, y: st.boss.y + s };
+      }
+      return null;
+    });
+    if (!target) break;
+    await guest.evaluate(([x, y]) => window.__FF.bossNetTap(x, y), [target.x, target.y]);
+    await guest.waitForTimeout(250);
+  }
+
+  await expect(guest.locator("#screen-win")).toHaveClass(/active/, { timeout: 20000 });
+  await expect(guest.locator("#win-title")).toContainText("Du hast gewonnen");
+  await expect(host.locator("#screen-win")).toHaveClass(/active/, { timeout: 20000 });
+
+  await ctxA.close();
+  await ctxB.close();
+});
+
 test("hot-seat: two worlds, pass screens, full game to the win screen", async ({ page }) => {
   test.setTimeout(420000);
   await page.evaluate(() => window.__FF.setFast());

@@ -394,6 +394,27 @@ export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   return entry;
 }
 
+// glowing wound orb pinned to a body segment (boss mode) — it lives on
+// the creature's holder, so it travels along when the monster moves
+export function markWound(slot, shipId, segIdx, size) {
+  const d = dioramas[slot];
+  const c = d?.creatures.get(shipId);
+  if (!c) return;
+  const orb = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.14, 0),
+    new THREE.MeshStandardMaterial({
+      color: 0xff5f6d,
+      emissive: 0xff2233,
+      emissiveIntensity: 1.4,
+      flatShading: true,
+    })
+  );
+  orb.position.set(segIdx - (size - 1) / 2, 1.15 + (segIdx % 2) * 0.2, 0.3);
+  c.holder.add(orb);
+  orb.scale.setScalar(0.01);
+  tween((v) => orb.scale.setScalar(v), { dur: 0.4, ease: Ease.outBack });
+}
+
 export function removeCreature(slot, id) {
   const d = dioramas[slot];
   const c = d?.creatures.get(id);
