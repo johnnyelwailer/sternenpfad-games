@@ -6,6 +6,7 @@ import * as E from "./engine.js";
 import { createAiState, noteResult, nextShot } from "./ai.js";
 import { WORLDS, getWorld, randomOtherWorld } from "./worlds.js";
 import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
+import * as PROG from "./progress.js";
 import * as SND from "./sound.js";
 import * as SCENE from "./scene.js";
 import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
@@ -370,7 +371,12 @@ function openStylePanel() {
     hatBtn.addEventListener("click", () => {
       SND.sparkle();
       const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
-      setShipCustom(ship.id, { hat: (cur.hat + 1) % ACCESSORIES.length });
+      // cycle through unlocked hats only (stickers unlock more)
+      let h = cur.hat;
+      do {
+        h = (h + 1) % ACCESSORIES.length;
+      } while (!PROG.isHatUnlocked(h) && h !== cur.hat);
+      setShipCustom(ship.id, { hat: h });
       sync();
     });
 
@@ -382,6 +388,11 @@ function openStylePanel() {
     row.appendChild(hatBtn);
     rows.appendChild(row);
   }
+  const nu = PROG.nextUnlock();
+  $("#style-hint").textContent = nu
+    ? `Noch ${nu.remaining} Sticker bis zum nächsten Hut: ${ACCESSORY_NAMES[nu.kind]}!`
+    : "";
+  $("#style-hint").hidden = !nu;
   $("#style-panel").hidden = false;
 }
 
@@ -890,6 +901,33 @@ function finishGame(winner) {
     $("#win-title").textContent = winner === 0 ? "Du hast gewonnen!" : "Dein Mitspieler hat gewonnen!";
     $("#win-sub").textContent = winner === 0 ? world.words.win : "Fast! Gleich nochmal?";
   }
+  const stickerBox = $("#win-sticker");
+  stickerBox.hidden = true;
+  if (iWon) {
+    const winnersWorld = S.worlds[loserIdx]; // the world they searched in
+    const r = PROG.awardSticker(winnersWorld);
+    const creature = getWorld(r.worldId).creatures[r.idx];
+    stickerBox.innerHTML = "";
+    const img = document.createElement("img");
+    img.alt = creature?.name ?? "";
+    img.src = creatureThumb(r.worldId, r.idx);
+    const label = document.createElement("div");
+    label.className = "sticker-label";
+    label.textContent = r.isNew
+      ? `Neuer Sticker: ${creature?.name}!`
+      : `Sticker: ${creature?.name} (schon im Album)`;
+    stickerBox.appendChild(img);
+    stickerBox.appendChild(label);
+    if (r.newHats.length) {
+      const unlock = document.createElement("div");
+      unlock.className = "sticker-unlock";
+      unlock.textContent = `Neu freigeschaltet: ${r.newHats
+        .map((k) => ACCESSORY_NAMES[k])
+        .join(" & ")}! 🎉`;
+      stickerBox.appendChild(unlock);
+    }
+    stickerBox.hidden = false;
+  }
   show("screen-win");
   if (iWon) {
     SND.bigWin();
@@ -897,6 +935,53 @@ function finishGame(winner) {
   } else {
     SND.sad();
   }
+}
+
+// -------------------------------------------------------------- album
+
+function openAlbum() {
+  SND.tap();
+  const p = PROG.loadProgress();
+  const box = $("#album-worlds");
+  box.innerHTML = "";
+  for (const world of Object.values(WORLDS)) {
+    const sec = document.createElement("div");
+    sec.className = "album-section";
+    const head = document.createElement("div");
+    head.className = "album-world-name";
+    head.textContent = world.name;
+    const grid = document.createElement("div");
+    grid.className = "album-grid";
+    world.creatures.forEach((c, i) => {
+      const n = PROG.stickerCount(world.id, i, p);
+      const slot = document.createElement("div");
+      slot.className = `album-slot${n ? "" : " locked"}`;
+      const img = document.createElement("img");
+      img.alt = n ? c.name : "???";
+      img.src = creatureThumb(world.id, i);
+      slot.appendChild(img);
+      const nm = document.createElement("div");
+      nm.className = "album-slot-name";
+      nm.textContent = n ? c.name : "???";
+      slot.appendChild(nm);
+      if (n > 1) {
+        const badge = document.createElement("div");
+        badge.className = "album-badge";
+        badge.textContent = `${n}×`;
+        slot.appendChild(badge);
+      }
+      grid.appendChild(slot);
+    });
+    sec.appendChild(head);
+    sec.appendChild(grid);
+    box.appendChild(sec);
+  }
+  $("#album-total").textContent = `${PROG.totalStickers(p)} Sticker gesammelt`;
+  const nu = PROG.nextUnlock(p);
+  $("#album-next").textContent = nu
+    ? `Noch ${nu.remaining} Sticker, dann gibt es: ${ACCESSORY_NAMES[nu.kind]}! 🎩`
+    : "Alle Hüte freigeschaltet! 🎉";
+  show("screen-album");
 }
 
 function rematch() {
@@ -990,6 +1075,11 @@ function boot() {
     if (action) action();
   });
   $("#btn-endturn").addEventListener("click", hotseatEndTurn);
+  $("#btn-album").addEventListener("click", openAlbum);
+  $("#btn-album-back").addEventListener("click", () => {
+    SND.tap();
+    show("screen-title");
+  });
   $("#btn-rematch").addEventListener("click", rematch);
   $("#btn-win-home").addEventListener("click", goHome);
   $("#btn-home").addEventListener("click", () => {

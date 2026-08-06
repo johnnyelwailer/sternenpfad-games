@@ -43,6 +43,7 @@
         <div class="style-title">Mach sie zu deinen! ✨</div>
         <button class="btn small" id="btn-style-close">Fertig</button>
       </div>
+      <p class="style-hint" id="style-hint" hidden></p>
       <div id="style-rows"></div>
     </div>
 
@@ -57,7 +58,18 @@
         <button class="btn big" data-mode="ai">Alleine gegen Robo</button>
         <button class="btn big" data-mode="hotseat">Zu zweit an einem Gerät</button>
         <button class="btn big" data-mode="online">Mit zwei Geräten</button>
+        <button class="btn big ghost" id="btn-album">📖 Sticker-Album</button>
       </div>
+    </section>
+
+    <!-- Sticker album -->
+    <section id="screen-album" class="screen opaque">
+      <div class="stars" aria-hidden="true"></div>
+      <h2 class="h2">Sticker-Album</h2>
+      <p class="album-total" id="album-total"></p>
+      <p class="hint" id="album-next"></p>
+      <div id="album-worlds"></div>
+      <button class="btn big ghost" id="btn-album-back">Zurück</button>
     </section>
 
     <!-- Second world picker (hot-seat player 2 / deep-link guest) -->
@@ -114,6 +126,7 @@
       <div class="win-card">
         <div class="win-title" id="win-title">Gewonnen!</div>
         <p class="pass-sub" id="win-sub"></p>
+        <div id="win-sticker" hidden></div>
         <div class="stack">
           <button class="btn big" id="btn-rematch">Nochmal spielen</button>
           <button class="btn big ghost" id="btn-win-home">Zum Start</button>

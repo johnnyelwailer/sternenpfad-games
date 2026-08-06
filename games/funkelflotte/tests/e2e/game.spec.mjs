@@ -170,6 +170,16 @@ test("hot-seat: two worlds, pass screens, full game to the win screen", async ({
 
   await expect(page.locator("#screen-win")).toHaveClass(/active/);
   await expect(page.locator("#win-title")).toContainText("gewonnen");
+
+  // the winner earns a sticker, and it shows up in the album
+  await expect(page.locator("#win-sticker")).toBeVisible();
+  await expect(page.locator("#win-sticker .sticker-label")).toContainText("Sticker");
+  await page.locator("#btn-win-home").click();
+  await page.locator("#btn-album").click();
+  await expect(page.locator("#screen-album")).toHaveClass(/active/);
+  await expect(page.locator(".album-slot")).toHaveCount(20);
+  await expect(page.locator(".album-slot:not(.locked)")).toHaveCount(1);
+  await expect(page.locator("#album-total")).toContainText("1 Sticker");
 });
 
 test("works offline after the first visit (PWA)", async ({ browser }) => {
