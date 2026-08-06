@@ -9,6 +9,7 @@ import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
 import * as PROG from "./progress.js";
 import { flag, setFlag, allFlags } from "./flags.js";
 import { generatePuzzle, PUZZLE_SPADES } from "./puzzle.js";
+import * as PW from "./powers.js";
 import * as CHASE from "./chase.js";
 import * as BOSS from "./boss.js";
 import * as SND from "./sound.js";
@@ -39,6 +40,10 @@ const S = {
   customs: [{}, {}], // per board index: shipId -> { tint, hat }
   oppCustom: null, // online: opponent's map (arrives with their "ready")
   rules: { decoy: false, sonar: false, ghost: false }, // extra rules
+  powersOn: true, // Zauber-Kräfte option (persisted)
+  powers: [null, null], // per player: PW.newPowerState() during battle
+  pendingPower: null, // power kind waiting for a target tap
+  lastShot: [null, null], // per player: their most recent shot {x,y}
   gameMode: "classic", // 'classic' | 'chase' | 'boss' — what an online session plays
   chase: null, // chase-mode state (see startChase)
   boss: null, // boss-mode state (see startBoss)
@@ -262,7 +267,42 @@ function shipsWithDecoy(board) {
   return board.decoy && !decoyPopped(board) ? [...board.ships, decoyShipOf(board)] : board.ships;
 }
 
+// ---------------------------------------------------------- Zauber-Kräfte
+
+function loadPowersOpt() {
+  try {
+    return localStorage.getItem("ff-powers") !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function savePowersOpt() {
+  try {
+    localStorage.setItem("ff-powers", S.powersOn ? "1" : "0");
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+// powers only exist in the classic battle modes
+function powersEnabled() {
+  return flag("powers") && S.powersOn && S.gameMode === "classic" && S.phase === "battle";
+}
+
+// whose hand is acting right now (hotseat swaps seats)
+function me() {
+  return S.mode === "hotseat" ? S.turn : 0;
+}
+
+function myPowers() {
+  return S.powers[me()];
+}
+
 function resetRuleState() {
+  S.powers = [null, null];
+  S.pendingPower = null;
+  S.lastShot = [null, null];
   S.extraTurn = null;
   S.ghostTrack = [
     { count: 0, queue: [] },
@@ -640,6 +680,277 @@ function placementDone() {
   }
 }
 
+// ------------------------------------------------ power tray + execution
+
+function renderPowers() {
+  const box = $("#powers");
+  const st = powersEnabled() ? myPowers() : null;
+  const mine = S.phase === "battle" && S.turn === S.viewer && !S.inputLocked;
+  if (!st || !mine) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = "";
+  const counts = new Map();
+  for (const k of st.hand) counts.set(k, (counts.get(k) || 0) + 1);
+  for (const [kind, n] of counts) {
+    const p = PW.POWERS[kind];
+    const chip = document.createElement("button");
+    chip.className = `power-chip${S.pendingPower === kind ? " armed" : ""}`;
+    chip.dataset.power = kind;
+    chip.innerHTML = `<span class="power-emoji">${p.emoji}</span><span class="power-name">${p.name}</span>${
+      n > 1 ? `<span class="power-count">${n}×</span>` : ""
+    }`;
+    chip.addEventListener("click", () => onPowerTap(kind));
+    box.appendChild(chip);
+  }
+  // passive badges so kids see what is active
+  if (st.shield) box.appendChild(passiveBadge("🪷", "Schild aktiv"));
+  if (st.clover) box.appendChild(passiveBadge("🍀", "Glücksklee"));
+  if (st.doubleShot) box.appendChild(passiveBadge("🎯", "Doppelschuss"));
+  box.hidden = box.children.length === 0;
+}
+
+function passiveBadge(emoji, label) {
+  const b = document.createElement("div");
+  b.className = "power-chip passive";
+  b.innerHTML = `<span class="power-emoji">${emoji}</span><span class="power-name">${label}</span>`;
+  return b;
+}
+
+function consumePower(kind) {
+  const st = myPowers();
+  const i = st.hand.indexOf(kind);
+  if (i >= 0) st.hand.splice(i, 1);
+  S.pendingPower = null;
+  renderPowers();
+}
+
+function gainPower(playerIdx, kind, why) {
+  const st = S.powers[playerIdx];
+  if (!st) return;
+  if (st.hand.length >= PW.HAND_MAX) {
+    if (playerIdx === me()) toast("Deine Zauber-Tasche ist voll! (max. 3)");
+    return;
+  }
+  st.hand.push(kind);
+  const p = PW.POWERS[kind];
+  if (playerIdx === me()) {
+    SND.sparkle();
+    toast(`${why} ${p.emoji} ${p.name}!`, 2600);
+  }
+  renderPowers();
+}
+
+function onPowerTap(kind) {
+  if (S.phase !== "battle" || S.turn !== S.viewer || S.inputLocked) return;
+  if (S.pendingPower === kind) {
+    S.pendingPower = null;
+    beginTurnStatus();
+    renderPowers();
+    return;
+  }
+  const p = PW.POWERS[kind];
+  if (kind === "ballon" && !PW.canExtraBalloon(S.boards[me()])) {
+    SND.sad();
+    toast("Dein Ballon ist ja noch versteckt!");
+    return;
+  }
+  if (kind === "kompass" && !S.lastShot[me()]) {
+    SND.sad();
+    toast("Erst einmal schießen — dann weiß der Kompass, wo er suchen soll!");
+    return;
+  }
+  SND.tap();
+  if (p.target === "none") {
+    executePower(kind, null);
+  } else {
+    S.pendingPower = kind;
+    status(
+      p.target === "row"
+        ? `${p.emoji} ${p.name}: Tipp eine Reihe auf dem Suchbrett an!`
+        : `${p.emoji} ${p.name}: Tipp ein Feld auf dem Suchbrett an!`
+    );
+    renderPowers();
+  }
+}
+
+function beginTurnStatus() {
+  const target = other(S.turn);
+  const world = getWorld(S.worlds[target]);
+  status(
+    S.mode === "hotseat"
+      ? `Spieler ${S.turn + 1}: Such ${world.words.boardIn} von Spieler ${target + 1}!`
+      : `Du bist dran! Such ${world.words.boardIn}!`
+  );
+}
+
+// ask the defender (engine locally, the other device online)
+function resolveInfo(kind, payload, apply) {
+  if (S.mode === "online") {
+    S.pendingInfo = apply;
+    S.net.send({ t: "pw", kind, ...payload });
+    return;
+  }
+  const board = S.boards[other(me())];
+  if (kind === "welle") apply({ cells: PW.scanCells(board, PW.rowCells(board, payload.y)) });
+  else if (kind === "radar") apply({ cells: PW.scanCells(board, PW.squareCells(board, payload.x, payload.y)) });
+  else if (kind === "fernglas") apply({ cells: PW.scanCells(board, [{ x: payload.x, y: payload.y }]) });
+  else if (kind === "trommel" || kind === "kompass") apply({ dir: PW.directionToNearest(board, payload.x, payload.y) });
+  else if (kind === "glocke") apply({ big: PW.biggestHiddenDir(board) });
+}
+
+function executePower(kind, target) {
+  const my = me();
+  const enemySlot = slotFor(other(my));
+  const st = myPowers();
+  const p = PW.POWERS[kind];
+
+  if (kind === "welle") {
+    consumePower(kind);
+    resolveInfo(kind, { y: target.y }, ({ cells }) => {
+      SND.sparkle();
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), i * 90));
+      status("🌊 Die große Welle verrät ihre Geheimnisse!");
+    });
+  } else if (kind === "radar") {
+    consumePower(kind);
+    resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
+      SND.sparkle();
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), i * 120));
+      status("🛰️ Der Satellit hat alles durchleuchtet!");
+    });
+  } else if (kind === "fernglas") {
+    consumePower(kind);
+    resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
+      SND.sparkle();
+      SCENE.peekMarker(enemySlot, cells[0].x, cells[0].y, cells[0].ship);
+      status(cells[0].ship ? "🔍 Da versteckt sich jemand!" : "🔍 Hier ist nur Wasser.");
+    });
+  } else if (kind === "trommel" || kind === "kompass") {
+    const from = kind === "kompass" ? S.lastShot[my] : target;
+    consumePower(kind);
+    resolveInfo(kind, { x: from.x, y: from.y }, ({ dir }) => {
+      if (!dir) {
+        status("Alle Freunde sind schon gefunden!");
+        return;
+      }
+      SND.sparkle();
+      SCENE.arrowMarker(enemySlot, from.x, from.y, dir.angle);
+      status(`${p.emoji} Der Pfeil zeigt zum nächsten Versteck!`);
+    });
+  } else if (kind === "glocke") {
+    consumePower(kind);
+    resolveInfo(kind, {}, ({ big }) => {
+      SND.sparkle();
+      status(
+        big
+          ? `🔔 Die Glocke flüstert: Der größte Freund liegt ${big === "h" ? "QUER" : "HOCHKANT"}!`
+          : "🔔 Die Glocke schweigt — alle sind gefunden!"
+      );
+    });
+  } else if (kind === "klee") {
+    consumePower(kind);
+    st.clover = true;
+    SND.fanfare();
+    status("🍀 Glücksklee! Jedes Daneben zeigt jetzt die Entfernung.");
+  } else if (kind === "doppel") {
+    consumePower(kind);
+    st.doubleShot = true;
+    status("🎯 Doppelschuss bereit: Dein nächstes Daneben zählt nicht!");
+  } else if (kind === "zeit") {
+    consumePower(kind);
+    S.extraTurn = my;
+    if (S.mode === "online") S.net.send({ t: "pw", kind: "zeit" });
+    SND.sparkle();
+    status("⏳ Zeitzauber! Nach deinem nächsten Daneben darfst du gleich weitersuchen.");
+  } else if (kind === "schild") {
+    consumePower(kind);
+    st.shield = true;
+    SCENE.shieldFlash(slotFor(my));
+    SND.sparkle();
+    status("🪷 Seerosen-Schild aktiv: Der nächste Treffer prallt ab!");
+  } else if (kind === "wirbel") {
+    const moved = PW.whirlwindMove(S.boards[my]);
+    if (!moved) {
+      SND.sad();
+      toast("Kein Platz zum Wirbeln!");
+      S.pendingPower = null;
+      renderPowers();
+      return;
+    }
+    consumePower(kind);
+    syncCreatureVisibility();
+    if (S.mode === "online") S.net.send({ t: "pw", kind: "wirbel" });
+    SND.whoosh();
+    status("🌪️ Wusch! Ein Freund hat heimlich das Versteck gewechselt.");
+  } else if (kind === "ballon") {
+    if (!PW.extraBalloon(S.boards[my])) {
+      SND.sad();
+      toast("Kein freies Plätzchen für den Ballon!");
+      S.pendingPower = null;
+      renderPowers();
+      return;
+    }
+    consumePower(kind);
+    syncCreatureVisibility();
+    if (S.mode === "online") S.net.send({ t: "pw", kind: "ballon" });
+    SND.plop();
+    status("🎈 Ein neuer Schwindel-Ballon ist versteckt!");
+  } else if (kind === "salve") {
+    consumePower(kind);
+    runSalvo(target);
+  }
+  renderPowers();
+}
+
+// three shots at once, then the turn passes — the defender resolves
+function runSalvo(target) {
+  S.inputLocked = true;
+  if (S.mode === "online") {
+    S.net.send({ t: "pw", kind: "salve", x: target.x, y: target.y });
+    status("⭐ Sternschnuppen unterwegs …");
+    return;
+  }
+  const targetIdx = other(me());
+  const board = S.boards[targetIdx];
+  const cells = PW.salvoCells(board, target.x, target.y);
+  const results = [];
+  for (const c of cells) {
+    const res = E.fire(board, c.x, c.y);
+    if (res.result !== E.REPEAT) results.push({ ...c, res });
+  }
+  applySalvoResults(targetIdx, results, () => {
+    if (results.some((r) => r.res.gameOver)) {
+      finishGame(me());
+      return;
+    }
+    // the salvo always ends the turn
+    S.inputLocked = false;
+    afterMyShot({ result: E.MISS, gameOver: false });
+  });
+}
+
+function applySalvoResults(targetIdx, results, done) {
+  const slot = slotFor(targetIdx);
+  results.forEach((r, i) => {
+    setTimeout(() => {
+      SND.plop();
+      SCENE.applyShot(slot, r.x, r.y, r.res.result === E.MISS ? "miss" : "hit");
+      if (r.res.result === E.SUNK && r.res.ship) {
+        SND.fanfare();
+        SCENE.revealShip(slot, r.res.ship);
+        SCENE.revealWater(slot, r.res.revealed || []);
+        renderChips(other(S.viewer));
+      }
+    }, i * (FAST ? 60 : 420));
+  });
+  const hits = results.filter((r) => r.res.result !== E.MISS).length;
+  status(`⭐ Sternschnuppen-Salve: ${hits} Treffer!`);
+  setTimeout(done, results.length * (FAST ? 60 : 420) + (FAST ? 80 : 600));
+}
+
 // ------------------------------------------------------------ pass/world
 
 function showPass({ title, sub, btn, action }) {
@@ -678,6 +989,16 @@ function startBattle(firstTurn) {
   }
   SCENE.setCustomization("mine", customFor(0));
   SCENE.setCustomization("enemy", customFor(1));
+
+  // Zauber-Kräfte: hands, world powers, hidden treasures
+  if (flag("powers") && S.powersOn && S.gameMode === "classic") {
+    S.powers = [PW.newPowerState(S.worlds[0]), PW.newPowerState(S.worlds[1])];
+    for (const b of S.boards) if (b) PW.seedTreasures(b);
+    const wp = PW.POWERS[PW.worldPower(S.worlds[S.viewer])];
+    toast(`✨ Deine Welt-Kraft: ${wp.emoji} ${wp.name}!`, 3000);
+  } else {
+    S.powers = [null, null];
+  }
   syncCreatureVisibility();
   replayMarks(0);
   replayMarks(1);
@@ -699,13 +1020,22 @@ function beginTurn() {
     SCENE.focusBoard(slotFor(target));
     SCENE.clearInteraction();
     SCENE.setTapMode(slotFor(target), (x, y) => handleTap(x, y));
-    const world = getWorld(S.worlds[target]);
-    status(
-      S.mode === "hotseat"
-        ? `Spieler ${S.turn + 1}: Such ${world.words.boardIn} von Spieler ${target + 1}!`
-        : `Du bist dran! Such ${world.words.boardIn}!`
-    );
+    beginTurnStatus();
+    // power recharge: every RECHARGE_EVERY own turns brings a new one
+    if (powersEnabled()) {
+      const st = myPowers();
+      if (st) {
+        st.turns += 1;
+        st.doubleShot = false;
+        if (st.turns % PW.RECHARGE_EVERY === 0) {
+          gainPower(S.turn, PW.drawPower(Math.random, st.hand), "⚡ Aufladung:");
+        }
+      }
+    }
+    S.pendingPower = null;
+    renderPowers();
   } else {
+    renderPowers();
     SND.startAmbient(S.worlds[S.viewer]);
     SCENE.clearInteraction();
     SCENE.focusBoard(slotFor(S.viewer));
@@ -715,16 +1045,58 @@ function beginTurn() {
 
 function handleTap(x, y) {
   if (S.phase !== "battle" || S.inputLocked || S.turn !== S.viewer) return;
+  // an armed power intercepts the tap as its target
+  if (S.pendingPower) {
+    const kind = S.pendingPower;
+    S.pendingPower = null;
+    executePower(kind, { x, y });
+    return;
+  }
   if (S.mode === "online") {
     onlineShoot(x, y);
     return;
   }
   const targetIdx = other(S.turn);
-  const res = E.fire(S.boards[targetIdx], x, y);
+  const board = S.boards[targetIdx];
+  if (board.shots[E.key(x, y)]) {
+    SND.tap();
+    return;
+  }
+  S.lastShot[S.turn] = { x, y };
+
+  // the defender's lily-pad shield eats the shot — cell stays secret
+  const defSt = powersEnabled() ? S.powers[targetIdx] : null;
+  if (defSt?.shield) {
+    defSt.shield = false;
+    SCENE.shieldFlash(slotFor(targetIdx));
+    SND.whoosh();
+    status("🪷 Abgeprallt! Ein Seerosen-Schild hat den Schuss verschluckt.");
+    S.inputLocked = true;
+    setTimeout(() => {
+      S.inputLocked = false;
+      endMyTurn();
+    }, FAST ? 60 : 1100);
+    renderPowers();
+    return;
+  }
+
+  const res = E.fire(board, x, y);
   if (res.result === E.REPEAT) {
     SND.tap();
     return;
   }
+
+  // dug up a treasure: gain a power and keep searching
+  if (res.result === E.MISS && powersEnabled() && PW.treasureAt(board, x, y)) {
+    board.treasures = board.treasures.filter((t) => !(t.x === x && t.y === y));
+    SCENE.applyShotQuiet(slotFor(targetIdx), x, y, "miss");
+    SCENE.treasureBurst(slotFor(targetIdx), x, y);
+    SND.fanfare();
+    gainPower(S.turn, PW.drawPower(Math.random, myPowers()?.hand ?? []), "💎 Schatz gefunden:");
+    status("💎 Ein Schatz! Such gleich weiter!");
+    return;
+  }
+
   showShotResult(targetIdx, x, y, res, () => afterMyShot(res));
 }
 
@@ -734,8 +1106,9 @@ function handleTap(x, y) {
 function showShotResult(idx, x, y, res, done) {
   const slot = slotFor(idx);
   const viewerIsShooter = idx !== S.viewer;
+  const shooterClover = powersEnabled() && !!S.powers[other(idx)]?.clover;
   const sonarDist =
-    S.rules.sonar && res.result === E.MISS
+    (S.rules.sonar || shooterClover) && res.result === E.MISS
       ? res.dist ?? (S.boards[idx] ? E.sonarDistance(S.boards[idx], x, y) : null)
       : null;
   if (sonarDist != null) S.sonarMap[idx][E.key(x, y)] = sonarDist;
@@ -796,19 +1169,32 @@ function afterMyShot(res) {
   if (res.result === E.HIT || res.result === E.SUNK) return; // same player continues
   if (res.result === E.DECOY) S.extraTurn = other(S.turn); // balloon owner earns a bonus
 
-  // a miss normally ends the turn — unless this player earned an extra one
-  if (res.result === E.MISS && S.extraTurn === S.turn) {
-    S.extraTurn = null;
-    toast("🎈 Extra-Zug! Such gleich nochmal!");
-    return;
+  // a miss normally ends the turn — unless a power says otherwise
+  if (res.result === E.MISS) {
+    const st = powersEnabled() ? myPowers() : null;
+    if (st?.doubleShot) {
+      st.doubleShot = false;
+      toast("🎯 Doppelschuss! Das zählt nicht — gleich nochmal!");
+      renderPowers();
+      return;
+    }
+    if (S.extraTurn === S.turn) {
+      S.extraTurn = null;
+      toast("⏳ Extra-Zug! Such gleich nochmal!");
+      return;
+    }
   }
+  endMyTurn();
+}
 
+// hand the turn over (hotseat: via the pass button; solo: to robo)
+function endMyTurn() {
   if (S.mode === "hotseat") {
     S.inputLocked = true;
     SCENE.clearInteraction();
+    renderPowers();
     $("#btn-endturn").hidden = false;
   } else {
-    // robo's turn
     S.turn = 1;
     S.inputLocked = true;
     SCENE.clearInteraction();
@@ -847,7 +1233,32 @@ function scheduleRoboTurn() {
     const myBoard = S.boards[0];
     const shot = nextShot(S.aiState, myBoard);
     if (!shot) return;
+
+    // my lily-pad shield bounces robo's shot — cell stays secret
+    if (powersEnabled() && S.powers[0]?.shield) {
+      S.powers[0].shield = false;
+      SCENE.shieldFlash("mine");
+      SND.whoosh();
+      status("🪷 Robo ist am Seerosen-Schild abgeprallt!");
+      setTimeout(() => {
+        S.turn = 0;
+        S.inputLocked = false;
+        beginTurn();
+      }, FAST ? 60 : 1100);
+      return;
+    }
+
     const res = E.fire(myBoard, shot.x, shot.y);
+
+    // robo digs up one of my treasures: gone, and robo keeps searching
+    if (res.result === E.MISS && powersEnabled() && PW.treasureAt(myBoard, shot.x, shot.y)) {
+      myBoard.treasures = myBoard.treasures.filter((t) => !(t.x === shot.x && t.y === shot.y));
+      SCENE.applyShotQuiet("mine", shot.x, shot.y, "miss");
+      SCENE.treasureBurst("mine", shot.x, shot.y);
+      status("💎 Oh nein, Robo hat einen Schatz stibitzt! Er sucht weiter …");
+      scheduleRoboTurn();
+      return;
+    }
     noteResult(S.aiState, shot.x, shot.y, res.result, res.ship ? E.shipCells(res.ship) : null);
     showShotResult(0, shot.x, shot.y, res, () => {
       if (S.phase !== "battle") return;
@@ -994,8 +1405,10 @@ function onlineShoot(x, y) {
     SND.tap();
     return;
   }
+  S.lastShot[0] = { x, y };
   S.inputLocked = true;
-  if (!S.net.send({ t: "shot", x, y })) {
+  const clover = powersEnabled() && !!S.powers[0]?.clover;
+  if (!S.net.send({ t: "shot", x, y, clover })) {
     S.inputLocked = false;
   }
 }
@@ -1006,7 +1419,14 @@ function handleNetMessage(msg) {
       // guest announces itself (+ its world); host answers idempotently
       if (msg.world) S.worlds[1] = msg.world;
       if (S.isHost) {
-        S.net.send({ t: "hello", v: 2, world: S.worlds[0], rules: S.rules, mode: S.gameMode });
+        S.net.send({
+          t: "hello",
+          v: 2,
+          world: S.worlds[0],
+          rules: S.rules,
+          mode: S.gameMode,
+          powers: flag("powers") && S.powersOn,
+        });
         if (["title", "over", "chase", "boss"].includes(S.phase)) {
           if (S.gameMode === "chase") beginChaseOnlineHider();
           else if (S.gameMode === "boss") beginBossOnlineMonster();
@@ -1029,15 +1449,16 @@ function handleNetMessage(msg) {
         break;
       }
       S.gameMode = "classic";
-      // the host decides the extra rules for both players
+      // the host decides the extra rules + powers for both players
       S.rules = {
         decoy: !!msg.rules?.decoy,
         sonar: !!msg.rules?.sonar,
         ghost: !!msg.rules?.ghost,
       };
+      S.powersOn = flag("powers") && msg.powers !== false;
       syncRuleChips();
-      const summary = rulesSummary(S.rules);
-      if (summary) toast(`Extra-Regeln: ${summary}`, 3200);
+      const parts = [rulesSummary(S.rules), S.powersOn ? "✨ Zauber-Kräfte" : ""].filter(Boolean);
+      if (parts.length) toast(`Gemeinsame Optionen: ${parts.join(" · ")}`, 3200);
       beginOnlinePlacement();
       break;
     }
@@ -1053,7 +1474,38 @@ function handleNetMessage(msg) {
       break;
     }
     case "shot": {
+      // my lily-pad shield: the shot bounces, the cell stays secret
+      if (powersEnabled() && S.powers[0]?.shield && !S.boards[0].shots[E.key(msg.x, msg.y)]) {
+        S.powers[0].shield = false;
+        S.net.send({ t: "result", x: msg.x, y: msg.y, result: "shield" });
+        SCENE.shieldFlash("mine");
+        SND.whoosh();
+        status("🪷 Abgeprallt! Dein Seerosen-Schild hat den Schuss verschluckt.");
+        renderPowers();
+        setTimeout(() => {
+          if (S.phase !== "battle") return;
+          S.turn = 0;
+          S.inputLocked = false;
+          beginTurn();
+          toast("Du bist dran!");
+        }, FAST ? 60 : 1100);
+        break;
+      }
+
       const res = E.fire(S.boards[0], msg.x, msg.y);
+
+      // they dug up one of my treasures — they get a power and continue
+      if (res.result === E.MISS && powersEnabled() && PW.treasureAt(S.boards[0], msg.x, msg.y)) {
+        S.boards[0].treasures = S.boards[0].treasures.filter(
+          (t) => !(t.x === msg.x && t.y === msg.y)
+        );
+        S.net.send({ t: "result", x: msg.x, y: msg.y, result: E.MISS, treasure: true });
+        SCENE.applyShotQuiet("mine", msg.x, msg.y, "miss");
+        SCENE.treasureBurst("mine", msg.x, msg.y);
+        status("💎 Dein Mitspieler hat einen Schatz gefunden und sucht weiter …");
+        break;
+      }
+
       S.net.send({
         t: "result",
         x: msg.x,
@@ -1066,7 +1518,7 @@ function handleNetMessage(msg) {
         revealed: res.revealed,
         gameOver: res.gameOver,
         dist:
-          S.rules.sonar && res.result === E.MISS
+          (S.rules.sonar || msg.clover) && res.result === E.MISS
             ? E.sonarDistance(S.boards[0], msg.x, msg.y)
             : null,
       });
@@ -1103,6 +1555,26 @@ function handleNetMessage(msg) {
     case "result": {
       S.inputLocked = false;
       if (msg.result === E.REPEAT) break;
+      if (msg.result === "shield") {
+        // bounced off — no mark, the cell stays shootable later
+        SCENE.shieldFlash("enemy");
+        SND.whoosh();
+        status("🪷 Abgeprallt! Ein Seerosen-Schild hat deinen Schuss verschluckt.");
+        S.turn = 1;
+        setTimeout(() => {
+          if (S.phase === "battle") beginTurn();
+        }, FAST ? 60 : 1100);
+        break;
+      }
+      if (msg.treasure) {
+        S.shadow.marks[E.key(msg.x, msg.y)] = E.MISS;
+        SCENE.applyShotQuiet("enemy", msg.x, msg.y, "miss");
+        SCENE.treasureBurst("enemy", msg.x, msg.y);
+        SND.fanfare();
+        gainPower(0, PW.drawPower(Math.random, S.powers[0]?.hand ?? []), "💎 Schatz gefunden:");
+        status("💎 Ein Schatz! Such gleich weiter!");
+        break;
+      }
       const k = E.key(msg.x, msg.y);
       S.shadow.marks[k] =
         msg.result === E.MISS ? E.MISS : msg.result === E.DECOY ? E.DECOY : E.HIT;
@@ -1129,16 +1601,115 @@ function handleNetMessage(msg) {
           return;
         }
         if (msg.result === E.MISS) {
+          const st = powersEnabled() ? S.powers[0] : null;
+          if (st?.doubleShot) {
+            st.doubleShot = false;
+            S.inputLocked = false;
+            toast("🎯 Doppelschuss! Das zählt nicht — gleich nochmal!");
+            renderPowers();
+            return;
+          }
           if (S.extraTurn === 0) {
             S.extraTurn = null;
             S.inputLocked = false;
-            toast("🎈 Extra-Zug! Such gleich nochmal!");
+            toast("⏳ Extra-Zug! Such gleich nochmal!");
             return;
           }
           S.turn = 1;
           beginTurn();
         }
       });
+      break;
+    }
+    case "pw": {
+      if (S.phase !== "battle") break;
+      const b = S.boards[0];
+      if (msg.kind === "welle") {
+        S.net.send({ t: "pwr", kind: "welle", cells: PW.scanCells(b, PW.rowCells(b, msg.y)) });
+        toast("🌊 Eine große Welle rollt über dein Brett …");
+      } else if (msg.kind === "radar") {
+        S.net.send({ t: "pwr", kind: "radar", cells: PW.scanCells(b, PW.squareCells(b, msg.x, msg.y)) });
+        toast("🛰️ Ein Satellit funkt über deinem Brett …");
+      } else if (msg.kind === "fernglas") {
+        S.net.send({ t: "pwr", kind: "fernglas", cells: PW.scanCells(b, [{ x: msg.x, y: msg.y }]) });
+      } else if (msg.kind === "trommel" || msg.kind === "kompass") {
+        S.net.send({ t: "pwr", kind: msg.kind, dir: PW.directionToNearest(b, msg.x, msg.y) });
+      } else if (msg.kind === "glocke") {
+        S.net.send({ t: "pwr", kind: "glocke", big: PW.biggestHiddenDir(b) });
+      } else if (msg.kind === "zeit") {
+        S.extraTurn = 1;
+        toast("⏳ Dein Mitspieler hat einen Zeitzauber gewirkt!");
+      } else if (msg.kind === "wirbel") {
+        toast("🌪️ Drüben hat jemand heimlich das Versteck gewechselt …");
+      } else if (msg.kind === "ballon") {
+        toast("🎈 Drüben wurde ein neuer Schwindel-Ballon versteckt …");
+      } else if (msg.kind === "salve") {
+        const cells = PW.salvoCells(b, msg.x, msg.y);
+        const results = [];
+        for (const c of cells) {
+          const res = E.fire(b, c.x, c.y);
+          if (res.result === E.REPEAT) continue;
+          results.push({
+            x: c.x,
+            y: c.y,
+            result: res.result,
+            ship:
+              res.result === E.SUNK
+                ? { id: res.ship.id, size: res.ship.size, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
+                : null,
+            revealed: res.revealed,
+            gameOver: res.gameOver,
+          });
+        }
+        const over = results.some((r) => r.gameOver);
+        S.net.send({ t: "pwr", kind: "salve", results, gameOver: over });
+        applySalvoResults(
+          0,
+          results.map((r) => ({ x: r.x, y: r.y, res: r })),
+          () => {
+            if (over) {
+              finishGame(1);
+              return;
+            }
+            S.turn = 0;
+            S.inputLocked = false;
+            beginTurn();
+            toast("Du bist dran!");
+          }
+        );
+      }
+      break;
+    }
+    case "pwr": {
+      if (msg.kind === "salve") {
+        for (const r of msg.results) {
+          S.shadow.marks[E.key(r.x, r.y)] = r.result === E.MISS ? E.MISS : E.HIT;
+          if (r.result === E.SUNK && r.ship) {
+            S.shadow.found.push(r.ship);
+            for (const c of r.revealed || []) S.shadow.marks[E.key(c.x, c.y)] = E.MISS;
+          }
+        }
+        applySalvoResults(
+          1,
+          msg.results.map((r) => ({ x: r.x, y: r.y, res: r })),
+          () => {
+            if (msg.gameOver) {
+              finishGame(0);
+              return;
+            }
+            S.turn = 1;
+            S.inputLocked = false;
+            beginTurn();
+          }
+        );
+        break;
+      }
+      const apply = S.pendingInfo;
+      S.pendingInfo = null;
+      if (!apply) break;
+      if (msg.kind === "trommel" || msg.kind === "kompass") apply({ dir: msg.dir });
+      else if (msg.kind === "glocke") apply({ big: msg.big });
+      else apply({ cells: msg.cells || [] });
       break;
     }
     case "rematch": {
@@ -1166,7 +1737,14 @@ function handleNetMessage(msg) {
 function maybeRematch() {
   if (!(S.rematchMine && S.rematchTheirs)) return;
   if (S.isHost) {
-    S.net.send({ t: "hello", v: 2, world: S.worlds[0], rules: S.rules, mode: S.gameMode });
+    S.net.send({
+      t: "hello",
+      v: 2,
+      world: S.worlds[0],
+      rules: S.rules,
+      mode: S.gameMode,
+      powers: flag("powers") && S.powersOn,
+    });
     if (S.gameMode === "chase") beginChaseOnlineHider();
     else if (S.gameMode === "boss") beginBossOnlineMonster();
     else beginOnlinePlacement();
@@ -2068,6 +2646,7 @@ function puzzleEnd(won) {
 function finishGame(winner) {
   S.phase = "over";
   SCENE.clearInteraction();
+  renderPowers();
   $("#btn-rematch").textContent = "Nochmal spielen";
   const loserIdx = other(winner);
   const world = getWorld(S.worlds[loserIdx]);
@@ -2386,6 +2965,7 @@ function goHome() {
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   applyUiWorld(S.worlds[0]);
+  renderPowers();
   show("screen-title");
 }
 
@@ -2395,8 +2975,44 @@ function boot() {
   SCENE.initScene($("#stage"));
   applyUiWorld("ozean");
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
+  S.powersOn = flag("powers") ? loadPowersOpt() : false;
   syncRuleChips();
-  document.querySelector(".rules-row").hidden = !flag("rules");
+  for (const id of ["#rule-decoy", "#rule-sonar", "#rule-ghost"]) {
+    $(id).closest(".opt-row").hidden = !flag("rules");
+  }
+  $("#opt-powers").checked = S.powersOn;
+  $("#opt-powers").closest(".opt-row").hidden = !flag("powers");
+  $("#opt-powers").addEventListener("change", (e) => {
+    SND.unlock();
+    SND.tap();
+    S.powersOn = e.target.checked;
+    savePowersOpt();
+  });
+  $("#btn-options").addEventListener("click", () => {
+    SND.tap();
+    show("screen-options");
+  });
+  $("#btn-options-back").addEventListener("click", () => {
+    SND.tap();
+    show("screen-title");
+  });
+  $("#btn-powers-legend").addEventListener("click", () => {
+    SND.tap();
+    const box = $("#powers-legend");
+    if (!box.hidden) {
+      box.hidden = true;
+      return;
+    }
+    box.innerHTML = `<p class="opt-desc legend-intro">So bekommst du Zauber: 💎 Schätze ausgraben (3 pro Brett versteckt), ⚡ alle 4 Züge eine Aufladung, 🌍 und deine Welt schenkt dir eine Start-Kraft. Höchstens 3 auf der Hand!</p>`;
+    for (const [kind, p] of Object.entries(PW.POWERS)) {
+      const row = document.createElement("div");
+      row.className = "legend-row";
+      const worldTag = p.world ? ` <span class="legend-world">(${getWorld(p.world).name})</span>` : "";
+      row.innerHTML = `<span class="legend-emoji">${p.emoji}</span><span class="legend-text"><b>${p.name}</b>${worldTag}<br />${p.desc}</span>`;
+      box.appendChild(row);
+    }
+    box.hidden = false;
+  });
   $("#btn-album").hidden = !flag("stickers");
   $("#btn-puzzle").hidden = !flag("puzzle");
   $("#btn-puzzle").addEventListener("click", startPuzzle);
@@ -2602,6 +3218,14 @@ function boot() {
       Object.assign(S.rules, r);
       syncRuleChips();
     },
+    power: (kind) => {
+      const st = myPowers();
+      if (st) {
+        st.hand.push(kind);
+        renderPowers();
+      }
+    },
+    usePower: (kind, target) => executePower(kind, target),
     flags: allFlags,
     setFlag,
     placementBoard: () => S.boards[S.placingPlayer],

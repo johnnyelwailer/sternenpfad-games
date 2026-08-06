@@ -160,7 +160,8 @@ async function tapWhenMyTurn(page, x, y) {
   throw new Error(`could not tap ${x},${y}`);
 }
 
-// cells guaranteed to be water on robo's board (no ship, no balloon)
+// cells guaranteed to be plain water on robo's board — no ship, no
+// balloon, no hidden treasure (treasures would hijack the turn flow)
 async function missCells(page, count) {
   return page.evaluate((n) => {
     const b = window.__FF.state.boards[1];
@@ -168,6 +169,7 @@ async function missCells(page, count) {
     const occupied = new Set();
     for (const s of b.ships) for (const c of E.shipCells(s)) occupied.add(`${c.x},${c.y}`);
     if (b.decoy) occupied.add(`${b.decoy.x},${b.decoy.y}`);
+    for (const t of b.treasures ?? []) occupied.add(`${t.x},${t.y}`);
     const out = [];
     for (let y = 0; y < 8 && out.length < n; y += 1) {
       for (let x = 0; x < 8 && out.length < n; x += 1) {
@@ -179,18 +181,97 @@ async function missCells(page, count) {
 }
 
 test("feature flags: new features can be switched off via URL", async ({ page }) => {
-  await page.goto(`${GAME}?flags=styles:0,rules:0,stickers:0`);
+  await page.goto(`${GAME}?flags=styles:0,rules:0,stickers:0,powers:0`);
   await page.waitForFunction(() => !!window.__FF);
-  await expect(page.locator(".rules-row")).toBeHidden();
   await expect(page.locator("#btn-album")).toBeHidden();
+  await page.locator("#btn-options").click();
+  await expect(page.locator("#rule-decoy")).toBeHidden();
+  await expect(page.locator("#opt-powers")).toBeHidden();
+  await page.locator("#btn-options-back").click();
   await page.locator('[data-mode="ai"]').click();
   await expect(page.locator("#btn-place-done")).toBeVisible();
   await expect(page.locator("#btn-style")).toBeHidden();
   // defaults stay on without the override
   await page.goto(GAME);
   await page.waitForFunction(() => !!window.__FF);
-  await expect(page.locator(".rules-row")).toBeVisible();
   await expect(page.locator("#btn-album")).toBeVisible();
+  await page.locator("#btn-options").click();
+  await expect(page.locator("#rule-decoy")).not.toBeHidden();
+  await expect(page.locator("#opt-powers")).not.toBeHidden();
+});
+
+test("Zauber-Kräfte: legend explains, world power + treasure + powers work", async ({ page }) => {
+  test.setTimeout(180000);
+
+  // the options screen explains every power
+  await page.locator("#btn-options").click();
+  await expect(page.locator("#screen-options")).toHaveClass(/active/);
+  await page.locator("#btn-powers-legend").click();
+  expect(await page.locator(".legend-row").count()).toBeGreaterThanOrEqual(13);
+  await page.locator("#btn-options-back").click();
+
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator('[data-mode="ai"]').click();
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  // ozean's world power is in hand, treasures are hidden on both boards
+  expect(await page.evaluate(() => window.__FF.state.powers[0].hand)).toEqual(["welle"]);
+  expect(await page.evaluate(() => window.__FF.state.boards[1].treasures.length)).toBe(3);
+  await expect(page.locator('.power-chip[data-power="welle"]')).toBeVisible();
+
+  // dig up a treasure: a new power arrives and the turn continues
+  const t = await page.evaluate(() => window.__FF.state.boards[1].treasures[0]);
+  await page.evaluate(([x, y]) => window.__FF.tap(x, y), [t.x, t.y]);
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.powers[0].hand.length))
+    .toBe(2);
+  expect(await page.evaluate(() => window.__FF.state.turn)).toBe(0);
+
+  // fernglas peeks a creature cell without marking it
+  await page.evaluate(() => window.__FF.power("fernglas"));
+  await page.locator('.power-chip[data-power="fernglas"]').click();
+  await expect(page.locator('.power-chip[data-power="fernglas"]')).toHaveClass(/armed/);
+  const shipCell = await page.evaluate(() => {
+    const b = window.__FF.state.boards[1];
+    return window.__FF.engine.shipCells(b.ships[0])[0];
+  });
+  await page.evaluate(([x, y]) => window.__FF.tap(x, y), [shipCell.x, shipCell.y]);
+  await expect(page.locator("#status")).toContainText("versteckt sich jemand");
+  expect(
+    await page.evaluate((k) => window.__FF.marksOn(1)[k] ?? null, `${shipCell.x},${shipCell.y}`)
+  ).toBeNull();
+  expect(await page.evaluate(() => window.__FF.state.powers[0].hand.includes("fernglas"))).toBe(false);
+
+  // doppelschuss forgives the next miss
+  await page.evaluate(() => window.__FF.power("doppel"));
+  await waitMyTurn(page);
+  await page.locator('.power-chip[data-power="doppel"]').click();
+  expect(await page.evaluate(() => window.__FF.state.powers[0].doubleShot)).toBe(true);
+  const water = await missCells(page, 8);
+  const free = [];
+  const treasures = await page.evaluate(() => window.__FF.state.boards[1].treasures);
+  for (const c of water) {
+    if (!treasures.some((tt) => tt.x === c.x && tt.y === c.y)) free.push(c);
+  }
+  await page.evaluate(([x, y]) => window.__FF.tap(x, y), [free[0].x, free[0].y]);
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.powers[0].doubleShot))
+    .toBe(false);
+  expect(await page.evaluate(() => window.__FF.state.turn)).toBe(0);
+});
+
+test("Zauber-Kräfte: the option really disables powers", async ({ page }) => {
+  await page.locator("#btn-options").click();
+  await page.locator("#opt-powers").click({ force: true });
+  await page.locator("#btn-options-back").click();
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator('[data-mode="ai"]').click();
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+  expect(await page.evaluate(() => window.__FF.state.powers[0])).toBeNull();
+  await expect(page.locator("#powers")).toBeHidden();
+  expect(await page.evaluate(() => window.__FF.state.boards[1].treasures ?? null)).toBeNull();
 });
 
 test("extra rules: sonar distances and the decoy balloon", async ({ page }) => {
@@ -711,6 +792,13 @@ test("online: full cross-world P2P game with rematch", async ({ browser }) => {
   await expect
     .poll(() => guest.evaluate(() => window.__FF.state.oppCustom))
     .toEqual({ 0: { tint: 2, hat: 1 } });
+
+  // powers travel the wire: host casts a Zeitzauber, guest hears it
+  await host.evaluate(() => {
+    window.__FF.power("zeit");
+    window.__FF.usePower("zeit", null);
+  });
+  await expect.poll(() => guest.evaluate(() => window.__FF.state.extraTurn)).toBe(1);
 
   // play the full game via hooks
   let winner = null;

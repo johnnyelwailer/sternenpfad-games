@@ -12,6 +12,7 @@ export const DEFAULT_FLAGS = {
   styles: true, // creature tints + hats (style panel)
   stickers: true, // sticker album + hat unlocks
   rules: true, // extra rules: decoy balloon, sonar, ghost
+  powers: true, // Zauber-Kräfte: treasures, recharges, world powers
   puzzle: true, // Knobel-Insel logic puzzles
   chase: true, // Der freche Frido chase duel
   boss: true, // Monster gegen Flotte
