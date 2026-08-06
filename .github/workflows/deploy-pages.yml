@@ -43,6 +43,23 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # A cancelled/timed-out Pages deployment can stay "in progress"
+      # server-side and block every following deployment. Deployment IDs
+      # equal the commit SHA, so try to cancel any recent leftovers.
+      - name: Clear stuck Pages deployments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for sha in $(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/commits?per_page=10" \
+              | jq -r '.[].sha'); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/pages/deployments/$sha/cancel")
+            echo "cancel $sha -> HTTP $code"
+          done
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
         with:
