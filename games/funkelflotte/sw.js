@@ -52,6 +52,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
+  // the update poller must always see the live version, never the cache
+  if (url.pathname.endsWith("/version.json")) return;
 
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {

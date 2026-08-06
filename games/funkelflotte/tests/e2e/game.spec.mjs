@@ -169,6 +169,35 @@ test("robo game: my shots mark the enemy board, robo answers on mine", async ({ 
     .toBeGreaterThan(0);
 });
 
+test("update poller: new deployment shows the reload banner on the title", async ({ page }) => {
+  let version = "v1";
+  await page.route("**/version.json*", (route) =>
+    route.fulfill({ contentType: "application/json", body: JSON.stringify({ v: version }) })
+  );
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+
+  // same version → no banner
+  expect(await page.evaluate(() => window.__FF.checkUpdate())).toBe(false);
+  await expect(page.locator("#update-banner")).toBeHidden();
+
+  // a new deployment lands
+  version = "v2";
+  expect(await page.evaluate(() => window.__FF.checkUpdate())).toBe(true);
+  await expect(page.locator("#update-banner")).toBeVisible();
+
+  // mid-game the banner stays out of the way, and returns on the title
+  await startRobo(page);
+  await expect(page.locator("#update-banner")).toBeHidden();
+  await page.locator("#btn-home").click();
+  await expect(page.locator("#update-banner")).toBeVisible();
+
+  // tapping it reloads the app
+  await page.locator("#update-banner").click();
+  await page.waitForFunction(() => !!window.__FF);
+  await expect(page.locator("h1.logo")).toContainText("Funkel-Flotte");
+});
+
 test("robo difficulty picker: schlau robo is selectable", async ({ page }) => {
   await page.locator('[data-mode="ai"]').click();
   await expect(page.locator("#screen-robo")).toHaveClass(/active/);

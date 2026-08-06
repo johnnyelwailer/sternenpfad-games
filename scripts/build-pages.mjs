@@ -27,6 +27,14 @@ await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await writeFile(resolve(output, ".nojekyll"), "");
 
+// build stamp so clients can poll for new deployments (git sha + time)
+let stamp = String(Date.now());
+try {
+  stamp = `${execSync("git rev-parse --short HEAD", { cwd: root }).toString().trim()}-${Date.now()}`;
+} catch {
+  // not a git checkout — timestamp alone is fine
+}
+
 for (const game of games) {
   const gameDir = resolve(gamesDir, game.dir);
   if ((game.pages?.type ?? "workspace") === "static") {
@@ -34,6 +42,7 @@ for (const game of games) {
       recursive: true,
       filter: (src) => !src.includes("/tests"),
     });
+    await writeFile(resolve(output, game.dir, "version.json"), JSON.stringify({ v: stamp }));
   } else {
     execSync(`npm --workspace @sternenpfad/${game.dir} run build:pages`, {
       cwd: root,

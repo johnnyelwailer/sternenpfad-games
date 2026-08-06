@@ -72,6 +72,7 @@ function show(screenId) {
     renderFriends();
     startFriendListener();
   }
+  maybeShowUpdate();
 }
 
 let toastTimer = null;
@@ -3515,6 +3516,58 @@ function goHome() {
   show("screen-title");
 }
 
+// ------------------------------------------------------------- updates
+// Poll the deployment stamp; when a new version ships, offer a one-tap
+// refresh on the title screen (never interrupting a running game).
+
+let appVersion = null;
+let updatePending = false;
+
+async function fetchVersion() {
+  try {
+    const res = await fetch(`version.json?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j && j.v != null ? String(j.v) : null;
+  } catch {
+    return null; // offline or dev server without a build stamp
+  }
+}
+
+async function checkForUpdate() {
+  const v = await fetchVersion();
+  if (!v) return false;
+  if (appVersion === null) {
+    appVersion = v;
+    return false;
+  }
+  if (v !== appVersion) {
+    updatePending = true;
+    maybeShowUpdate();
+    return true;
+  }
+  return false;
+}
+
+function maybeShowUpdate() {
+  $("#update-banner").hidden = !(updatePending && S.phase === "title");
+}
+
+async function applyUpdate() {
+  SND.tap();
+  $("#update-banner").textContent = "✨ Wird aktualisiert …";
+  try {
+    // drop the offline cache so the reload really fetches the new build
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k.startsWith("funkelflotte")).map((k) => caches.delete(k)));
+    const reg = await navigator.serviceWorker?.getRegistration?.();
+    await reg?.update?.();
+  } catch {
+    /* best effort — the reload still helps */
+  }
+  window.location.reload();
+}
+
 // ------------------------------------------------------------------ boot
 
 function boot() {
@@ -3774,6 +3827,14 @@ function boot() {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 
+  // version polling: at boot, every 5 minutes, and when the app wakes up
+  $("#update-banner").addEventListener("click", applyUpdate);
+  checkForUpdate();
+  setInterval(checkForUpdate, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkForUpdate();
+  });
+
   // deep link: ?join=CODE — let the guest pick their world first
   const params = new URLSearchParams(window.location.search);
   const joinCode = normalizeCode(params.get("join"));
@@ -3823,6 +3884,7 @@ function boot() {
     usePower: (kind, target) => executePower(kind, target),
     flags: allFlags,
     setFlag,
+    checkUpdate: checkForUpdate,
     placementBoard: () => S.boards[S.placingPlayer],
     marksOn: (idx) => (S.mode === "online" && idx === 1 ? S.shadow.marks : S.boards[idx]?.shots),
     rotateFirst: () => {
