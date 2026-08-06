@@ -91,7 +91,8 @@ test("robo game: my shots mark the enemy board, robo answers on mine", async ({ 
 });
 
 test("hot-seat: two worlds, pass screens, full game to the win screen", async ({ page }) => {
-  test.setTimeout(180000);
+  test.setTimeout(240000);
+  await page.evaluate(() => window.__FF.setFast());
   await page.locator('[data-mode="hotseat"]').click();
   await page.locator("#btn-place-done").click();
 
@@ -133,7 +134,7 @@ test("hot-seat: two worlds, pass screens, full game to the win screen", async ({
     const target = await firstUnknownCell(page, state.turn === 0 ? 1 : 0);
     if (!target) break;
     await page.evaluate(([x, y]) => window.__FF.tap(x, y), [target.x, target.y]);
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(220);
   }
 
   await expect(page.locator("#screen-win")).toHaveClass(/active/);
@@ -176,10 +177,11 @@ test("online: host screen shows QR code and magic code", async ({ page }) => {
 });
 
 test("online: full cross-world P2P game with rematch", async ({ browser }) => {
-  test.setTimeout(180000);
+  test.setTimeout(300000);
 
-  const ctxA = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  const ctxB = await browser.newContext({ viewport: { width: 900, height: 600 } }); // tablet landscape
+  // small viewports keep two software-rendered WebGL pages responsive
+  const ctxA = await browser.newContext({ viewport: { width: 340, height: 600 } });
+  const ctxB = await browser.newContext({ viewport: { width: 640, height: 420 } }); // tablet landscape
   const host = await ctxA.newPage();
   const guest = await ctxB.newPage();
   await host.addInitScript(() => localStorage.setItem("ff-muted", "1"));
@@ -187,6 +189,7 @@ test("online: full cross-world P2P game with rematch", async ({ browser }) => {
 
   await host.goto(`${GAME}?${PS}`);
   await host.waitForFunction(() => !!window.__FF);
+  await host.evaluate(() => window.__FF.setFast());
   await host.locator('#world-grid [data-world="weltraum"]').click();
   await host.locator('[data-mode="online"]').click();
   await host.locator("#btn-host").click();
@@ -196,6 +199,7 @@ test("online: full cross-world P2P game with rematch", async ({ browser }) => {
   // guest joins via deep link (world picker first — guest picks dino)
   await guest.goto(`${GAME}?${PS}&join=${code}`);
   await guest.waitForFunction(() => !!window.__FF);
+  await guest.evaluate(() => window.__FF.setFast());
   await expect(guest.locator("#screen-worldpick")).toHaveClass(/active/);
   await guest.locator('#world-grid-2 [data-world="dino"]').click();
   await guest.locator("#btn-worldpick-go").click();

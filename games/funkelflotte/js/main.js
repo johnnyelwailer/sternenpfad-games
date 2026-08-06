@@ -33,6 +33,7 @@ const S = {
 };
 
 const slotFor = (index) => (index === 0 ? "mine" : "enemy");
+let FAST = false; // shortened delays for automated tests
 const other = (i) => 1 - i;
 
 // ------------------------------------------------------------------ UI
@@ -395,28 +396,36 @@ function handleTap(x, y) {
   showShotResult(targetIdx, x, y, res, () => afterMyShot(res));
 }
 
-// visualize a shot on board `idx`; then continue
+// visualize a shot on board `idx`; then continue. The status wording
+// depends on who is looking: the shooter sees "Nochmal!", the defender
+// sees what happened to their own creatures.
 function showShotResult(idx, x, y, res, done) {
   const slot = slotFor(idx);
+  const viewerIsShooter = idx !== S.viewer;
   SCENE.applyShot(slot, x, y, res.result === E.MISS ? "miss" : "hit");
   if (navigator.vibrate) {
     navigator.vibrate(res.result === E.SUNK ? [60, 40, 90] : res.result === E.HIT ? 40 : 15);
   }
   const world = getWorld(S.worlds[idx]);
+  const opp = S.mode === "ai" ? "Robo" : "Dein Mitspieler";
   if (res.result === E.MISS) {
     SND.plop();
-    status(world.words.miss);
+    status(viewerIsShooter ? world.words.miss : `Puh! ${opp} hat nichts gefunden.`);
   } else if (res.result === E.HIT) {
     SND.sparkle();
-    status(`${world.words.hit} Nochmal!`);
+    status(viewerIsShooter ? `${world.words.hit} Nochmal!` : `Oh nein! ${opp} hat was entdeckt …`);
   } else if (res.result === E.SUNK) {
     SND.fanfare();
     SCENE.revealShip(slot, res.ship);
     SCENE.revealWater(slot, res.revealed);
-    status(`${creatureName(idx, res.ship.id)} ${world.words.sunk} Nochmal!`);
+    status(
+      viewerIsShooter
+        ? `${creatureName(idx, res.ship.id)} ${world.words.sunk} Nochmal!`
+        : `${opp} hat ${creatureName(idx, res.ship.id)} gefunden!`
+    );
     renderChips(other(S.viewer));
   }
-  setTimeout(done, res.result === E.SUNK ? 1200 : 500);
+  setTimeout(done, FAST ? 50 : res.result === E.SUNK ? 1200 : 500);
 }
 
 function afterMyShot(res) {
@@ -439,7 +448,7 @@ function afterMyShot(res) {
     setTimeout(() => {
       beginTurn();
       scheduleRoboTurn();
-    }, 700);
+    }, FAST ? 60 : 900);
   }
 }
 
@@ -492,7 +501,7 @@ function scheduleRoboTurn() {
         scheduleRoboTurn();
       }
     });
-  }, 1000);
+  }, FAST ? 70 : 1300);
 }
 
 // ---------------------------------------------------------------- online
@@ -876,6 +885,10 @@ function boot() {
     state: S,
     engine: E,
     debugCamera: SCENE.debugCamera,
+    thumb: (w, i, size, px) => SCENE.creatureThumb(w, i, size, px),
+    setFast: () => {
+      FAST = true;
+    },
     tap: (x, y) => handleTap(x, y),
     placementBoard: () => S.boards[S.placingPlayer],
     marksOn: (idx) => (S.mode === "online" && idx === 1 ? S.shadow.marks : S.boards[idx]?.shots),

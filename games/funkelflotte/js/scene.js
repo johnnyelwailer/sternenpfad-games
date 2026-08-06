@@ -855,7 +855,7 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
       hemi.color.lerpColors(fromHemi, toHemi, v);
     },
     {
-      dur: 1.25,
+      dur: 1.0,
       ease: Ease.inOutCubic,
       onDone: () => {
         camBase.pos.copy(pos);
