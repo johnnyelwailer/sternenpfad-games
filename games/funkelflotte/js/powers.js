@@ -258,8 +258,10 @@ export function whirlwindMove(board, rng = Math.random) {
   const ship = candidates[Math.floor(rng() * candidates.length)];
   for (let tries = 0; tries < 300; tries += 1) {
     const dir = rng() < 0.5 ? "h" : "v";
-    const maxX = board.size - (dir === "h" ? ship.size : 1);
-    const maxY = board.size - (dir === "v" ? ship.size : 1);
+    const w = ship.shape === "sq" ? 2 : dir === "h" ? ship.size : 1;
+    const h = ship.shape === "sq" ? 2 : dir === "v" ? ship.size : 1;
+    const maxX = board.size - w;
+    const maxY = board.size - h;
     const x = Math.floor(rng() * (maxX + 1));
     const y = Math.floor(rng() * (maxY + 1));
     if (x === ship.x && y === ship.y && dir === ship.dir) continue;

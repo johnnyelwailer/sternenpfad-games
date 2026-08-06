@@ -42,6 +42,8 @@ const S = {
   customs: [{}, {}], // per board index: shipId -> { tint, hat }
   oppCustom: null, // online: opponent's map (arrives with their "ready")
   rules: { decoy: false, sonar: false, ghost: false }, // extra rules
+  boardPreset: "klassisch", // which board/fleet preset (see BOARD_PRESETS)
+  allowTouch: false, // Kuschel-Regel: creatures may sit side by side
   powersOn: true, // Zauber-Kräfte option (persisted)
   powers: [null, null], // per player: PW.newPowerState() during battle
   pendingPower: null, // power kind waiting for a target tap
@@ -203,9 +205,68 @@ function foundIdsOn(index) {
 
 // --------------------------------------------------------------- helpers
 
+// ------------------------------------------------------- board & fleet
+// Preset boards: size + which creatures live there. "2x2" is a chunky
+// square friend, 1 is a tiny single-cell friend.
+
+const BOARD_PRESETS = {
+  klassisch: { grid: 8, fleet: [4, 3, 3, 2, 2], name: "🌊 Klassisch", desc: "8×8 Felder, fünf Freunde — so wie immer." },
+  flink: { grid: 6, fleet: [3, 2, 2, 1], name: "⚡ Flink", desc: "Kleines 6×6-Brett mit vier Freunden — perfekt für eine schnelle Runde." },
+  riesig: { grid: 10, fleet: [5, 4, 3, 3, 2, 2, 1], name: "🐋 Riesig", desc: "Großes 10×10-Meer mit sieben Freunden — die lange Expedition." },
+  knuddel: { grid: 8, fleet: ["2x2", 3, 3, 2, 1], name: "🧸 Knuddel", desc: "Ein pummeliger 2×2-Freund, ein Winzling und drei Normale auf 8×8." },
+};
+
+function boardPreset() {
+  return BOARD_PRESETS[S.boardPreset] ?? BOARD_PRESETS.klassisch;
+}
+
+function loadBoardOpt() {
+  if (!flag("variety")) return { preset: "klassisch", touch: false };
+  try {
+    const o = JSON.parse(localStorage.getItem("ff-board") || "{}");
+    return {
+      preset: BOARD_PRESETS[o.preset] ? o.preset : "klassisch",
+      touch: !!o.touch,
+    };
+  } catch {
+    return { preset: "klassisch", touch: false };
+  }
+}
+
+function saveBoardOpt() {
+  try {
+    localStorage.setItem("ff-board", JSON.stringify({ preset: S.boardPreset, touch: S.allowTouch }));
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+function renderBoardPresets() {
+  const box = $("#board-presets");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const [id, p] of Object.entries(BOARD_PRESETS)) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "board-choice" + (id === S.boardPreset ? " selected" : "");
+    btn.dataset.preset = id;
+    btn.innerHTML = `<span class="opt-name">${p.name}</span><span class="opt-desc">${p.desc}</span>`;
+    btn.addEventListener("click", () => {
+      SND.unlock();
+      SND.tap();
+      S.boardPreset = id;
+      saveBoardOpt();
+      renderBoardPresets();
+    });
+    box.appendChild(btn);
+  }
+}
+
 function newBoardWithFleet() {
-  const b = E.createBoard();
-  E.randomFleet(b);
+  const p = boardPreset();
+  const b = E.createBoard(p.grid);
+  if (S.allowTouch) b.allowTouch = true;
+  E.randomFleet(b, p.fleet);
   if (S.rules.decoy) E.randomDecoy(b);
   return b;
 }
@@ -233,6 +294,8 @@ function syncRuleChips() {
   $("#rule-decoy").checked = S.rules.decoy;
   $("#rule-sonar").checked = S.rules.sonar;
   $("#rule-ghost").checked = S.rules.ghost;
+  $("#rule-touch").checked = S.allowTouch;
+  renderBoardPresets();
 }
 
 function rulesSummary(rules) {
@@ -407,6 +470,16 @@ function startMode(mode) {
   S.chase = null;
   S.boss = null;
   S.journey = null;
+  // fresh game, fresh board choice: the persisted preset wins (an online
+  // guest may have played the host's board last round)
+  const bo = loadBoardOpt();
+  S.boardPreset = bo.preset;
+  S.allowTouch = bo.touch;
+  if (S.forceClassicBoard) {
+    S.boardPreset = "klassisch";
+    S.allowTouch = false;
+    S.forceClassicBoard = false;
+  }
   clearSave();
   S.turn = 0;
   S.viewer = 0;
@@ -437,7 +510,7 @@ function startPlacement(player) {
   const idx = player;
   const slot = slotFor(idx);
   applyUiWorld(S.worlds[idx]);
-  SCENE.setupBoard(slot, S.worlds[idx]);
+  SCENE.setupBoard(slot, S.worlds[idx], { grid: S.boards[idx].size });
   S.customs[idx] = loadCustom(S.worlds[idx]);
   SCENE.setCustomization(slot, S.customs[idx]);
   SCENE.placeCreatures(slot, shipsWithDecoy(S.boards[idx]), { popIn: true });
@@ -456,9 +529,11 @@ function startPlacement(player) {
     blockedCells: (id) => {
       const board = S.boards[idx];
       const set = new Set();
+      // Kuschel-Regel: only the occupied cells themselves are blocked
+      const reach = board.allowTouch ? 0 : 1;
       const markAround = (cx, cy) => {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -reach; dx <= reach; dx += 1) {
+          for (let dy = -reach; dy <= reach; dy += 1) {
             const x = cx + dx;
             const y = cy + dy;
             if (E.inBounds(board, x, y)) set.add(E.key(x, y));
@@ -482,7 +557,11 @@ function startPlacement(player) {
           SND.tap();
         } else {
           SND.sad();
-          toast("Der Ballon braucht ein Feld Abstand zu den Freunden!");
+          toast(
+            board.allowTouch
+              ? "Da sitzt schon jemand!"
+              : "Der Ballon braucht ein Feld Abstand zu den Freunden!"
+          );
         }
         SCENE.moveCreature(slot, decoyShipOf(board));
         return;
@@ -492,7 +571,11 @@ function startPlacement(player) {
         SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
       } else {
         SND.sad();
-        toast("Die Freunde brauchen ein Feld Abstand zueinander!");
+        toast(
+          board.allowTouch
+            ? "Da sitzt schon jemand!"
+            : "Die Freunde brauchen ein Feld Abstand zueinander!"
+        );
         SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
         SCENE.shakeCreature(slot, id);
       }
@@ -505,6 +588,12 @@ function startPlacement(player) {
         return;
       }
       const ship = board.ships.find((s) => s.id === id);
+      // squares and single-cell friends have nothing to rotate — wiggle
+      if (ship.shape === "sq" || ship.size === 1) {
+        SND.plop();
+        SCENE.shakeCreature(slot, id);
+        return;
+      }
       const dir = ship.dir === "h" ? "v" : "h";
       const maxX = board.size - (dir === "h" ? ship.size : 1);
       const maxY = board.size - (dir === "v" ? ship.size : 1);
@@ -1029,9 +1118,9 @@ function executePower(kind, target) {
     }
     consumePower(kind);
     syncCreatureVisibility();
-    const mid = moved.dir === "h" ? moved.x + Math.floor(moved.size / 2) : moved.x;
-    const midY = moved.dir === "v" ? moved.y + Math.floor(moved.size / 2) : moved.y;
-    SCENE.tornadoAt(slotFor(my), mid, midY);
+    const movedCells = E.shipCells(moved);
+    const mid = movedCells[Math.floor(movedCells.length / 2)];
+    SCENE.tornadoAt(slotFor(my), mid.x, mid.y);
     if (S.mode === "online") S.net.send({ t: "pw", kind: "wirbel" });
     SND.whoosh();
     status("🌪️ Wusch! Ein Freund hat heimlich das Versteck gewechselt.");
@@ -1156,7 +1245,9 @@ function startBattle(firstTurn) {
 
   // make sure both dioramas exist (enemy diorama may not yet)
   if (S.mode === "online" || S.mode === "ai") {
-    SCENE.setupBoard("enemy", S.worlds[1]);
+    SCENE.setupBoard("enemy", S.worlds[1], {
+      grid: S.boards[1]?.size ?? S.shadow?.size ?? boardPreset().grid,
+    });
   }
   SCENE.setCustomization("mine", customFor(0));
   SCENE.setCustomization("enemy", customFor(1));
@@ -1538,7 +1629,7 @@ function scheduleRoboTurn() {
 // ---------------------------------------------------------------- online
 
 function newShadow() {
-  return { size: E.DEFAULT_GRID, marks: {}, found: [] };
+  return { size: boardPreset().grid, marks: {}, found: [] };
 }
 
 // ---------------------------------------------------------------- friends
@@ -1866,7 +1957,7 @@ function handleNetMessage(msg) {
         break;
       }
       S.gameMode = "classic";
-      // the host decides the extra rules + powers for both players
+      // the host decides the extra rules + powers + board for both players
       S.rules = {
         decoy: !!msg.rules?.decoy,
         sonar: !!msg.rules?.sonar,
@@ -1874,9 +1965,13 @@ function handleNetMessage(msg) {
       };
       S.powersOn = flag("powers") && msg.powers !== false;
       S.cardsOn = flag("powers") && !!msg.cards;
+      S.boardPreset = BOARD_PRESETS[msg.board?.preset] ? msg.board.preset : "klassisch";
+      S.allowTouch = !!msg.board?.touch;
       syncRuleChips();
       const parts = [
         rulesSummary(S.rules),
+        S.boardPreset !== "klassisch" ? boardPreset().name : "",
+        S.allowTouch ? "🤗 Kuschel-Regel" : "",
         S.powersOn ? "💎 Schatz-Zauber" : "",
         S.cardsOn ? "🃏 Zauber-Karten" : "",
       ].filter(Boolean);
@@ -1955,7 +2050,7 @@ function handleNetMessage(msg) {
         result: res.result,
         ship:
           res.result === E.SUNK
-            ? { id: res.ship.id, size: res.ship.size, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
+            ? { id: res.ship.id, size: res.ship.size, shape: res.ship.shape, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
             : null,
         revealed: res.revealed,
         gameOver: res.gameOver,
@@ -2109,7 +2204,7 @@ function handleNetMessage(msg) {
             result: res.result,
             ship:
               res.result === E.SUNK
-                ? { id: res.ship.id, size: res.ship.size, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
+                ? { id: res.ship.id, size: res.ship.size, shape: res.ship.shape, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
                 : null,
             revealed: res.revealed,
             gameOver: res.gameOver,
@@ -2239,6 +2334,7 @@ function sendHello() {
     mode: S.gameMode,
     powers: flag("powers") && S.powersOn,
     cards: flag("powers") && S.powersOn && S.cardsOn,
+    board: { preset: S.boardPreset, touch: S.allowTouch },
     pid: PID,
   });
 }
@@ -3351,6 +3447,7 @@ function startJourneyStop(i) {
     };
     syncRuleChips();
     S.forceRoboLevel = "leicht"; // the journey stays kind
+    S.forceClassicBoard = true; // curated stops play on the classic board
     startMode("ai");
   } else if (stop.type === "puzzle") {
     startPuzzle();
@@ -3569,6 +3666,10 @@ function goHome() {
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
   S.powersOn = flag("powers") ? loadPowersOpt() : false;
   S.cardsOn = flag("powers") ? loadCardsOpt() : false;
+  const bo = loadBoardOpt();
+  S.boardPreset = bo.preset;
+  S.allowTouch = bo.touch;
+  renderBoardPresets();
   syncRuleChips();
   S.customs = [{}, {}];
   S.oppCustom = null;
@@ -3606,6 +3707,8 @@ function saveGame() {
         isHost: S.isHost,
         worlds: S.worlds,
         rules: S.rules,
+        boardPreset: S.boardPreset,
+        allowTouch: S.allowTouch,
         powersOn: S.powersOn,
         cardsOn: S.cardsOn,
         turn: S.turn,
@@ -3654,6 +3757,8 @@ function restoreSavedGame(saved) {
   S.isHost = !!saved.isHost;
   S.worlds = saved.worlds ?? ["ozean", "ozean"];
   S.rules = saved.rules ?? S.rules;
+  S.boardPreset = BOARD_PRESETS[saved.boardPreset] ? saved.boardPreset : "klassisch";
+  S.allowTouch = !!saved.allowTouch;
   S.powersOn = !!saved.powersOn;
   S.cardsOn = !!saved.cardsOn;
   S.turn = saved.turn ?? 0;
@@ -3677,8 +3782,10 @@ function restoreSavedGame(saved) {
   S.phase = "battle";
   syncRuleChips();
   applyUiWorld(S.worlds[S.mode === "hotseat" ? S.turn : 0]);
-  SCENE.setupBoard("mine", S.worlds[0]);
-  SCENE.setupBoard("enemy", S.worlds[1]);
+  SCENE.setupBoard("mine", S.worlds[0], { grid: S.boards[0]?.size ?? 8 });
+  SCENE.setupBoard("enemy", S.worlds[1], {
+    grid: S.boards[1]?.size ?? S.shadow?.size ?? 8,
+  });
   SCENE.setCustomization("mine", customFor(0));
   SCENE.setCustomization("enemy", customFor(1));
   if (flag("powers") && S.powersOn) {
@@ -3825,6 +3932,20 @@ function boot() {
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
   S.powersOn = flag("powers") ? loadPowersOpt() : false;
   S.cardsOn = flag("powers") ? loadCardsOpt() : false;
+  const boardOpt = loadBoardOpt();
+  S.boardPreset = boardOpt.preset;
+  S.allowTouch = boardOpt.touch;
+  renderBoardPresets();
+  $("#rule-touch").checked = S.allowTouch;
+  $("#rule-touch").addEventListener("change", (e) => {
+    SND.unlock();
+    SND.tap();
+    S.allowTouch = e.target.checked;
+    saveBoardOpt();
+  });
+  document.querySelector(".opt-heading").hidden = !flag("variety");
+  $("#board-presets").hidden = !flag("variety");
+  $("#rule-touch").closest(".opt-row").hidden = !flag("variety");
   syncRuleChips();
   $("#opt-cards").checked = S.cardsOn;
   $("#opt-cards").closest(".opt-row").hidden = !flag("powers");

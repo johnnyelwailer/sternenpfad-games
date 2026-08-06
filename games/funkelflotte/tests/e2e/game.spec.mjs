@@ -20,8 +20,9 @@ async function startRobo(page) {
 async function firstUnknownCell(page, boardIdx) {
   return page.evaluate((idx) => {
     const marks = window.__FF.marksOn(idx) || {};
-    for (let y = 0; y < 8; y += 1) {
-      for (let x = 0; x < 8; x += 1) {
+    const size = window.__FF.state.boards[idx]?.size ?? 8;
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
         if (!marks[`${x},${y}`]) return { x, y };
       }
     }
@@ -248,8 +249,8 @@ async function missCells(page, count) {
     if (b.decoy) occupied.add(`${b.decoy.x},${b.decoy.y}`);
     for (const t of b.treasures ?? []) occupied.add(`${t.x},${t.y}`);
     const out = [];
-    for (let y = 0; y < 8 && out.length < n; y += 1) {
-      for (let x = 0; x < 8 && out.length < n; x += 1) {
+    for (let y = 0; y < b.size && out.length < n; y += 1) {
+      for (let x = 0; x < b.size && out.length < n; x += 1) {
         if (!occupied.has(`${x},${y}`)) out.push({ x, y });
       }
     }
@@ -258,12 +259,14 @@ async function missCells(page, count) {
 }
 
 test("feature flags: new features can be switched off via URL", async ({ page }) => {
-  await page.goto(`${GAME}?flags=styles:0,rules:0,stickers:0,powers:0`);
+  await page.goto(`${GAME}?flags=styles:0,rules:0,stickers:0,powers:0,variety:0`);
   await page.waitForFunction(() => !!window.__FF);
   await expect(page.locator("#btn-album")).toBeHidden();
   await page.locator("#btn-options").click();
   await expect(page.locator("#rule-decoy")).toBeHidden();
   await expect(page.locator("#opt-powers")).toBeHidden();
+  await expect(page.locator("#board-presets")).toBeHidden();
+  await expect(page.locator("#rule-touch")).toBeHidden();
   await page.locator("#btn-options-back").click();
   await startRobo(page);
   await expect(page.locator("#btn-place-done")).toBeVisible();
@@ -274,6 +277,7 @@ test("feature flags: new features can be switched off via URL", async ({ page })
   await page.locator("#btn-options").click();
   await expect(page.locator("#rule-decoy")).not.toBeHidden();
   await expect(page.locator("#opt-powers")).not.toBeHidden();
+  await expect(page.locator("#board-presets")).not.toBeHidden();
 });
 
 test("Zauber-Kräfte: legend explains, world power + treasure + powers work", async ({ page }) => {
@@ -430,6 +434,83 @@ test("extra rules: ghost mode fades old miss marks", async ({ page }) => {
   // ...and the freshest one is still there
   const last = cells[cells.length - 1];
   expect(await page.evaluate((k) => window.__FF.marksOn(1)[k], `${last.x},${last.y}`)).toBe("miss");
+});
+
+test("board variety: presets, Kuschel-Regel and the chunky 2×2 friend", async ({ page }) => {
+  test.setTimeout(180000);
+  await page.evaluate(() => window.__FF.setFast());
+
+  // flink preset + Kuschel-Regel via the options screen
+  await page.locator("#btn-options").click();
+  await expect(page.locator(".board-choice")).toHaveCount(4);
+  await page.locator('.board-choice[data-preset="flink"]').click();
+  await expect(page.locator('.board-choice[data-preset="flink"]')).toHaveClass(/selected/);
+  await page.locator("#rule-touch").click({ force: true });
+  await page.locator("#btn-options-back").click();
+
+  await startRobo(page);
+  const info = await page.evaluate(() => {
+    const b = window.__FF.state.boards;
+    return { size0: b[0].size, size1: b[1].size, ships: b[0].ships.length, touch: !!b[0].allowTouch };
+  });
+  expect(info).toEqual({ size0: 6, size1: 6, ships: 4, touch: true });
+
+  // a shot on the small board flows normally
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+  const [cell] = await missCells(page, 1);
+  await tapWhenMyTurn(page, cell.x, cell.y);
+  await expect
+    .poll(() => page.evaluate((k) => window.__FF.marksOn(1)[k], `${cell.x},${cell.y}`))
+    .toBe("miss");
+
+  // sinking with the Kuschel-Regel reveals no surrounding water
+  const shipCells = await page.evaluate(() => {
+    const b = window.__FF.state.boards[1];
+    return window.__FF.engine.shipCells(b.ships.find((s) => s.size === 2));
+  });
+  for (const c of shipCells) await tapWhenMyTurn(page, c.x, c.y);
+  const marks = await page.evaluate(() => ({ ...window.__FF.marksOn(1) }));
+  const around = new Set();
+  for (const c of shipCells) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dy = -1; dy <= 1; dy += 1) around.add(`${c.x + dx},${c.y + dy}`);
+    }
+  }
+  for (const c of shipCells) around.delete(`${c.x},${c.y}`);
+  const revealedNeighbors = [...around].filter((k) => marks[k] === "miss" && k !== `${cell.x},${cell.y}`);
+  expect(revealedNeighbors).toEqual([]);
+
+  // knuddel preset: back home, the square friend and the mini join the fleet
+  await page.locator("#btn-home").click();
+  await page.locator("#btn-options").click();
+  await page.locator('.board-choice[data-preset="knuddel"]').click();
+  await page.locator("#rule-touch").click({ force: true }); // back off
+  await page.locator("#btn-options-back").click();
+  await startRobo(page);
+  const fleet = await page.evaluate(() =>
+    window.__FF.state.boards[0].ships.map((s) => ({ shape: s.shape ?? "line", size: s.size }))
+  );
+  expect(fleet).toContainEqual({ shape: "sq", size: 4 });
+  expect(fleet).toContainEqual({ shape: "line", size: 1 });
+  // the square really occupies a 2×2 block and the whole fleet is valid
+  const knuddel = await page.evaluate(() => {
+    const b = window.__FF.placementBoard();
+    const E = window.__FF.engine;
+    const sq = b.ships.find((s) => s.shape === "sq");
+    return {
+      sqCells: E.shipCells(sq).map((c) => `${c.x - sq.x},${c.y - sq.y}`).sort(),
+      allValid: b.ships.every((s) => E.canPlace(b, s, s.id)),
+    };
+  });
+  expect(knuddel.sqCells).toEqual(["0,0", "0,1", "1,0", "1,1"]);
+  expect(knuddel.allValid).toBe(true);
+
+  // the preset choice survives a reload
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await page.locator("#btn-options").click();
+  await expect(page.locator('.board-choice[data-preset="knuddel"]')).toHaveClass(/selected/);
 });
 
 test("Knobel-Insel: solve the puzzle by digging all creature cells", async ({ page }) => {

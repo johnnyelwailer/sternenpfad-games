@@ -14,6 +14,7 @@ import {
   serializeShips,
   totalShipCells,
   key,
+  normalizeFleetEntry,
   DEFAULT_FLEET,
   DEFAULT_GRID,
   MISS,
@@ -194,4 +195,107 @@ test("a full game against random shots always terminates with all sunk", () => {
   }
   assert.equal(allSunk(b), true);
   assert.ok(shotsFired <= b.size * b.size);
+});
+
+// ------------------------------------------------- board & fleet variety
+
+test("normalizeFleetEntry: numbers are lines, '2x2' is a square of 4", () => {
+  assert.deepEqual(normalizeFleetEntry(3), { shape: "line", size: 3 });
+  assert.deepEqual(normalizeFleetEntry(1), { shape: "line", size: 1 });
+  assert.deepEqual(normalizeFleetEntry("2x2"), { shape: "sq", size: 4 });
+});
+
+test("shipCells: a square ship occupies its 2×2 block", () => {
+  const cells = shipCells({ shape: "sq", size: 4, x: 3, y: 5, dir: "h" });
+  assert.deepEqual(
+    cells.map((c) => key(c.x, c.y)).sort(),
+    ["3,5", "3,6", "4,5", "4,6"].sort()
+  );
+});
+
+test("square ships sink after all 4 cells are hit", () => {
+  const b = createBoard(8);
+  placeShip(b, { id: 0, shape: "sq", size: 4, x: 2, y: 2, dir: "h" });
+  assert.equal(fire(b, 2, 2).result, HIT);
+  assert.equal(fire(b, 3, 2).result, HIT);
+  assert.equal(fire(b, 2, 3).result, HIT);
+  const res = fire(b, 3, 3);
+  assert.equal(res.result, SUNK);
+  assert.equal(res.gameOver, true);
+});
+
+test("Kuschel-Regel: touching allowed, overlap still forbidden", () => {
+  const b = createBoard(8);
+  b.allowTouch = true;
+  placeShip(b, { id: 0, size: 3, x: 2, y: 2, dir: "h" });
+  // directly below — would be illegal classically
+  assert.equal(canPlace(b, { id: 1, size: 2, x: 2, y: 3, dir: "h" }), true);
+  // overlapping is never okay
+  assert.equal(canPlace(b, { id: 1, size: 2, x: 3, y: 2, dir: "h" }), false);
+  // and the classic board still rejects the touch
+  const c = createBoard(8);
+  placeShip(c, { id: 0, size: 3, x: 2, y: 2, dir: "h" });
+  assert.equal(canPlace(c, { id: 1, size: 2, x: 2, y: 3, dir: "h" }), false);
+});
+
+test("Kuschel-Regel: sinking reveals no surrounding water", () => {
+  const b = createBoard(8);
+  b.allowTouch = true;
+  placeShip(b, { id: 0, size: 2, x: 2, y: 2, dir: "h" });
+  placeShip(b, { id: 1, size: 2, x: 2, y: 3, dir: "h" });
+  fire(b, 2, 2);
+  const res = fire(b, 3, 2);
+  assert.equal(res.result, SUNK);
+  assert.deepEqual(res.revealed, []);
+  // the neighbour hiding right next door is still hittable
+  assert.equal(fire(b, 2, 3).result, HIT);
+});
+
+test("randomFleet fills small, big and mixed-shape boards", () => {
+  const rng = seededRng(7);
+  const flink = createBoard(6);
+  assert.equal(randomFleet(flink, [3, 2, 2, 1], rng), true);
+  assert.equal(flink.ships.length, 4);
+
+  const riesig = createBoard(10);
+  assert.equal(randomFleet(riesig, [5, 4, 3, 3, 2, 2, 1], rng), true);
+  assert.equal(riesig.ships.length, 7);
+
+  const knuddel = createBoard(8);
+  assert.equal(randomFleet(knuddel, ["2x2", 3, 3, 2, 1], rng), true);
+  const sq = knuddel.ships.find((s) => s.shape === "sq");
+  assert.ok(sq);
+  assert.equal(sq.size, 4);
+  // every occupied cell of every ship stays in bounds
+  for (const board of [flink, riesig, knuddel]) {
+    for (const s of board.ships) {
+      for (const c of shipCells(s)) {
+        assert.ok(c.x >= 0 && c.y >= 0 && c.x < board.size && c.y < board.size);
+      }
+    }
+  }
+});
+
+test("randomFleet with touch rule packs a tight 6×6 board", () => {
+  const rng = seededRng(11);
+  const b = createBoard(6);
+  b.allowTouch = true;
+  assert.equal(randomFleet(b, [3, 2, 2, 1], rng), true);
+  const seen = new Set();
+  for (const s of b.ships) {
+    for (const c of shipCells(s)) {
+      const k = key(c.x, c.y);
+      assert.ok(!seen.has(k), "no overlaps even when touching is allowed");
+      seen.add(k);
+    }
+  }
+});
+
+test("serializeShips carries shape only for non-line creatures", () => {
+  const b = createBoard(8);
+  placeShip(b, { id: 0, shape: "sq", size: 4, x: 1, y: 1, dir: "h" });
+  placeShip(b, { id: 1, shape: "line", size: 2, x: 5, y: 5, dir: "v" });
+  const ser = serializeShips(b);
+  assert.equal(ser.find((s) => s.id === 0).shape, "sq");
+  assert.equal(Object.hasOwn(ser.find((s) => s.id === 1), "shape"), false);
 });

@@ -904,6 +904,43 @@ h1.logo {
   width: min(94vw, 480px);
 }
 
+.opt-heading {
+  width: min(94vw, 480px);
+  text-align: left;
+  font-weight: 900;
+  font-size: 1.05rem;
+  margin: 6px 0 2px;
+}
+
+.board-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: min(94vw, 480px);
+  margin-bottom: 12px;
+}
+
+.board-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  padding: 12px 14px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.board-choice.selected {
+  border-color: var(--accent);
+  background: rgba(255, 200, 60, 0.14);
+  box-shadow: 0 0 0 1.5px var(--accent) inset;
+}
+
 .opt-row {
   display: flex;
   align-items: flex-start;

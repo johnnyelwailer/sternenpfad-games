@@ -26,8 +26,21 @@ export function createBoard(size = DEFAULT_GRID) {
   };
 }
 
+// fleet entries: a number is a line of that length (1 = a single cell),
+// the string "2x2" is a chunky square creature
+export function normalizeFleetEntry(entry) {
+  if (entry === "2x2") return { shape: "sq", size: 4 };
+  return { shape: "line", size: entry };
+}
+
 export function shipCells(ship) {
   const cells = [];
+  if (ship.shape === "sq") {
+    for (let dy = 0; dy < 2; dy += 1) {
+      for (let dx = 0; dx < 2; dx += 1) cells.push({ x: ship.x + dx, y: ship.y + dy });
+    }
+    return cells;
+  }
   for (let i = 0; i < ship.size; i += 1) {
     if (ship.dir === "h") cells.push({ x: ship.x + i, y: ship.y });
     else cells.push({ x: ship.x, y: ship.y + i });
@@ -50,19 +63,22 @@ export function canPlace(board, ship, ignoreId = null) {
   for (const c of cells) {
     if (!inBounds(board, c.x, c.y)) return false;
   }
+  // board.allowTouch (Kuschel-Regel): only overlaps are forbidden
+  const conflict = board.allowTouch
+    ? (a, b) => a.x === b.x && a.y === b.y
+    : cellsTouch;
   for (const other of board.ships) {
     if (ignoreId !== null && other.id === ignoreId) continue;
     for (const oc of shipCells(other)) {
       for (const c of cells) {
-        if (cellsTouch(c, oc)) return false;
+        if (conflict(c, oc)) return false;
       }
     }
   }
-  // the decoy balloon counts as occupied space too (no-touch keeps the
-  // auto-reveal around sunk creatures truthful)
+  // the decoy balloon counts as occupied space too
   if (board.decoy) {
     for (const c of cells) {
-      if (cellsTouch(c, board.decoy)) return false;
+      if (conflict(c, board.decoy)) return false;
     }
   }
   return true;
@@ -72,9 +88,12 @@ export function canPlace(board, ship, ignoreId = null) {
 
 export function canPlaceDecoy(board, x, y) {
   if (!inBounds(board, x, y)) return false;
+  const conflict = board.allowTouch
+    ? (a, b) => a.x === b.x && a.y === b.y
+    : cellsTouch;
   for (const s of board.ships) {
     for (const c of shipCells(s)) {
-      if (cellsTouch({ x, y }, c)) return false;
+      if (conflict({ x, y }, c)) return false;
     }
   }
   return true;
@@ -125,17 +144,18 @@ export function randomFleet(board, fleet = DEFAULT_FLEET, rng = Math.random) {
     board.ships = [];
     let ok = true;
     for (let i = 0; i < fleet.length; i += 1) {
-      const size = fleet[i];
+      const spec = normalizeFleetEntry(fleet[i]);
       let placed = false;
       for (let tries = 0; tries < 200 && !placed; tries += 1) {
         const dir = rng() < 0.5 ? "h" : "v";
-        const maxX = board.size - (dir === "h" ? size : 1);
-        const maxY = board.size - (dir === "v" ? size : 1);
+        const w = spec.shape === "sq" ? 2 : dir === "h" ? spec.size : 1;
+        const h = spec.shape === "sq" ? 2 : dir === "v" ? spec.size : 1;
         const ship = {
           id: i,
-          size,
-          x: Math.floor(rng() * (maxX + 1)),
-          y: Math.floor(rng() * (maxY + 1)),
+          size: spec.size,
+          shape: spec.shape,
+          x: Math.floor(rng() * (board.size - w + 1)),
+          y: Math.floor(rng() * (board.size - h + 1)),
           dir,
         };
         placed = placeShip(board, ship);
@@ -212,12 +232,16 @@ export function fire(board, x, y) {
   }
 
   if (isSunk(ship)) {
+    // auto-reveal only holds when creatures keep their distance — with
+    // the touch rule on, neighbours may hide right next door
     const revealed = [];
-    for (const c of surroundCells(board, ship)) {
-      const ck = key(c.x, c.y);
-      if (!board.shots[ck]) {
-        board.shots[ck] = MISS;
-        revealed.push(c);
+    if (!board.allowTouch) {
+      for (const c of surroundCells(board, ship)) {
+        const ck = key(c.x, c.y);
+        if (!board.shots[ck]) {
+          board.shots[ck] = MISS;
+          revealed.push(c);
+        }
       }
     }
     return { result: SUNK, ship, revealed, gameOver: allSunk(board) };
@@ -256,7 +280,11 @@ export function forgetShot(board, x, y) {
 
 // Serialize only what the opponent may know at game end (fair-play reveal).
 export function serializeShips(board) {
-  return board.ships.map((s) => ({ id: s.id, size: s.size, x: s.x, y: s.y, dir: s.dir }));
+  return board.ships.map((s) => {
+    const out = { id: s.id, size: s.size, x: s.x, y: s.y, dir: s.dir };
+    if (s.shape && s.shape !== "line") out.shape = s.shape;
+    return out;
+  });
 }
 
 export function totalShipCells(fleet = DEFAULT_FLEET) {
