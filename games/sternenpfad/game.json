@@ -1,0 +1,10 @@
+{
+  "id": "sternenpfad",
+  "title": "Sternenpfad",
+  "sourceRoot": "app",
+  "assetRoot": "public",
+  "testCommand": "npm run test:play",
+  "locales": ["de"],
+  "realms": ["Sternenwald", "Moosgärten", "Wolkenwerk"],
+  "concepts": ["Sequenzen", "Drehen", "Überwinden", "Schleifen", "Funktionen"]
+}

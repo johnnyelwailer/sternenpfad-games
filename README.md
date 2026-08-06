@@ -9,8 +9,8 @@ Monorepo scaffold for multiple story-driven programming games.
 - `packages/` — small shared runtime contracts and utilities
 - `docs/` — design, production, and playtest documentation
 
-The first game, Sternenpfad, will be added under `games/sternenpfad/` in the
-next step.
+The first game, Sternenpfad, lives under `games/sternenpfad/` and owns its
+scene, assets, tests, local runtime, and static Pages entrypoint.
 
 ## Deployment
 
@@ -21,5 +21,6 @@ GitHub Pages is the deployment target. Pushes to `main` run
 npm run deploy:pages
 ```
 
-The workflow builds `dist/`, uploads it as a Pages artifact, and publishes it
-with GitHub's Pages deployment actions.
+The workflow builds the selected game into `games/sternenpfad/dist/`, uploads
+it as a Pages artifact, and publishes it with GitHub's Pages deployment
+actions.

@@ -2,8 +2,16 @@
   "name": "@sternenpfad/games",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "workspaces": ["games/*", "packages/*"],
   "scripts": {
-    "build:pages": "node scripts/build-pages.mjs",
-    "deploy:pages": "bash scripts/deploy-pages.sh"
+    "dev": "npm --workspace @sternenpfad/sternenpfad run dev",
+    "build:pages": "npm --workspace @sternenpfad/sternenpfad run build:pages",
+    "deploy:pages": "bash scripts/deploy-pages.sh",
+    "lint": "npm --workspace @sternenpfad/sternenpfad run lint",
+    "test": "npm --workspace @sternenpfad/sternenpfad run test",
+    "test:play": "npm --workspace @sternenpfad/sternenpfad run test:play"
   }
 }
