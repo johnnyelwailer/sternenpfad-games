@@ -7,7 +7,7 @@
 import * as THREE from "../vendor/three.module.min.js";
 import { tween, Ease, updateTweens } from "./tween.js";
 import { getWorld } from "./worlds.js";
-import { buildCreature, buildDecoy } from "./models.js";
+import { buildCreature, buildDecoy, buildTreasureChest, buildPowerIcon } from "./models.js";
 import { buildEnvironment } from "./environments.js";
 
 const GRID = 8;
@@ -181,6 +181,12 @@ export function initScene(canvasEl) {
         for (const c of d.creatures.values()) {
           if (c.model.userData.animate) c.model.userData.animate(clockT + c.phase);
           c.holder.position.y = c.baseY + Math.sin(clockT * 1.4 + c.phase) * 0.05;
+          if (c.wander) updateWander(c, dt);
+        }
+        if (d.chests) {
+          for (const ch of d.chests.values()) {
+            ch.userData.animate?.(clockT + (ch.userData.phase || 0));
+          }
         }
         updateBursts(d, dt);
       }
@@ -209,7 +215,7 @@ function dioramaX(slot) {
   return slot === "mine" ? 0 : DIORAMA_GAP;
 }
 
-export function setupBoard(slot, worldId) {
+export function setupBoard(slot, worldId, { bare = false } = {}) {
   disposeDiorama(slot);
   const world = getWorld(worldId);
   const root = new THREE.Group();
@@ -218,34 +224,36 @@ export function setupBoard(slot, worldId) {
   const env = buildEnvironment(worldId, SPAN * 0.72);
   root.add(env);
 
-  // soft dark mat under the play area so grid + pads read clearly
-  const mat = new THREE.Mesh(
-    new THREE.PlaneGeometry(SPAN * 1.6, SPAN * 1.6),
-    new THREE.MeshBasicMaterial({
-      map: radialTexture("rgba(0,10,20,0.26)", "rgba(0,10,20,0)"),
-      transparent: true,
-      depthWrite: false,
-    })
-  );
-  mat.rotation.x = -Math.PI / 2;
-  mat.position.y = 0.035;
-  root.add(mat);
+  if (!bare) {
+    // soft dark mat under the play area so grid + pads read clearly
+    const mat = new THREE.Mesh(
+      new THREE.PlaneGeometry(SPAN * 1.6, SPAN * 1.6),
+      new THREE.MeshBasicMaterial({
+        map: radialTexture("rgba(0,10,20,0.26)", "rgba(0,10,20,0)"),
+        transparent: true,
+        depthWrite: false,
+      })
+    );
+    mat.rotation.x = -Math.PI / 2;
+    mat.position.y = 0.035;
+    root.add(mat);
 
-  // --- crisp dotted grid, drawn once into a canvas texture ---------------
-  const grid = new THREE.Mesh(
-    new THREE.PlaneGeometry(SPAN, SPAN),
-    new THREE.MeshBasicMaterial({
-      map: gridTexture(world.colors.gridLine ?? 0xffffff),
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-    })
-  );
-  grid.rotation.x = -Math.PI / 2;
-  grid.position.y = 0.06;
-  root.add(grid);
+    // --- crisp dotted grid, drawn once into a canvas texture -------------
+    const grid = new THREE.Mesh(
+      new THREE.PlaneGeometry(SPAN, SPAN),
+      new THREE.MeshBasicMaterial({
+        map: gridTexture(world.colors.gridLine ?? 0xffffff),
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      })
+    );
+    grid.rotation.x = -Math.PI / 2;
+    grid.position.y = 0.06;
+    root.add(grid);
+  }
 
-  // --- nearly invisible pick/state cells ---------------------------------
+  // --- nearly invisible pick/state cells (fully invisible when bare) -----
   const tiles = new Map();
   const tileGeo = new THREE.PlaneGeometry(TILE * 0.98, TILE * 0.98);
   tileGeo.rotateX(-Math.PI / 2);
@@ -257,7 +265,7 @@ export function setupBoard(slot, worldId) {
         new THREE.MeshBasicMaterial({
           color: 0xffffff,
           transparent: true,
-          opacity: 0.045,
+          opacity: bare ? 0 : 0.045,
           depthWrite: false,
         })
       );
@@ -403,16 +411,17 @@ export function populateAquarium(slot, list) {
   if (!d) return;
   d.creaturesGroup.clear();
   d.creatures.clear();
-  const perRow = 5;
   list.forEach((item, i) => {
-    const model = buildCreature(item.worldId, item.idx, 1.6, item.custom ?? null);
-    model.rotation.y = 0.16;
+    const model = buildCreature(item.worldId, item.idx, 1.7, item.custom ?? null);
     const holder = new THREE.Group();
     holder.add(model);
-    const col = i % perRow;
-    const row = Math.floor(i / perRow);
-    holder.position.set(col * 1.7 - 3.4, 0.1, row * 1.9 - 2.6);
-    holder.rotation.y = ((i % 3) - 1) * 0.35;
+    // organic golden-angle scatter instead of a grid
+    const r = 0.9 + 2.7 * Math.sqrt((i + 0.5) / Math.max(1, list.length));
+    const a = i * 2.399963;
+    const cx = Math.cos(a) * r * 1.12;
+    const cz = Math.sin(a) * r * 0.8;
+    holder.position.set(cx, 0.1, cz);
+    holder.rotation.y = Math.random() * Math.PI * 2;
     const blob = new THREE.Mesh(
       new THREE.CircleGeometry(0.4, 16),
       new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.16, depthWrite: false })
@@ -422,10 +431,114 @@ export function populateAquarium(slot, list) {
     blob.scale.set(1.4, 0.9, 1);
     holder.add(blob);
     holder.scale.setScalar(0.01);
-    tween((v) => holder.scale.setScalar(v), { dur: 0.6, delay: i * 0.05, ease: Ease.outBack });
+    const scale = 0.9 + Math.random() * 0.25;
+    tween((v) => holder.scale.setScalar(scale * v), { dur: 0.6, delay: i * 0.05, ease: Ease.outBack });
     d.creaturesGroup.add(holder);
-    d.creatures.set(item.key, { model, holder, baseY: 0.1, phase: Math.random() * 7, ship: null });
+    d.creatures.set(item.key, {
+      model,
+      holder,
+      baseY: 0.1,
+      phase: Math.random() * 7,
+      ship: null,
+      // everyone slowly meanders around their favourite spot
+      wander: {
+        cx,
+        cz,
+        rx: 0.6 + Math.random() * 0.9,
+        rz: 0.5 + Math.random() * 0.7,
+        sp: 0.12 + Math.random() * 0.18,
+        ph: Math.random() * 7,
+      },
+    });
   });
+}
+
+function updateWander(c, dt) {
+  const w = c.wander;
+  let tx;
+  let tz;
+  let sp;
+  if (c.lure) {
+    tx = c.lure.x;
+    tz = c.lure.z;
+    sp = 2.4;
+  } else {
+    tx = w.cx + Math.cos(clockT * w.sp + w.ph) * w.rx;
+    tz = w.cz + Math.sin(clockT * w.sp * 1.27 + w.ph) * w.rz;
+    sp = 0.7;
+  }
+  const dx = tx - c.holder.position.x;
+  const dz = tz - c.holder.position.z;
+  const dist = Math.hypot(dx, dz);
+  if (c.lure && dist < 0.3) {
+    const arrived = c.lure.onArrive;
+    c.lure = null;
+    if (arrived) arrived();
+    return;
+  }
+  if (dist < 0.02) return;
+  const step = Math.min(dist, sp * dt);
+  c.holder.position.x += (dx / dist) * step;
+  c.holder.position.z += (dz / dist) * step;
+  // creatures face -X locally — turn smoothly into the travel direction
+  const targetRy = Math.atan2(dz, -dx);
+  let diff = targetRy - c.holder.rotation.y;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  c.holder.rotation.y += diff * Math.min(1, dt * 2.5);
+}
+
+// a snack drops in; the closest resident comes over and does a happy hop
+export function dropFood(slot, px, pz) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const pellet = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.11, 0),
+    new THREE.MeshStandardMaterial({ color: 0xffc94d, roughness: 0.5, flatShading: true })
+  );
+  pellet.position.set(px, 2.4, pz);
+  d.root.add(pellet);
+  tween(
+    (v) => {
+      pellet.position.y = 2.4 - v * 2.25;
+      pellet.rotation.x = v * 5;
+    },
+    {
+      dur: 0.55,
+      ease: Ease.outQuad,
+      onDone: () => {
+        ringWave(d, { x: px, z: pz }, 0xffc94d);
+        setTimeout(() => {
+          tween((v) => pellet.scale.setScalar(Math.max(0.01, 1 - v)), {
+            dur: 0.4,
+            ease: Ease.outQuad,
+            onDone: () => {
+              d.root.remove(pellet);
+              pellet.geometry.dispose();
+              pellet.material.dispose();
+            },
+          });
+        }, 1600);
+      },
+    }
+  );
+}
+
+export function lureNearest(slot, px, pz) {
+  const d = dioramas[slot];
+  if (!d) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (const [key, c] of d.creatures) {
+    const dist = Math.hypot(c.holder.position.x - px, c.holder.position.z - pz);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = key;
+    }
+  }
+  if (!best) return null;
+  const c = d.creatures.get(best);
+  c.lure = { x: px, z: pz, onArrive: () => hopCreature(slot, best) };
+  return best;
 }
 
 // which aquarium resident is closest to the tapped cell?
@@ -758,7 +871,383 @@ export function dimEdgeCount(slot, axis, index) {
   spr.material.opacity = 0.55;
 }
 
+// ---------------------------------------------------- treasure chests
+// Chests are VISIBLE to both players — digging one is a real choice.
+
+export function renderTreasures(slot, positions) {
+  const d = dioramas[slot];
+  if (!d) return;
+  if (!d.chests) d.chests = new Map();
+  for (const [, old] of d.chests) d.root.remove(old);
+  d.chests.clear();
+  for (const t of positions || []) {
+    const tile = d.tiles.get(`${t.x},${t.y}`);
+    if (!tile) continue;
+    const chest = buildTreasureChest(d.worldId);
+    chest.position.set(tile.position.x, 0.05, tile.position.z);
+    chest.rotation.y = 0.4;
+    chest.userData.phase = Math.random() * 7;
+    d.root.add(chest);
+    d.chests.set(`${t.x},${t.y}`, chest);
+    chest.scale.setScalar(0.01);
+    tween((v) => chest.scale.setScalar(v), { dur: 0.6, ease: Ease.outBack });
+  }
+}
+
+// rich dig-up moment: lid flies open, gold fountains out, chest fades
+export function openTreasure(slot, x, y) {
+  const d = dioramas[slot];
+  const chest = d?.chests?.get(`${x},${y}`);
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  const center = tile ? tile.position : { x: 0, z: 0 };
+  flash(d, center, 0xffc94d);
+  starburst(d, center);
+  ringWave(d, center, 0xffc94d);
+  ringWave(d, center, 0xffffff);
+  const pos = new THREE.Vector3(center.x + d.root.position.x, 0.4, center.z);
+  burst(d, pos, 0xffc94d, { count: 60, up: true });
+  burst(d, pos, 0xfff3c2, { count: 30, up: true });
+  camKick = 0.45;
+  if (!chest) return;
+  d.chests.delete(`${x},${y}`);
+  const lid = chest.userData.lid;
+  tween((v) => {
+    if (lid) lid.rotation.x = -v * 2.1;
+    chest.position.y = 0.05 + Math.sin(v * Math.PI) * 0.35;
+  }, {
+    dur: 0.5,
+    ease: Ease.outCubic,
+    onDone: () => {
+      setTimeout(() => {
+        tween((v) => chest.scale.setScalar(Math.max(0.01, 1 - v)), {
+          dur: 0.5,
+          ease: Ease.outQuad,
+          onDone: () => d.root.remove(chest),
+        });
+      }, 900);
+    },
+  });
+}
+
 // ------------------------------------------------------ power effects
+
+// screen-space anchor of a cell (for DOM flight animations)
+export function cellScreenPos(slot, x, y) {
+  const d = dioramas[slot];
+  const tile = d?.tiles.get(`${x},${y}`);
+  if (!tile) return null;
+  const v = tile.getWorldPosition(new THREE.Vector3());
+  v.y += 0.5;
+  v.project(camera);
+  return {
+    x: (v.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-v.y * 0.5 + 0.5) * window.innerHeight,
+  };
+}
+
+// each power projects its purpose with its own signature effect
+
+export function waveSweep(slot, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  // a real water ridge rolls across the row, splashes in its wake
+  const ridge = new THREE.Mesh(
+    new THREE.SphereGeometry(0.55, 12, 8),
+    new THREE.MeshBasicMaterial({
+      color: d.world.colors.splash ?? 0x9fdcff,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+    })
+  );
+  const z = y - GRID / 2 + 0.5;
+  ridge.scale.set(1.2, 0.7, 1.6);
+  ridge.position.set(-GRID / 2 - 0.6, 0.25, z);
+  d.root.add(ridge);
+  tween(
+    (v) => {
+      ridge.position.x = -GRID / 2 - 0.6 + v * (GRID + 1.2);
+      ridge.position.y = 0.25 + Math.sin(v * Math.PI * 4) * 0.08;
+      ridge.material.opacity = v < 0.85 ? 0.75 : 0.75 * (1 - (v - 0.85) / 0.15);
+    },
+    {
+      dur: 0.9,
+      ease: Ease.linear,
+      onDone: () => {
+        d.root.remove(ridge);
+        ridge.geometry.dispose();
+        ridge.material.dispose();
+      },
+    }
+  );
+  for (let x = 0; x < GRID; x += 1) {
+    const tile = d.tiles.get(`${x},${y}`);
+    if (!tile) continue;
+    setTimeout(() => {
+      splashColumn(d, tile.position, d.world.colors.splash ?? 0x9fdcff);
+      if (x % 2 === 0) ringWave(d, tile.position, 0xffffff);
+    }, 60 + x * 100);
+  }
+  camKick = 0.3;
+}
+
+export function radarPing(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  const center = { x: tile.position.x + 0.5, z: tile.position.z + 0.5 };
+  flash(d, center, 0x7dff9a);
+  for (let i = 0; i < 3; i += 1) {
+    setTimeout(() => ringWave(d, center, 0x7dff9a), i * 220);
+  }
+  // rotating radar sweep beam, like the real thing
+  const beam = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.6, 0.5),
+    new THREE.MeshBasicMaterial({
+      map: radialTexture("rgba(125,255,154,0.9)", "rgba(125,255,154,0)"),
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  beam.rotation.x = -Math.PI / 2;
+  beam.position.set(center.x, 0.22, center.z);
+  const pivot = new THREE.Group();
+  pivot.position.set(center.x, 0, center.z);
+  beam.position.set(1.3, 0.22, 0);
+  pivot.add(beam);
+  d.root.add(pivot);
+  tween(
+    (v) => {
+      pivot.rotation.y = v * Math.PI * 4;
+      beam.material.opacity = v < 0.8 ? 0.9 : 0.9 * (1 - (v - 0.8) / 0.2);
+    },
+    {
+      dur: 1.4,
+      ease: Ease.linear,
+      onDone: () => {
+        d.root.remove(pivot);
+        beam.geometry.dispose();
+        beam.material.dispose();
+      },
+    }
+  );
+}
+
+export function spotlight(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  flash(d, tile.position, 0xfff3c2);
+  // focusing ring: shrinks ONTO the cell instead of expanding away
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.3, 0.42, 26),
+    new THREE.MeshBasicMaterial({ color: 0xfff3c2, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(tile.position.x, 0.16, tile.position.z);
+  d.root.add(ring);
+  tween(
+    (v) => {
+      ring.scale.setScalar(3.4 - v * 2.7);
+      ring.material.opacity = 0.35 + v * 0.55;
+    },
+    {
+      dur: 0.55,
+      ease: Ease.outCubic,
+      onDone: () => {
+        d.root.remove(ring);
+        ring.geometry.dispose();
+        ring.material.dispose();
+      },
+    }
+  );
+}
+
+export function clockRipple(slot) {
+  const d = dioramas[slot];
+  if (!d) return;
+  flash(d, { x: 0, z: 0 }, 0x9fdcff);
+  for (let i = 0; i < 2; i += 1) setTimeout(() => ringWave(d, { x: 0, z: 0 }, 0xffd447), i * 240);
+  starburst(d, { x: 0, z: 0 });
+  // golden sparks spiral upward like a rewinding clock
+  const sparks = [];
+  for (let i = 0; i < 10; i += 1) {
+    const spr = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: padTexture(), color: 0xffd447, transparent: true, depthWrite: false })
+    );
+    spr.scale.setScalar(0.3);
+    d.root.add(spr);
+    sparks.push({ spr, off: (i / 10) * Math.PI * 2 });
+  }
+  tween(
+    (v) => {
+      for (const s of sparks) {
+        const a = s.off + v * 5;
+        const r = 2.6 * (1 - v * 0.65);
+        s.spr.position.set(Math.cos(a) * r, 0.3 + v * 2.2, Math.sin(a) * r);
+        s.spr.material.opacity = 1 - v;
+      }
+    },
+    {
+      dur: 1.3,
+      ease: Ease.outQuad,
+      onDone: () => {
+        for (const s of sparks) {
+          d.root.remove(s.spr);
+          s.spr.material.dispose();
+        }
+      },
+    }
+  );
+}
+
+export function tornadoAt(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  const cx = tile ? tile.position.x : 0;
+  const cz = tile ? tile.position.z : 0;
+  const holder = new THREE.Group();
+  const rings = [];
+  for (let i = 0; i < 4; i += 1) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.14 + i * 0.12, 0.045, 8, 16),
+      new THREE.MeshBasicMaterial({ color: 0xdfe9f2, transparent: true, opacity: 0.85, depthWrite: false })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.15 + i * 0.3;
+    holder.add(ring);
+    rings.push(ring);
+  }
+  holder.position.set(cx, 0, cz);
+  d.root.add(holder);
+  tween(
+    (v) => {
+      holder.rotation.y = v * 14;
+      holder.position.y = v * 0.7;
+      rings.forEach((r) => (r.material.opacity = 0.85 * (1 - v)));
+    },
+    {
+      dur: 1.1,
+      ease: Ease.outQuad,
+      onDone: () => {
+        d.root.remove(holder);
+        rings.forEach((r) => {
+          r.geometry.dispose();
+          r.material.dispose();
+        });
+      },
+    }
+  );
+  camKick = 0.35;
+}
+
+export function bellToll(slot) {
+  const d = dioramas[slot];
+  if (!d) return;
+  for (let i = 0; i < 3; i += 1) setTimeout(() => ringWave(d, { x: 0, z: 0 }, 0xffc94d), i * 260);
+  flash(d, { x: 0, z: 0 }, 0xffc94d);
+}
+
+export function cloverRain(slot) {
+  const d = dioramas[slot];
+  if (!d) return;
+  flash(d, { x: 0, z: 0 }, 0x6fd087);
+  // real little leaves flutter down over the whole board
+  const leafM = new THREE.MeshBasicMaterial({ color: 0x5fc27a, transparent: true, side: THREE.DoubleSide });
+  const leaves = [];
+  for (let i = 0; i < 22; i += 1) {
+    const leaf = new THREE.Mesh(new THREE.CircleGeometry(0.14, 6), leafM);
+    leaf.scale.y = 0.6;
+    leaf.position.set((Math.random() - 0.5) * SPAN, 3.2 + Math.random() * 1.6, (Math.random() - 0.5) * SPAN);
+    leaf.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+    d.root.add(leaf);
+    leaves.push({ leaf, sway: 1 + Math.random() * 2, ph: Math.random() * 7, vy: 1.1 + Math.random() * 0.8 });
+  }
+  tween(
+    (v) => {
+      for (const L of leaves) {
+        L.leaf.position.y -= L.vy * 0.016 * 2.2;
+        L.leaf.position.x += Math.sin(clockT * L.sway + L.ph) * 0.02;
+        L.leaf.rotation.z += 0.05;
+        L.leaf.rotation.x += 0.03;
+      }
+      leafM.opacity = v < 0.8 ? 1 : 1 - (v - 0.8) / 0.2;
+    },
+    {
+      dur: 2.2,
+      ease: Ease.linear,
+      onDone: () => {
+        for (const L of leaves) {
+          d.root.remove(L.leaf);
+          L.leaf.geometry.dispose();
+        }
+        leafM.dispose();
+      },
+    }
+  );
+}
+
+export function starComet(slot, x, y, delay = 0) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  setTimeout(() => {
+    const spr = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: padTexture(), color: 0xffe066, transparent: true, depthWrite: false })
+    );
+    const fromY = 5.5;
+    spr.position.set(tile.position.x - 2.2, fromY, tile.position.z - 1.4);
+    spr.scale.setScalar(0.9);
+    d.root.add(spr);
+    tween(
+      (v) => {
+        spr.position.x = tile.position.x - 2.2 * (1 - v);
+        spr.position.y = fromY - (fromY - 0.3) * v;
+        spr.position.z = tile.position.z - 1.4 * (1 - v);
+      },
+      {
+        dur: 0.4,
+        ease: Ease.inQuad,
+        onDone: () => {
+          d.root.remove(spr);
+          spr.material.dispose();
+          starburst(d, tile.position);
+          ringWave(d, tile.position, 0xffe066);
+          camKick = 0.3;
+        },
+      }
+    );
+  }, delay);
+}
+
+// crisp rendered icon for a power (cached data URL — no glyphs)
+const powerIconCache = new Map();
+export function powerIconUrl(kind, px = 96) {
+  if (powerIconCache.has(kind)) return powerIconCache.get(kind);
+  const r = ensureThumbRenderer(px);
+  const s = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 20);
+  s.add(new THREE.HemisphereLight(0xffffff, 0x556677, 1.2));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.6);
+  dl.position.set(-2, 4, 3);
+  s.add(dl);
+  const model = buildPowerIcon(kind);
+  model.rotation.y = 0.5;
+  s.add(model);
+  frameToFit(cam, model, 1.15);
+  r.render(s, cam);
+  const url = r.domElement.toDataURL("image/png");
+  disposeSceneTree(s);
+  powerIconCache.set(kind, url);
+  return url;
+}
 
 // secret peek info: "!" over a creature cell, a soft dot over water.
 // The tile itself stays untouched (and shootable).
@@ -1496,6 +1985,11 @@ function idleCamera() {
 
 export function currentFocus() {
   return focused;
+}
+
+// external nudge for dramatic moments (roars, stomps)
+export function kick(strength = 0.5) {
+  camKick = Math.max(camKick, strength);
 }
 
 // ----------------------------------------------------------- interaction

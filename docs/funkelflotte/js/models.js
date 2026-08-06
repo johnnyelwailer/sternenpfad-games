@@ -1197,6 +1197,167 @@ export function buildCreature(worldId, index, size, custom = null) {
   return wrap;
 }
 
+// --------------------------------------------------------- treasure chest
+// Visible on the board for BOTH players: digging it costs a turn but
+// grants a Zauber-Kraft. Golden, glinting, impossible to miss.
+
+export function buildTreasureChest(worldId = "ozean") {
+  const g = new THREE.Group();
+  const goldM = mat(0xffc94d, { metalness: 0.5, roughness: 0.3, emissive: 0xaa7700, emissiveIntensity: 0.35 });
+  const gem = add(g, new THREE.OctahedronGeometry(0.09, 0), mat(0x7de8ff, { emissive: 0x7de8ff, emissiveIntensity: 1 }), 0, 0.46, 0);
+  let lid = new THREE.Group();
+  let wobble = null;
+
+  if (worldId === "weltraum") {
+    // glowing tech capsule with a sliding hatch
+    const shellM = mat(0x8892a8, { metalness: 0.6, roughness: 0.3 });
+    const body = add(g, new THREE.CylinderGeometry(0.26, 0.3, 0.34, 8), shellM, 0, 0.2, 0);
+    body.rotation.y = Math.PI / 8;
+    const stripe = add(g, new THREE.TorusGeometry(0.28, 0.035, 6, 12), mat(0x7de8ff, { emissive: 0x2fa8d8, emissiveIntensity: 0.9 }), 0, 0.2, 0);
+    stripe.rotation.x = Math.PI / 2;
+    lid.position.set(0, 0.38, -0.14);
+    add(lid, new THREE.CylinderGeometry(0.24, 0.27, 0.1, 8), shellM, 0, 0, 0.14);
+    add(lid, new THREE.SphereGeometry(0.05, 6, 5), mat(0xff5f6d, { emissive: 0xff5f6d, emissiveIntensity: 1 }), 0, 0.08, 0.14);
+    wobble = (t) => {
+      stripe.scale.setScalar(1 + Math.sin(t * 3.1) * 0.04);
+    };
+  } else if (worldId === "dino") {
+    // mossy stone egg cracked open at the top, crystals poking out
+    const stoneM = mat(0x9aa08a, { roughness: 0.95 });
+    const egg = add(g, new THREE.SphereGeometry(0.3, 10, 8), stoneM, 0, 0.24, 0);
+    egg.scale.set(1, 1.2, 0.95);
+    add(g, new THREE.SphereGeometry(0.16, 8, 6), mat(0x5faf6f, { roughness: 0.9 }), 0.12, 0.42, 0.08).scale.y = 0.5;
+    for (const [dx, dz, s] of [[-0.08, 0.06, 0.09], [0.1, -0.05, 0.07]]) {
+      add(g, new THREE.OctahedronGeometry(s, 0), mat(0xb388ff, { emissive: 0x7a55cc, emissiveIntensity: 0.8 }), dx, 0.5, dz);
+    }
+    lid.position.set(0, 0.52, -0.1);
+    const cap = add(lid, new THREE.SphereGeometry(0.18, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), stoneM, 0, 0, 0.1);
+    cap.scale.set(1.1, 0.8, 1);
+  } else if (worldId === "teich") {
+    // painted clay pot with a lily-pad lid
+    const clayM = mat(0xc47f5a, { roughness: 0.85 });
+    const pot = add(g, new THREE.CylinderGeometry(0.24, 0.18, 0.32, 10), clayM, 0, 0.19, 0);
+    pot.scale.x = 1.1;
+    add(g, new THREE.TorusGeometry(0.24, 0.045, 6, 12), mat(0x8a5535, { roughness: 0.8 }), 0, 0.36, 0).rotation.x = Math.PI / 2;
+    lid.position.set(0, 0.42, -0.12);
+    const pad = add(lid, new THREE.CylinderGeometry(0.26, 0.24, 0.05, 12), mat(0x4da06a, { roughness: 0.6 }), 0, 0, 0.12);
+    pad.scale.z = 0.9;
+    add(lid, new THREE.SphereGeometry(0.07, 8, 6), mat(0xff8ac2, { roughness: 0.5 }), 0, 0.07, 0.12);
+  } else {
+    // ozean: the classic golden-banded wooden chest
+    const woodM = mat(0x8a5a2b, { roughness: 0.8 });
+    add(g, new THREE.BoxGeometry(0.52, 0.26, 0.38), woodM, 0, 0.16, 0);
+    lid.position.set(0, 0.29, -0.19);
+    const lidMesh = add(lid, new THREE.CylinderGeometry(0.19, 0.19, 0.5, 10, 1, false, 0, Math.PI), woodM, 0, 0, 0.19);
+    lidMesh.rotation.z = Math.PI / 2;
+    add(g, new THREE.BoxGeometry(0.56, 0.06, 0.42), goldM, 0, 0.1, 0);
+    add(g, new THREE.BoxGeometry(0.09, 0.3, 0.4), goldM, 0, 0.17, 0);
+    const lock = add(g, new THREE.SphereGeometry(0.06, 8, 6), goldM, 0, 0.28, 0.2);
+    wobble = (t) => {
+      lock.scale.setScalar(1 + Math.max(0, Math.sin(t * 3)) * 0.25);
+    };
+  }
+
+  g.add(lid);
+  g.userData.lid = lid;
+  g.userData.animate = (t) => {
+    gem.position.y = 0.46 + Math.sin(t * 2.2) * 0.06;
+    gem.rotation.y = t * 1.6;
+    g.rotation.z = Math.sin(t * 1.1) * 0.03;
+    if (wobble) wobble(t);
+  };
+  return g;
+}
+
+// ------------------------------------------------------------ power icons
+// Tiny 3D sculptures for every Zauber-Kraft — no generic glyphs. They
+// get rendered offscreen into crisp chip/card images.
+
+export function buildPowerIcon(kind) {
+  const g = new THREE.Group();
+  const gold = () => mat(0xffc94d, { metalness: 0.4, roughness: 0.35 });
+  if (kind === "welle") {
+    const curl = add(g, new THREE.TorusGeometry(0.42, 0.16, 10, 20, Math.PI * 1.25), mat(0x3f8fd6, { roughness: 0.4 }), 0, 0.45, 0);
+    curl.rotation.z = Math.PI * 0.1;
+    add(g, new THREE.SphereGeometry(0.13, 8, 6), mat(0xeaf7ff, { roughness: 0.3 }), 0.45, 0.75, 0);
+    add(g, new THREE.SphereGeometry(0.09, 8, 6), mat(0xeaf7ff, { roughness: 0.3 }), 0.62, 0.5, 0.1);
+  } else if (kind === "radar") {
+    const dish = add(g, new THREE.SphereGeometry(0.42, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2.6), mat(0xcfd6ea, { roughness: 0.35 }), 0, 0.52, 0);
+    dish.rotation.x = Math.PI * 0.78;
+    add(g, new THREE.CylinderGeometry(0.05, 0.07, 0.5, 6), mat(0x8892a8), 0, 0.22, 0);
+    add(g, new THREE.SphereGeometry(0.09, 8, 6), mat(0xff5f6d, { emissive: 0xff5f6d, emissiveIntensity: 0.9 }), 0, 0.72, 0.22);
+  } else if (kind === "trommel") {
+    add(g, new THREE.CylinderGeometry(0.34, 0.38, 0.4, 12), mat(0xb0713a, { roughness: 0.7 }), 0, 0.4, 0);
+    add(g, new THREE.CylinderGeometry(0.35, 0.35, 0.06, 12), mat(0xf6e7c8, { roughness: 0.5 }), 0, 0.62, 0);
+    for (const s of [-1, 1]) {
+      const stick = add(g, new THREE.CylinderGeometry(0.035, 0.035, 0.42, 6), mat(0xe8dcc0), s * 0.22, 0.85, 0);
+      stick.rotation.z = s * 0.7;
+      add(g, new THREE.SphereGeometry(0.08, 8, 6), mat(0xe8dcc0), s * 0.36, 0.98, 0);
+    }
+  } else if (kind === "schild") {
+    const pad = add(g, new THREE.CylinderGeometry(0.5, 0.44, 0.08, 12), mat(0x4da06a, { roughness: 0.6 }), 0, 0.3, 0);
+    pad.scale.z = 0.85;
+    for (let i = 0; i < 5; i += 1) {
+      const a = (i / 5) * Math.PI * 2;
+      add(g, new THREE.SphereGeometry(0.09, 8, 6), mat(0xff8ac2, { roughness: 0.5 }), Math.cos(a) * 0.14, 0.42, Math.sin(a) * 0.14).scale.y = 0.55;
+    }
+    add(g, new THREE.SphereGeometry(0.07, 8, 6), gold(), 0, 0.45, 0);
+  } else if (kind === "fernglas") {
+    for (const s of [-1, 1]) {
+      add(g, new THREE.CylinderGeometry(0.16, 0.2, 0.5, 10), mat(0x27303d, { roughness: 0.45 }), s * 0.19, 0.5, 0);
+      add(g, new THREE.CylinderGeometry(0.17, 0.17, 0.05, 10), mat(0x7de8ff, { emissive: 0x7de8ff, emissiveIntensity: 0.7 }), s * 0.19, 0.76, 0);
+    }
+    add(g, new THREE.BoxGeometry(0.16, 0.12, 0.18), mat(0x27303d), 0, 0.5, 0);
+  } else if (kind === "doppel") {
+    for (const [dx, dy] of [[-0.16, 0.42], [0.2, 0.62]]) {
+      add(g, new THREE.OctahedronGeometry(0.24, 0), mat(0xffc94d, { emissive: 0xcc8800, emissiveIntensity: 0.5 }), dx, dy, 0);
+    }
+  } else if (kind === "zeit") {
+    const glassM = mat(0x9fdcff, { roughness: 0.2, emissive: 0x2277aa, emissiveIntensity: 0.3 });
+    add(g, new THREE.ConeGeometry(0.3, 0.4, 10), glassM, 0, 0.66, 0).rotation.x = Math.PI;
+    add(g, new THREE.ConeGeometry(0.3, 0.4, 10), glassM, 0, 0.28, 0);
+    add(g, new THREE.CylinderGeometry(0.34, 0.34, 0.06, 10), gold(), 0, 0.05, 0);
+    add(g, new THREE.CylinderGeometry(0.34, 0.34, 0.06, 10), gold(), 0, 0.9, 0);
+  } else if (kind === "wirbel") {
+    for (let i = 0; i < 4; i += 1) {
+      const ring = add(g, new THREE.TorusGeometry(0.14 + i * 0.11, 0.05, 8, 16), mat(0xbfd4e6, { roughness: 0.4 }), (i % 2 ? 0.06 : -0.04), 0.2 + i * 0.22, 0);
+      ring.rotation.x = Math.PI / 2;
+    }
+  } else if (kind === "ballon") {
+    const b = add(g, new THREE.SphereGeometry(0.34, 12, 10), mat(0xff5f6d, { roughness: 0.35 }), 0, 0.62, 0);
+    b.scale.y = 1.15;
+    add(g, new THREE.ConeGeometry(0.07, 0.12, 6), mat(0xff5f6d), 0, 0.28, 0).rotation.x = Math.PI;
+    add(g, new THREE.SphereGeometry(0.08, 8, 6), mat(0xffffff, { roughness: 0.2 }), -0.13, 0.75, 0.14);
+  } else if (kind === "kompass") {
+    add(g, new THREE.CylinderGeometry(0.42, 0.42, 0.1, 14), gold(), 0, 0.3, 0);
+    add(g, new THREE.CylinderGeometry(0.36, 0.36, 0.04, 14), mat(0xfdf6e3, { roughness: 0.4 }), 0, 0.37, 0);
+    const needleN = add(g, new THREE.ConeGeometry(0.09, 0.3, 4), mat(0xff5f6d), 0, 0.42, -0.12);
+    needleN.rotation.x = -Math.PI / 2;
+    const needleS = add(g, new THREE.ConeGeometry(0.09, 0.3, 4), mat(0x8892a8), 0, 0.42, 0.12);
+    needleS.rotation.x = Math.PI / 2;
+  } else if (kind === "glocke") {
+    const bell = add(g, new THREE.SphereGeometry(0.36, 12, 8, 0, Math.PI * 2, 0, Math.PI / 1.6), gold(), 0, 0.55, 0);
+    bell.scale.y = 1.2;
+    add(g, new THREE.SphereGeometry(0.09, 8, 6), mat(0x8a5a2b), 0, 0.18, 0);
+    add(g, new THREE.SphereGeometry(0.07, 8, 6), gold(), 0, 0.92, 0);
+  } else if (kind === "klee") {
+    const leafM = mat(0x4da06a, { roughness: 0.5 });
+    for (let i = 0; i < 4; i += 1) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      const leaf = add(g, new THREE.SphereGeometry(0.19, 8, 6), leafM, Math.cos(a) * 0.2, 0.62 + Math.sin(a) * 0.2, 0);
+      leaf.scale.z = 0.35;
+    }
+    add(g, new THREE.CylinderGeometry(0.03, 0.04, 0.4, 6), leafM, 0, 0.2, 0).rotation.z = 0.2;
+  } else if (kind === "salve") {
+    for (const [dx, dy, s] of [[-0.25, 0.4, 0.16], [0.05, 0.65, 0.22], [0.3, 0.35, 0.13]]) {
+      add(g, new THREE.OctahedronGeometry(s, 0), mat(0xffe066, { emissive: 0xffaa00, emissiveIntensity: 0.7 }), dx, dy, 0);
+    }
+  } else {
+    add(g, new THREE.OctahedronGeometry(0.3, 0), gold(), 0, 0.5, 0);
+  }
+  return g;
+}
+
 // ------------------------------------------------------------ decoy balloon
 // The Schwindler rule's bluff: a cheeky balloon that pops when found.
 // One clear look across all worlds so kids instantly recognize it.

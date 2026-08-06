@@ -30,8 +30,11 @@
       <div class="status-pill" id="status"></div>
       <div class="chips" id="chips"></div>
       <div id="powers" hidden></div>
+      <div id="power-gain" hidden></div>
       <div class="hud-actions">
         <button class="btn ghost" id="btn-shuffle" hidden>Mischen</button>
+        <button class="btn ghost" id="btn-world" hidden>🌍 Welt</button>
+        <button class="btn ghost" id="btn-opts" hidden>⚙️</button>
         <button class="btn ghost" id="btn-style" hidden>Stil ✨</button>
         <button class="btn" id="btn-place-done" hidden>Fertig!</button>
         <button class="btn" id="btn-endturn" hidden>Weitergeben</button>
@@ -103,7 +106,7 @@
     <section id="screen-boss" class="screen opaque">
       <div class="stars" aria-hidden="true"></div>
       <h2 class="h2">👑 Monster-Jagd</h2>
-      <p class="hint">Ein riesiges Königs-Monster stapft übers Brett!<br />Der Jäger braucht fünf Treffer — das Monster flüchtet nach jedem Schuss.</p>
+      <p class="hint">Das Königs-Monster hat die Sticker-Schätze verschluckt!<br />Es stapft nach jedem Schuss weiter und BRÜLLT furchterregend.<br />Triff es dreimal, dann humpelt es — fünf Wunden befreien den Schatz!</p>
       <div class="stack">
         <button class="btn big" data-boss="ai">Alleine gegen Robo</button>
         <button class="btn big" data-boss="hotseat">Zu zweit an einem Gerät</button>
@@ -111,10 +114,21 @@
       </div>
     </section>
 
+    <!-- Robo difficulty -->
+    <section id="screen-robo" class="screen opaque">
+      <div class="stars" aria-hidden="true"></div>
+      <h2 class="h2">Gegen Robo</h2>
+      <div class="stack">
+        <button class="btn big" data-robo="leicht">🐣 Robo Sanft<br /><small>sucht gemütlich, ganz ohne Zauber</small></button>
+        <button class="btn big ghost" data-robo="schlau">🤖 Robo Schlau<br /><small>jagt clever, zaubert und klaut Schätze!</small></button>
+      </div>
+    </section>
+
     <!-- Game options: powers + extra rules, each with an explanation -->
     <section id="screen-options" class="screen opaque">
       <div class="stars" aria-hidden="true"></div>
       <h2 class="h2">⚙️ Spiel-Optionen</h2>
+      <p class="hint" id="options-note" hidden>Regel-Änderungen gelten ab dem nächsten Spiel.</p>
       <div class="opt-list">
         <label class="opt-row">
           <input type="checkbox" id="opt-powers" />
@@ -158,7 +172,7 @@
     <section id="screen-chase" class="screen opaque">
       <div class="stars" aria-hidden="true"></div>
       <h2 class="h2">🙈 Fang mich!</h2>
-      <p class="hint">Einer versteckt sich und huscht nach jedem Schuss ein Feld weiter.<br />Der andere bekommt Zahlen-Hinweise. Wer ist schlauer?</p>
+      <p class="hint">Ein kleiner Frechdachs hat Kekse stibitzt und flitzt übers Feld —<br />nach jedem Schuss huscht er ein Feld weiter! Zahlen und dein<br />pochendes Herz verraten, wie nah du bist. Schnapp ihn dir,<br />bevor die Taschenlampe leer ist!</p>
       <div class="stack">
         <button class="btn big" data-chase="ai">Alleine gegen Robo</button>
         <button class="btn big" data-chase="hotseat">Zu zweit an einem Gerät</button>
@@ -169,7 +183,7 @@
     <!-- Sticker album -->
     <section id="screen-album" class="screen opaque">
       <div class="stars" aria-hidden="true"></div>
-      <h2 class="h2">Sticker-Album</h2>
+      <h2 class="h2">📖 Sticker-Album</h2>
       <p class="album-total" id="album-total"></p>
       <p class="hint" id="album-next"></p>
       <div id="album-worlds"></div>
@@ -192,6 +206,11 @@
       <div class="stack">
         <button class="btn big" id="btn-host">Neues Spiel zaubern</button>
         <button class="btn big ghost" id="btn-join">Ich habe einen Code</button>
+      </div>
+      <div id="friends-box" hidden>
+        <p class="label">Bekannte Mitspieler:</p>
+        <div id="friends-list"></div>
+        <p class="hint">Solange dieser Bildschirm offen ist,<br />können dich bekannte Freunde direkt finden.</p>
       </div>
     </section>
 

@@ -14,7 +14,9 @@ import * as CHASE from "./chase.js";
 import * as BOSS from "./boss.js";
 import * as SND from "./sound.js";
 import * as SCENE from "./scene.js";
-import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
+import { Net, makeCode, normalizeCode, joinUrl, stableId } from "./net.js";
+
+const PID = stableId(); // this device's permanent friend address
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -65,6 +67,11 @@ function show(screenId) {
   if (screenId) $(`#${screenId}`).classList.add("active");
   $("#btn-home").hidden = screenId === "screen-title";
   $("#hud").hidden = !!screenId && screenId !== "screen-win";
+  if (screenId === "screen-online") {
+    // visible to remembered friends while this screen is open
+    renderFriends();
+    startFriendListener();
+  }
 }
 
 let toastTimer = null;
@@ -311,6 +318,13 @@ function resetRuleState() {
   S.sonarMap = [{}, {}];
 }
 
+// seed a board's treasure exactly once — positions may already have
+// been announced to the opponent
+function ensureTreasures(board) {
+  if (!board.treasures) PW.seedTreasures(board);
+  return board.treasures;
+}
+
 // ghost rule: count shots per board, fade old miss marks
 function ghostTick(idx, x, y, result) {
   if (!S.rules.ghost) return;
@@ -388,7 +402,8 @@ function startMode(mode) {
   if (mode === "ai") {
     S.worlds[1] = randomOtherWorld(S.worlds[0]);
     S.boards = [newBoardWithFleet(), newBoardWithFleet()];
-    S.aiState = createAiState("leicht");
+    S.aiState = createAiState(S.forceRoboLevel ?? S.roboLevel ?? "leicht");
+    S.forceRoboLevel = null;
     startPlacement(0);
   } else if (mode === "hotseat") {
     S.boards = [newBoardWithFleet(), newBoardWithFleet()];
@@ -494,12 +509,31 @@ function startPlacement(player) {
   status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
   show(null);
   $("#btn-shuffle").hidden = false;
-  $("#btn-style").hidden = !flag("styles");
+  $("#btn-world").hidden = false;
+  $("#btn-opts").hidden = false;
+  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = false;
   $("#btn-place-done").disabled = false;
   $("#btn-place-done").textContent = "Fertig!";
   $("#btn-endturn").hidden = true;
   renderChips(other(S.viewer));
+}
+
+// swap your world any time during placement — layout and styles carry over
+function changeMyWorld() {
+  SND.tap();
+  const idx = S.placingPlayer;
+  showWorldPick({
+    title: "Wähl deine Welt!",
+    selected: S.worlds[idx],
+    onDone: (worldId) => {
+      if (worldId !== S.worlds[idx]) {
+        S.worlds[idx] = worldId;
+        if (S.mode === "online") S.net.send({ t: "world", world: worldId });
+      }
+      startPlacement(idx);
+    },
+  });
 }
 
 // ----------------------------------------------------------- style panel
@@ -521,12 +555,19 @@ function setShipCustom(shipId, patch) {
 }
 
 // full-view customizer: one big live 3D creature, tints + hats with
-// sticker locks, ‹ › to flip through the fleet
+// sticker locks. Lives in the AQUARIUM — you style your collected
+// friends there, and your fleet wears the styles in every battle.
 let custPreview = null;
-const cust = { i: 0, lockedHat: null };
+const cust = { i: 0, lockedHat: null, list: [] };
 
 function openCustomizer(startIdx = 0) {
   SND.tap();
+  cust.list = (S.aquarium ?? []).map((e) => ({
+    worldId: e.worldId,
+    idx: e.idx,
+    name: e.name,
+  }));
+  if (!cust.list.length) return;
   cust.i = startIdx;
   cust.lockedHat = null;
   $("#customizer").hidden = false;
@@ -543,22 +584,34 @@ function closeStylePanel() {
   }
 }
 
-function currentCustShip() {
-  const ships = S.boards[S.placingPlayer]?.ships ?? [];
-  cust.i = ((cust.i % ships.length) + ships.length) % ships.length;
-  return ships[cust.i];
+function currentCustItem() {
+  const n = cust.list.length;
+  if (!n) return null;
+  cust.i = ((cust.i % n) + n) % n;
+  return cust.list[cust.i];
+}
+
+function customOf(item) {
+  return loadCustom(item.worldId)[item.idx] || { tint: 0, hat: 0 };
+}
+
+function applyCustomPatch(item, patch) {
+  const map = loadCustom(item.worldId);
+  const cur = map[item.idx] || { tint: 0, hat: 0 };
+  const next = { ...cur, ...patch };
+  if (!next.tint && !next.hat) delete map[item.idx];
+  else map[item.idx] = next;
+  saveCustom(item.worldId, map);
+  refreshAquarium();
 }
 
 function renderCustomizer() {
-  const idx = S.placingPlayer;
-  const worldId = S.worlds[idx];
-  const world = getWorld(worldId);
-  const ship = currentCustShip();
-  if (!ship) return;
-  const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
-  $("#cust-name").textContent = world.creatures[ship.id]?.name ?? "";
-  $("#cust-count").textContent = `${cust.i + 1} / ${S.boards[idx].ships.length}`;
-  custPreview.show(worldId, ship.id, ship.size, cur.tint || cur.hat ? cur : null);
+  const item = currentCustItem();
+  if (!item) return;
+  const cur = customOf(item);
+  $("#cust-name").textContent = item.name;
+  $("#cust-count").textContent = `${cust.i + 1} / ${cust.list.length}`;
+  custPreview.show(item.worldId, item.idx, item.idx === 0 ? 3.4 : 2.6, cur.tint || cur.hat ? cur : null);
 
   const dots = $("#cust-tints");
   dots.innerHTML = "";
@@ -576,7 +629,7 @@ function renderCustomizer() {
       }
       SND.tap();
       cust.lockedHat = null;
-      setShipCustom(ship.id, { tint: ti });
+      applyCustomPatch(item, { tint: ti });
       renderCustomizer();
     });
     dots.appendChild(dot);
@@ -591,10 +644,9 @@ function renderCustomizer() {
 }
 
 function cycleHat(step) {
-  const idx = S.placingPlayer;
-  const ship = currentCustShip();
-  if (!ship) return;
-  const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
+  const item = currentCustItem();
+  if (!item) return;
+  const cur = customOf(item);
   let h = cust.lockedHat ?? cur.hat;
   h = (h + step + ACCESSORIES.length) % ACCESSORIES.length;
   if (flag("stickers") && !PROG.isHatUnlocked(h)) {
@@ -609,7 +661,7 @@ function cycleHat(step) {
   }
   cust.lockedHat = null;
   SND.sparkle();
-  setShipCustom(ship.id, { hat: h });
+  applyCustomPatch(item, { hat: h });
   renderCustomizer();
 }
 
@@ -636,6 +688,8 @@ function placementDone() {
   SCENE.clearInteraction();
   closeStylePanel();
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
@@ -675,7 +729,11 @@ function placementDone() {
     $("#btn-place-done").disabled = true;
     $("#btn-place-done").textContent = "Warte auf Mitspieler …";
     status("Gleich geht es los!");
-    S.net.send({ t: "ready", custom: S.customs[0] });
+    S.net.send({
+      t: "ready",
+      custom: S.customs[0],
+      treasures: flag("powers") && S.powersOn ? ensureTreasures(S.boards[0]) : [],
+    });
     maybeStartOnline();
   }
 }
@@ -699,24 +757,90 @@ function renderPowers() {
     const chip = document.createElement("button");
     chip.className = `power-chip${S.pendingPower === kind ? " armed" : ""}`;
     chip.dataset.power = kind;
-    chip.innerHTML = `<span class="power-emoji">${p.emoji}</span><span class="power-name">${p.name}</span>${
+    chip.innerHTML = `<img class="power-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="power-name">${p.name}</span>${
       n > 1 ? `<span class="power-count">${n}×</span>` : ""
     }`;
     chip.addEventListener("click", () => onPowerTap(kind));
     box.appendChild(chip);
   }
   // passive badges so kids see what is active
-  if (st.shield) box.appendChild(passiveBadge("🪷", "Schild aktiv"));
-  if (st.clover) box.appendChild(passiveBadge("🍀", "Glücksklee"));
-  if (st.doubleShot) box.appendChild(passiveBadge("🎯", "Doppelschuss"));
+  if (st.shield) box.appendChild(passiveBadge("schild", "Schild aktiv"));
+  if (st.clover) box.appendChild(passiveBadge("klee", "Glücksklee"));
+  if (st.doubleShot) box.appendChild(passiveBadge("doppel", "Doppelschuss"));
   box.hidden = box.children.length === 0;
 }
 
-function passiveBadge(emoji, label) {
+function passiveBadge(kind, label) {
   const b = document.createElement("div");
   b.className = "power-chip passive";
-  b.innerHTML = `<span class="power-emoji">${emoji}</span><span class="power-name">${label}</span>`;
+  b.innerHTML = `<img class="power-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="power-name">${label}</span>`;
   return b;
+}
+
+// reveal card whenever a power arrives — big icon + name; the effect
+// itself is the explanation
+let gainTimer = null;
+function showPowerGain(kind, why) {
+  const p = PW.POWERS[kind];
+  const card = $("#power-gain");
+  card.innerHTML = `<div class="gain-why">${why}</div>
+    <img alt="" src="${SCENE.powerIconUrl(kind, 192)}" />
+    <div class="gain-name">${p.name}</div>`;
+  card.hidden = false;
+  clearTimeout(gainTimer);
+  gainTimer = setTimeout(() => {
+    card.hidden = true;
+  }, FAST ? 300 : 2600);
+  card.onclick = () => {
+    card.hidden = true;
+  };
+}
+
+// the dug-up power sails from the chest to the middle of the screen,
+// then fires on the spot
+function powerFlyOut(kind, slot, x, y, onDone) {
+  const from = SCENE.cellScreenPos(slot, x, y) ?? {
+    x: window.innerWidth / 2,
+    y: window.innerHeight * 0.6,
+  };
+  const img = document.createElement("img");
+  img.className = "power-fly";
+  img.alt = "";
+  img.src = SCENE.powerIconUrl(kind, 192);
+  img.style.left = `${from.x}px`;
+  img.style.top = `${from.y}px`;
+  document.body.appendChild(img);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      img.style.left = `${window.innerWidth / 2}px`;
+      img.style.top = `${window.innerHeight * 0.3}px`;
+      img.classList.add("landed");
+    });
+  });
+  setTimeout(() => {
+    img.remove();
+    onDone();
+  }, FAST ? 100 : 1100);
+}
+
+// treasures cast their power immediately — cause and effect in one go
+function autoUsePower(kind) {
+  const p = PW.POWERS[kind];
+  showPowerGain(kind, "💎 Schatz-Zauber");
+  if (p.target === "none") {
+    executePower(kind, null);
+    return;
+  }
+  S.pendingPower = kind;
+  S.inputLocked = false; // the next tap is the spell's target
+  status(`✨ Tipp ein Feld — der Schatz-Zauber wartet!`);
+}
+
+function dispatchTreasureFollowup() {
+  if (!S.treasureFollowup) return;
+  const f = S.treasureFollowup;
+  S.treasureFollowup = null;
+  setTimeout(f, FAST ? 140 : 1700);
 }
 
 function consumePower(kind) {
@@ -731,14 +855,13 @@ function gainPower(playerIdx, kind, why) {
   const st = S.powers[playerIdx];
   if (!st) return;
   if (st.hand.length >= PW.HAND_MAX) {
-    if (playerIdx === me()) toast("Deine Zauber-Tasche ist voll! (max. 3)");
+    if (playerIdx === me()) toast(`Deine Zauber-Tasche ist voll! (max. ${PW.HAND_MAX})`);
     return;
   }
   st.hand.push(kind);
-  const p = PW.POWERS[kind];
   if (playerIdx === me()) {
     SND.sparkle();
-    toast(`${why} ${p.emoji} ${p.name}!`, 2600);
+    showPowerGain(kind, why);
   }
   renderPowers();
 }
@@ -806,26 +929,31 @@ function executePower(kind, target) {
   const enemySlot = slotFor(other(my));
   const st = myPowers();
   const p = PW.POWERS[kind];
+  SND.powerCast(CAST_SOUND[kind] ?? "info");
 
   if (kind === "welle") {
     consumePower(kind);
+    SCENE.waveSweep(enemySlot, target.y);
+    SND.whoosh();
     resolveInfo(kind, { y: target.y }, ({ cells }) => {
       SND.sparkle();
-      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), i * 90));
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 300 + i * 90));
       status("🌊 Die große Welle verrät ihre Geheimnisse!");
     });
   } else if (kind === "radar") {
     consumePower(kind);
+    SCENE.radarPing(enemySlot, target.x, target.y);
     resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
       SND.sparkle();
-      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), i * 120));
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 400 + i * 140));
       status("🛰️ Der Satellit hat alles durchleuchtet!");
     });
   } else if (kind === "fernglas") {
     consumePower(kind);
+    SCENE.spotlight(enemySlot, target.x, target.y);
     resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
       SND.sparkle();
-      SCENE.peekMarker(enemySlot, cells[0].x, cells[0].y, cells[0].ship);
+      setTimeout(() => SCENE.peekMarker(enemySlot, cells[0].x, cells[0].y, cells[0].ship), 450);
       status(cells[0].ship ? "🔍 Da versteckt sich jemand!" : "🔍 Hier ist nur Wasser.");
     });
   } else if (kind === "trommel" || kind === "kompass") {
@@ -842,6 +970,7 @@ function executePower(kind, target) {
     });
   } else if (kind === "glocke") {
     consumePower(kind);
+    SCENE.bellToll(enemySlot);
     resolveInfo(kind, {}, ({ big }) => {
       SND.sparkle();
       status(
@@ -853,6 +982,7 @@ function executePower(kind, target) {
   } else if (kind === "klee") {
     consumePower(kind);
     st.clover = true;
+    SCENE.cloverRain(enemySlot);
     SND.fanfare();
     status("🍀 Glücksklee! Jedes Daneben zeigt jetzt die Entfernung.");
   } else if (kind === "doppel") {
@@ -863,6 +993,7 @@ function executePower(kind, target) {
     consumePower(kind);
     S.extraTurn = my;
     if (S.mode === "online") S.net.send({ t: "pw", kind: "zeit" });
+    SCENE.clockRipple(enemySlot);
     SND.sparkle();
     status("⏳ Zeitzauber! Nach deinem nächsten Daneben darfst du gleich weitersuchen.");
   } else if (kind === "schild") {
@@ -878,10 +1009,14 @@ function executePower(kind, target) {
       toast("Kein Platz zum Wirbeln!");
       S.pendingPower = null;
       renderPowers();
+      dispatchTreasureFollowup();
       return;
     }
     consumePower(kind);
     syncCreatureVisibility();
+    const mid = moved.dir === "h" ? moved.x + Math.floor(moved.size / 2) : moved.x;
+    const midY = moved.dir === "v" ? moved.y + Math.floor(moved.size / 2) : moved.y;
+    SCENE.tornadoAt(slotFor(my), mid, midY);
     if (S.mode === "online") S.net.send({ t: "pw", kind: "wirbel" });
     SND.whoosh();
     status("🌪️ Wusch! Ein Freund hat heimlich das Versteck gewechselt.");
@@ -891,6 +1026,7 @@ function executePower(kind, target) {
       toast("Kein freies Plätzchen für den Ballon!");
       S.pendingPower = null;
       renderPowers();
+      dispatchTreasureFollowup();
       return;
     }
     consumePower(kind);
@@ -903,7 +1039,25 @@ function executePower(kind, target) {
     runSalvo(target);
   }
   renderPowers();
+  dispatchTreasureFollowup();
 }
+
+// activation timbre by temperament
+const CAST_SOUND = {
+  welle: "info",
+  radar: "info",
+  fernglas: "info",
+  trommel: "info",
+  kompass: "info",
+  glocke: "info",
+  klee: "defense",
+  doppel: "attack",
+  zeit: "defense",
+  schild: "defense",
+  wirbel: "move",
+  ballon: "move",
+  salve: "attack",
+};
 
 // three shots at once, then the turn passes — the defender resolves
 function runSalvo(target) {
@@ -926,15 +1080,15 @@ function runSalvo(target) {
       finishGame(me());
       return;
     }
-    // the salvo always ends the turn
-    S.inputLocked = false;
-    afterMyShot({ result: E.MISS, gameOver: false });
+    endMyTurn(); // the salvo always ends the turn
   });
 }
 
 function applySalvoResults(targetIdx, results, done) {
   const slot = slotFor(targetIdx);
+  const step = FAST ? 70 : 520;
   results.forEach((r, i) => {
+    SCENE.starComet(slot, r.x, r.y, i * step);
     setTimeout(() => {
       SND.plop();
       SCENE.applyShot(slot, r.x, r.y, r.res.result === E.MISS ? "miss" : "hit");
@@ -944,11 +1098,11 @@ function applySalvoResults(targetIdx, results, done) {
         SCENE.revealWater(slot, r.res.revealed || []);
         renderChips(other(S.viewer));
       }
-    }, i * (FAST ? 60 : 420));
+    }, i * step + (FAST ? 30 : 420));
   });
   const hits = results.filter((r) => r.res.result !== E.MISS).length;
   status(`⭐ Sternschnuppen-Salve: ${hits} Treffer!`);
-  setTimeout(done, results.length * (FAST ? 60 : 420) + (FAST ? 80 : 600));
+  setTimeout(done, results.length * step + (FAST ? 120 : 900));
 }
 
 // ------------------------------------------------------------ pass/world
@@ -980,6 +1134,8 @@ function startBattle(firstTurn) {
   closeStylePanel();
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
@@ -990,14 +1146,20 @@ function startBattle(firstTurn) {
   SCENE.setCustomization("mine", customFor(0));
   SCENE.setCustomization("enemy", customFor(1));
 
-  // Zauber-Kräfte: hands, world powers, hidden treasures
+  // Zauber-Kräfte: hands, world powers, one visible treasure per board
   if (flag("powers") && S.powersOn && S.gameMode === "classic") {
     S.powers = [PW.newPowerState(S.worlds[0]), PW.newPowerState(S.worlds[1])];
-    for (const b of S.boards) if (b) PW.seedTreasures(b);
-    const wp = PW.POWERS[PW.worldPower(S.worlds[S.viewer])];
-    toast(`✨ Deine Welt-Kraft: ${wp.emoji} ${wp.name}!`, 3000);
+    for (const b of S.boards) if (b) ensureTreasures(b);
+    SCENE.renderTreasures("mine", S.boards[0]?.treasures ?? []);
+    SCENE.renderTreasures(
+      "enemy",
+      S.mode === "online" ? S.oppTreasures ?? [] : S.boards[1]?.treasures ?? []
+    );
+    showPowerGain(PW.worldPower(S.worlds[S.viewer]), "🌍 Deine Welt-Kraft");
   } else {
     S.powers = [null, null];
+    SCENE.renderTreasures("mine", []);
+    SCENE.renderTreasures("enemy", []);
   }
   syncCreatureVisibility();
   replayMarks(0);
@@ -1085,15 +1247,23 @@ function handleTap(x, y) {
     SND.tap();
     return;
   }
+  // lock immediately — rapid double-taps must never fire twice while
+  // the result of the first shot is still playing out
+  S.inputLocked = true;
 
-  // dug up a treasure: gain a power and keep searching
+  // dug up the treasure: it casts its power on the spot, then the turn passes
   if (res.result === E.MISS && powersEnabled() && PW.treasureAt(board, x, y)) {
     board.treasures = board.treasures.filter((t) => !(t.x === x && t.y === y));
     SCENE.applyShotQuiet(slotFor(targetIdx), x, y, "miss");
-    SCENE.treasureBurst(slotFor(targetIdx), x, y);
-    SND.fanfare();
-    gainPower(S.turn, PW.drawPower(Math.random, myPowers()?.hand ?? []), "💎 Schatz gefunden:");
-    status("💎 Ein Schatz! Such gleich weiter!");
+    SCENE.openTreasure(slotFor(targetIdx), x, y);
+    SND.treasure();
+    const kind = PW.drawPower(Math.random, [], { instant: true });
+    S.treasureFollowup = () => afterMyShot({ result: E.MISS, gameOver: false });
+    setTimeout(
+      () => powerFlyOut(kind, slotFor(targetIdx), x, y, () => autoUsePower(kind)),
+      FAST ? 40 : 700
+    );
+    status("💎 Der Schatz entfesselt einen Zauber!");
     return;
   }
 
@@ -1135,7 +1305,7 @@ function showShotResult(idx, x, y, res, done) {
         : `🎈 PENG! ${opp} ist auf deinen Schwindel-Ballon reingefallen!`
     );
   } else if (res.result === E.MISS) {
-    SND.plop();
+    SND.missWorld(S.worlds[idx]);
     status(
       viewerIsShooter
         ? sonarDist != null
@@ -1144,10 +1314,12 @@ function showShotResult(idx, x, y, res, done) {
         : `Puh! ${opp} hat nichts gefunden.`
     );
   } else if (res.result === E.HIT) {
-    SND.sparkle();
+    if (viewerIsShooter) SND.hitEnemy(S.worlds[idx]);
+    else SND.hitOwn();
     status(viewerIsShooter ? `${world.words.hit} Nochmal!` : `Oh nein! ${opp} hat was entdeckt …`);
   } else if (res.result === E.SUNK) {
-    SND.fanfare();
+    if (viewerIsShooter) SND.sunkEnemy(S.worlds[idx]);
+    else SND.sunkOwn();
     SCENE.revealShip(slot, res.ship);
     SCENE.revealWater(slot, res.revealed);
     status(
@@ -1166,7 +1338,10 @@ function afterMyShot(res) {
     finishGame(S.turn);
     return;
   }
-  if (res.result === E.HIT || res.result === E.SUNK) return; // same player continues
+  if (res.result === E.HIT || res.result === E.SUNK) {
+    S.inputLocked = false; // same player continues
+    return;
+  }
   if (res.result === E.DECOY) S.extraTurn = other(S.turn); // balloon owner earns a bonus
 
   // a miss normally ends the turn — unless a power says otherwise
@@ -1174,12 +1349,14 @@ function afterMyShot(res) {
     const st = powersEnabled() ? myPowers() : null;
     if (st?.doubleShot) {
       st.doubleShot = false;
+      S.inputLocked = false;
       toast("🎯 Doppelschuss! Das zählt nicht — gleich nochmal!");
       renderPowers();
       return;
     }
     if (S.extraTurn === S.turn) {
       S.extraTurn = null;
+      S.inputLocked = false;
       toast("⏳ Extra-Zug! Such gleich nochmal!");
       return;
     }
@@ -1231,7 +1408,40 @@ function scheduleRoboTurn() {
   setTimeout(() => {
     if (S.phase !== "battle" || S.mode !== "ai" || S.turn !== 1) return;
     const myBoard = S.boards[0];
-    const shot = nextShot(S.aiState, myBoard);
+    const schlau = S.aiState.difficulty === "schlau";
+    const st1 = powersEnabled() ? S.powers[1] : null;
+
+    // the clever robo actually casts its spells
+    if (schlau && st1) {
+      const shieldIdx = st1.hand.indexOf("schild");
+      const zeitIdx = st1.hand.indexOf("zeit");
+      const doppelIdx = st1.hand.indexOf("doppel");
+      if (shieldIdx >= 0 && !st1.shield && S.boards[1].ships.some((s) => s.hits.length > 0 && !E.isSunk(s))) {
+        st1.hand.splice(shieldIdx, 1);
+        st1.shield = true;
+        SCENE.shieldFlash("enemy");
+        SND.powerCast("defense");
+        toast("🤖 Robo wirkt einen Schutz-Zauber!");
+      } else if (zeitIdx >= 0 && S.extraTurn === null && Math.random() < 0.6) {
+        st1.hand.splice(zeitIdx, 1);
+        S.extraTurn = 1;
+        SCENE.clockRipple("mine");
+        SND.powerCast("defense");
+        toast("🤖 Robo wirkt einen Zeitzauber!");
+      } else if (doppelIdx >= 0 && !st1.doubleShot && Math.random() < 0.6) {
+        st1.hand.splice(doppelIdx, 1);
+        st1.doubleShot = true;
+        SND.powerCast("attack");
+        toast("🤖 Robo zielt doppelt!");
+      }
+    }
+
+    // the clever robo also goes for your visible treasure chest
+    let shot = null;
+    if (schlau && myBoard.treasures?.length && (st1?.hand.length ?? 0) < PW.HAND_MAX && Math.random() < 0.35) {
+      shot = { ...myBoard.treasures[0] };
+    }
+    if (!shot) shot = nextShot(S.aiState, myBoard);
     if (!shot) return;
 
     // my lily-pad shield bounces robo's shot — cell stays secret
@@ -1250,13 +1460,23 @@ function scheduleRoboTurn() {
 
     const res = E.fire(myBoard, shot.x, shot.y);
 
-    // robo digs up one of my treasures: gone, and robo keeps searching
+    // robo digs up my treasure: gone — and a clever robo pockets a spell
     if (res.result === E.MISS && powersEnabled() && PW.treasureAt(myBoard, shot.x, shot.y)) {
       myBoard.treasures = myBoard.treasures.filter((t) => !(t.x === shot.x && t.y === shot.y));
       SCENE.applyShotQuiet("mine", shot.x, shot.y, "miss");
-      SCENE.treasureBurst("mine", shot.x, shot.y);
-      status("💎 Oh nein, Robo hat einen Schatz stibitzt! Er sucht weiter …");
-      scheduleRoboTurn();
+      SCENE.openTreasure("mine", shot.x, shot.y);
+      SND.treasure();
+      if (schlau && st1 && st1.hand.length < PW.HAND_MAX) {
+        st1.hand.push(PW.drawPower(Math.random, st1.hand, { instant: true }));
+        status("💎 Robo hat deinen Schatz geborgen und einen Zauber eingesteckt!");
+      } else {
+        status("💎 Oh nein, Robo hat deinen Schatz stibitzt!");
+      }
+      setTimeout(() => {
+        S.turn = 0;
+        S.inputLocked = false;
+        beginTurn();
+      }, FAST ? 80 : 1800);
       return;
     }
     noteResult(S.aiState, shot.x, shot.y, res.result, res.ship ? E.shipCells(res.ship) : null);
@@ -1267,6 +1487,12 @@ function scheduleRoboTurn() {
         return;
       }
       if (res.result === E.DECOY) S.extraTurn = 0; // robo popped my balloon
+      if (res.result === E.MISS && powersEnabled() && S.powers[1]?.doubleShot) {
+        S.powers[1].doubleShot = false;
+        status("🤖 Robo zielt gleich nochmal …");
+        scheduleRoboTurn();
+        return;
+      }
       if (res.result === E.MISS && S.extraTurn === 1) {
         S.extraTurn = null;
         status("Robo hat einen Extra-Zug und sucht weiter …");
@@ -1291,6 +1517,152 @@ function scheduleRoboTurn() {
 
 function newShadow() {
   return { size: E.DEFAULT_GRID, marks: {}, found: [] };
+}
+
+// ---------------------------------------------------------------- friends
+// After one QR/code handshake both devices remember each other and can
+// reconnect directly: every device listens on its stable id whenever
+// the online screen is open.
+
+function loadFriends() {
+  try {
+    const o = JSON.parse(localStorage.getItem("ff-friends") || "{}");
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveFriend(pid, worldId) {
+  if (!pid || typeof pid !== "string" || pid === PID || pid.length > 24) return;
+  try {
+    const f = loadFriends();
+    f[pid] = { world: WORLDS[worldId] ? worldId : "ozean", ts: Date.now() };
+    localStorage.setItem("ff-friends", JSON.stringify(f));
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+function forgetFriend(pid) {
+  try {
+    const f = loadFriends();
+    delete f[pid];
+    localStorage.setItem("ff-friends", JSON.stringify(f));
+  } catch {
+    /* ignore */
+  }
+  renderFriends();
+}
+
+function timeAgo(ts) {
+  const m = Math.max(1, Math.round((Date.now() - ts) / 60000));
+  if (m < 60) return `vor ${m} Min.`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `vor ${h} Std.`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "gestern" : `vor ${d} Tagen`;
+}
+
+function renderFriends() {
+  const box = $("#friends-box");
+  const list = $("#friends-list");
+  if (!box) return;
+  const friends = Object.entries(loadFriends()).sort((a, b) => b[1].ts - a[1].ts);
+  box.hidden = friends.length === 0;
+  list.innerHTML = "";
+  for (const [pid, f] of friends) {
+    const row = document.createElement("div");
+    row.className = "friend-row";
+    const btn = document.createElement("button");
+    btn.className = "friend-btn";
+    btn.textContent = `🤝 Mitspieler aus ${getWorld(f.world).name} · ${timeAgo(f.ts)}`;
+    btn.addEventListener("click", () => joinFriend(pid));
+    const x = document.createElement("button");
+    x.className = "friend-forget";
+    x.textContent = "✕";
+    x.setAttribute("aria-label", "Freund vergessen");
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      SND.tap();
+      forgetFriend(pid);
+    });
+    row.appendChild(btn);
+    row.appendChild(x);
+    list.appendChild(row);
+  }
+}
+
+function startFriendListener() {
+  if (S.friendNet) return;
+  const net = new Net();
+  S.friendNet = net;
+  net.onMessage = (m) => handleNetMessage(m);
+  net.onClose = () => {};
+  net.onStatus = (st) => {
+    if (st !== "connected" || S.friendNet !== net) return;
+    if (S.net?.conn) {
+      // already talking to someone — turn the second knock away
+      net.destroy();
+      if (S.friendNet === net) S.friendNet = null;
+      return;
+    }
+    if (S.net) S.net.destroy();
+    S.friendNet = null;
+    S.net = net;
+    S.isHost = true;
+    wireNet();
+    toast("🤝 Ein bekannter Freund ist beigetreten!", 2600);
+    // the friend's `hi` pings drive the usual handshake from here
+  };
+  net.host(PID).catch(() => {
+    if (S.friendNet === net) S.friendNet = null; // e.g. second tab holds the id
+  });
+}
+
+function stopFriendListener() {
+  if (S.friendNet) {
+    S.friendNet.destroy();
+    S.friendNet = null;
+  }
+}
+
+function joinFriend(pid) {
+  SND.tap();
+  // fresh world choice for every match, then knock on the friend's door
+  showWorldPick({
+    title: "Wähl deine Welt!",
+    selected: S.worlds[0],
+    onDone: (worldId) => {
+      S.worlds[0] = worldId;
+      applyUiWorld(worldId);
+      show("screen-online");
+      toast("Klopfe beim Freund an …", 2400);
+      S.isHost = false;
+      if (S.net) S.net.destroy();
+      S.net = new Net();
+      wireNet();
+      S.net
+        .join(pid)
+        .then(() => {
+          const ping = setInterval(() => {
+            if (S.phase !== "title" || !S.net) {
+              clearInterval(ping);
+              return;
+            }
+            S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
+          }, 1500);
+          S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
+        })
+        .catch(() => {
+          toast("Dein Freund ist gerade nicht da. Zeigt euch sonst den QR-Code!", 3400);
+          if (S.net) {
+            S.net.destroy();
+            S.net = null;
+          }
+        });
+    },
+  });
 }
 
 function hostGame() {
@@ -1331,22 +1703,16 @@ function joinGame(code) {
   S.net
     .join(code)
     .then(() => {
-      let tries = 0;
+      // keep announcing until the host answers — the host may still be
+      // picking their world, so never give up while the line is open
       const ping = setInterval(() => {
         if (S.phase !== "title" || !S.net) {
           clearInterval(ping);
           return;
         }
-        tries += 1;
-        if (tries > 8) {
-          clearInterval(ping);
-          toast("Verbindung klappt nicht. Probiert es nochmal!", 2600);
-          goHome();
-          return;
-        }
-        S.net.send({ t: "hi", world: S.worlds[0] });
+        S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
       }, 1500);
-      S.net.send({ t: "hi", world: S.worlds[0] });
+      S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
     })
     .catch((err) => {
       btn.disabled = false;
@@ -1375,6 +1741,8 @@ function wireNet() {
 }
 
 function beginOnlinePlacement() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   resetRuleState();
   S.boards = [newBoardWithFleet(), null];
   S.shadow = newShadow();
@@ -1416,28 +1784,50 @@ function onlineShoot(x, y) {
 function handleNetMessage(msg) {
   switch (msg.t) {
     case "hi": {
-      // guest announces itself (+ its world); host answers idempotently
-      if (msg.world) S.worlds[1] = msg.world;
-      if (S.isHost) {
-        S.net.send({
-          t: "hello",
-          v: 2,
-          world: S.worlds[0],
-          rules: S.rules,
-          mode: S.gameMode,
-          powers: flag("powers") && S.powersOn,
-        });
-        if (["title", "over", "chase", "boss"].includes(S.phase)) {
-          if (S.gameMode === "chase") beginChaseOnlineHider();
-          else if (S.gameMode === "boss") beginBossOnlineMonster();
-          else beginOnlinePlacement();
-        }
+      // guest announces itself (+ its world & friend id)
+      if (msg.world && WORLDS[msg.world]) S.worlds[1] = msg.world;
+      if (msg.pid) S.oppPid = msg.pid;
+      if (!S.isHost) break;
+      if (S.gameMode !== "chase" && S.gameMode !== "boss" && S.phase === "place") {
+        // a lost hello: re-ack so the guest stops pinging
+        sendHello();
+        break;
       }
+      if (!["title", "over", "chase", "boss"].includes(S.phase) || S.pickingWorld) break;
+      if (S.gameMode === "chase") {
+        sendHello();
+        beginChaseOnlineHider();
+        break;
+      }
+      if (S.gameMode === "boss") {
+        sendHello();
+        beginBossOnlineMonster();
+        break;
+      }
+      // classic: the host picks their world fresh for every match
+      S.pickingWorld = true;
+      showWorldPick({
+        title: "Mitspieler ist da — wähl deine Welt!",
+        selected: S.worlds[0],
+        onDone: (worldId) => {
+          S.pickingWorld = false;
+          S.worlds[0] = worldId;
+          applyUiWorld(worldId);
+          sendHello();
+          beginOnlinePlacement();
+        },
+      });
+      break;
+    }
+    case "world": {
+      // the opponent re-picked their world (each match, fresh choice)
+      if (msg.world && WORLDS[msg.world]) S.worlds[1] = msg.world;
       break;
     }
     case "hello": {
       if (!["title", "over", "chase", "boss"].includes(S.phase)) break;
-      S.worlds[1] = msg.world || "ozean";
+      S.worlds[1] = WORLDS[msg.world] ? msg.world : "ozean";
+      if (msg.pid) S.oppPid = msg.pid;
       if (msg.mode === "chase") {
         S.gameMode = "chase";
         beginChaseOnlineSeeker();
@@ -1459,12 +1849,31 @@ function handleNetMessage(msg) {
       syncRuleChips();
       const parts = [rulesSummary(S.rules), S.powersOn ? "✨ Zauber-Kräfte" : ""].filter(Boolean);
       if (parts.length) toast(`Gemeinsame Optionen: ${parts.join(" · ")}`, 3200);
+      if (S.phase === "over") {
+        // rematch: the guest also picks a fresh world every match
+        showWorldPick({
+          title: "Neue Runde — wähl deine Welt!",
+          selected: S.worlds[0],
+          onDone: (worldId) => {
+            S.worlds[0] = worldId;
+            applyUiWorld(worldId);
+            S.net.send({ t: "world", world: worldId });
+            beginOnlinePlacement();
+          },
+        });
+        break;
+      }
       beginOnlinePlacement();
       break;
     }
     case "ready": {
       S.oppReady = true;
       S.oppCustom = sanitizeCustomMap(msg.custom);
+      S.oppTreasures = Array.isArray(msg.treasures)
+        ? msg.treasures
+            .filter((t) => Number.isInteger(t?.x) && Number.isInteger(t?.y))
+            .slice(0, 3)
+        : [];
       maybeStartOnline();
       break;
     }
@@ -1494,15 +1903,16 @@ function handleNetMessage(msg) {
 
       const res = E.fire(S.boards[0], msg.x, msg.y);
 
-      // they dug up one of my treasures — they get a power and continue
+      // they dug up my treasure — everyone sees it; I wait for their spell
       if (res.result === E.MISS && powersEnabled() && PW.treasureAt(S.boards[0], msg.x, msg.y)) {
         S.boards[0].treasures = S.boards[0].treasures.filter(
           (t) => !(t.x === msg.x && t.y === msg.y)
         );
         S.net.send({ t: "result", x: msg.x, y: msg.y, result: E.MISS, treasure: true });
         SCENE.applyShotQuiet("mine", msg.x, msg.y, "miss");
-        SCENE.treasureBurst("mine", msg.x, msg.y);
-        status("💎 Dein Mitspieler hat einen Schatz gefunden und sucht weiter …");
+        SCENE.openTreasure("mine", msg.x, msg.y);
+        SND.treasure();
+        status("💎 Dein Mitspieler hat deinen Schatz geborgen — sein Zauber wirkt …");
         break;
       }
 
@@ -1569,10 +1979,20 @@ function handleNetMessage(msg) {
       if (msg.treasure) {
         S.shadow.marks[E.key(msg.x, msg.y)] = E.MISS;
         SCENE.applyShotQuiet("enemy", msg.x, msg.y, "miss");
-        SCENE.treasureBurst("enemy", msg.x, msg.y);
-        SND.fanfare();
-        gainPower(0, PW.drawPower(Math.random, S.powers[0]?.hand ?? []), "💎 Schatz gefunden:");
-        status("💎 Ein Schatz! Such gleich weiter!");
+        SCENE.openTreasure("enemy", msg.x, msg.y);
+        SND.treasure();
+        const kind = PW.drawPower(Math.random, [], { instant: true });
+        S.treasureFollowup = () => {
+          S.net.send({ t: "pw-done" });
+          if (S.phase !== "battle") return;
+          S.turn = 1;
+          beginTurn();
+        };
+        setTimeout(
+          () => powerFlyOut(kind, "enemy", msg.x, msg.y, () => autoUsePower(kind)),
+          FAST ? 40 : 700
+        );
+        status("💎 Der Schatz entfesselt einen Zauber!");
         break;
       }
       const k = E.key(msg.x, msg.y);
@@ -1680,6 +2100,15 @@ function handleNetMessage(msg) {
       }
       break;
     }
+    case "pw-done": {
+      // the treasure spell over there has finished — my turn now
+      if (S.phase !== "battle") break;
+      S.turn = 0;
+      S.inputLocked = false;
+      beginTurn();
+      toast("Du bist dran!");
+      break;
+    }
     case "pwr": {
       if (msg.kind === "salve") {
         for (const r of msg.results) {
@@ -1734,21 +2163,45 @@ function handleNetMessage(msg) {
   }
 }
 
+function sendHello() {
+  S.net.send({
+    t: "hello",
+    v: 2,
+    world: S.worlds[0],
+    rules: S.rules,
+    mode: S.gameMode,
+    powers: flag("powers") && S.powersOn,
+    pid: PID,
+  });
+}
+
 function maybeRematch() {
   if (!(S.rematchMine && S.rematchTheirs)) return;
-  if (S.isHost) {
-    S.net.send({
-      t: "hello",
-      v: 2,
-      world: S.worlds[0],
-      rules: S.rules,
-      mode: S.gameMode,
-      powers: flag("powers") && S.powersOn,
-    });
-    if (S.gameMode === "chase") beginChaseOnlineHider();
-    else if (S.gameMode === "boss") beginBossOnlineMonster();
-    else beginOnlinePlacement();
+  if (!S.isHost) return;
+  if (S.gameMode === "chase") {
+    sendHello();
+    beginChaseOnlineHider();
+    return;
   }
+  if (S.gameMode === "boss") {
+    sendHello();
+    beginBossOnlineMonster();
+    return;
+  }
+  // classic rematch: the host re-picks their world first
+  if (S.pickingWorld) return;
+  S.pickingWorld = true;
+  showWorldPick({
+    title: "Neue Runde — wähl deine Welt!",
+    selected: S.worlds[0],
+    onDone: (worldId) => {
+      S.pickingWorld = false;
+      S.worlds[0] = worldId;
+      applyUiWorld(worldId);
+      sendHello();
+      beginOnlinePlacement();
+    },
+  });
 }
 
 // --------------------------------------------------------------- chase
@@ -1767,6 +2220,14 @@ function chaseStatus(prefix = "") {
   status(`${lead}Fang ${fridoName()}! 🔦 ${st ? st.shotsLeft : ""} Schüsse übrig`);
 }
 
+// hot-and-cold flavor for the chase — hearts race when you're close
+function chaseWarmth(dist) {
+  if (dist <= 1) return "🔥 GANZ NAH!";
+  if (dist === 2) return "Heiß!";
+  if (dist === 3) return "Warm …";
+  return "Brrr, kalt.";
+}
+
 function setupChaseBoard() {
   S.viewer = 0;
   applyUiWorld(S.worlds[0]);
@@ -1777,6 +2238,8 @@ function setupChaseBoard() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
@@ -1873,6 +2336,7 @@ function chaseSeekTap(x, y) {
     return;
   }
   SND.plop();
+  SND.heartbeat(res.dist);
   SCENE.applyShot("mine", x, y, "miss", { sonarDist: res.dist });
   for (const k of res.faded) {
     const [fx, fy] = k.split(",").map(Number);
@@ -1886,7 +2350,7 @@ function chaseSeekTap(x, y) {
   if (S.chase.kind === "ai") {
     CHASE.roboMove(st, { x, y });
     SND.whoosh();
-    chaseStatus("Husch — weitergeflitzt!");
+    chaseStatus(chaseWarmth(res.dist));
   } else {
     // hotseat: the hider secretly moves via the eyes-closed overlay
     S.inputLocked = true;
@@ -2007,6 +2471,8 @@ function chaseEnd(caught) {
 // ---- online chase ----------------------------------------------------
 
 function beginChaseOnlineHider() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   S.mode = "chase";
   S.phase = "chase";
   S.chase = { kind: "online", st: CHASE.createChase(), role: "hider", marks: {} };
@@ -2017,6 +2483,8 @@ function beginChaseOnlineHider() {
 }
 
 function beginChaseOnlineSeeker() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   S.mode = "chase";
   S.phase = "chase";
   S.chase = { kind: "online", st: null, role: "seeker", marks: {}, ready: false, shotsLeft: CHASE.CHASE_SHOTS };
@@ -2095,6 +2563,7 @@ function handleChaseMessage(msg) {
         break;
       }
       SND.plop();
+      SND.heartbeat(msg.dist);
       S.chase.marks[E.key(msg.x, msg.y)] = true;
       SCENE.applyShot("mine", msg.x, msg.y, "miss", { sonarDist: msg.dist });
       for (const k of msg.faded || []) {
@@ -2107,7 +2576,7 @@ function handleChaseMessage(msg) {
         chaseEnd(false);
         break;
       }
-      status(`Er huscht gerade weiter … 🔦 ${msg.shotsLeft} Schüsse übrig`);
+      status(`${chaseWarmth(msg.dist)} Er huscht weiter … 🔦 ${msg.shotsLeft} Schüsse übrig`);
       break;
     }
     case "c-moved": {
@@ -2154,6 +2623,8 @@ function setupBossBoard() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
@@ -2272,12 +2743,31 @@ function bossSeekTap(x, y) {
   }
 
   if (S.boss.kind === "ai") {
-    BOSS.roboBossMove(st, { x, y });
-    SND.whoosh();
+    if (BOSS.bossLimps(st)) {
+      status(`${bossName()} humpelt und bleibt stehen! Jetzt hast du es!`);
+    } else {
+      BOSS.roboBossMove(st, { x, y });
+      SND.whoosh();
+      if (BOSS.bossRoars(st)) bossRoar();
+    }
   } else {
+    if (BOSS.bossLimps(st)) {
+      toast(`${bossName()} humpelt und bleibt stehen! 🩹`);
+      S.inputLocked = false;
+      bossHunterStatus(st.wounds.length, st.shotsLeft, "Es kann nicht fliehen —");
+      return;
+    }
     S.inputLocked = true;
     setTimeout(() => openMoveOverlay("boss"), FAST ? 50 : 900);
   }
+}
+
+// ROAAAR! screen shake + growl — pure drama, the monster is furious
+function bossRoar() {
+  SND.growl();
+  SCENE.kick(0.8);
+  if (navigator.vibrate) navigator.vibrate([80, 40, 120]);
+  toast(`👣 ROAAAR! ${bossName()} ist wütend!`, 1800);
 }
 
 function bossMoveTap(dx, dy) {
@@ -2285,9 +2775,11 @@ function bossMoveTap(dx, dy) {
   if (BOSS.moveBoss(st, dx, dy)) {
     SND.whoosh();
     $("#chase-move").hidden = true;
+    const roar = BOSS.bossRoars(st);
+    if (roar) bossRoar();
     if (S.boss.kind === "online") {
       SCENE.moveCreature("mine", bossShipOf(st));
-      S.net.send({ t: "b-moved" });
+      S.net.send({ t: "b-moved", roar });
       status(`🙈 Stapf clever! Der Jäger hat noch 🔦 ${st.shotsLeft} Schüsse.`);
     } else {
       S.inputLocked = false;
@@ -2365,6 +2857,8 @@ function bossEnd(hunterWon) {
 // ---- online boss -------------------------------------------------------
 
 function beginBossOnlineMonster() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   S.mode = "boss";
   S.phase = "boss";
   S.boss = { kind: "online", st: BOSS.createBoss(), role: "monster", marks: {} };
@@ -2373,6 +2867,8 @@ function beginBossOnlineMonster() {
 }
 
 function beginBossOnlineHunter() {
+  stopFriendListener();
+  saveFriend(S.oppPid, S.worlds[1]);
   S.mode = "boss";
   S.phase = "boss";
   S.boss = {
@@ -2449,6 +2945,12 @@ function handleBossMessage(msg) {
           break;
         }
       }
+      if (BOSS.bossLimps(st)) {
+        toast(`${bossName()} humpelt und bleibt stehen! 🩹`);
+        S.net.send({ t: "b-moved", limped: true });
+        status(`🙈 Autsch! Der Jäger hat noch 🔦 ${st.shotsLeft} Schüsse.`);
+        break;
+      }
       openMoveOverlay("boss");
       break;
     }
@@ -2483,7 +2985,12 @@ function handleBossMessage(msg) {
     case "b-moved": {
       if (S.boss?.role !== "hunter") break;
       S.inputLocked = false;
-      bossHunterStatus(S.boss.wounds, S.boss.shotsLeft, "Es ist weitergestapft — jag es!");
+      if (msg.roar) bossRoar();
+      bossHunterStatus(
+        S.boss.wounds,
+        S.boss.shotsLeft,
+        msg.limped ? "Es humpelt und konnte nicht fliehen!" : "Es ist weitergestapft — jag es!"
+      );
       break;
     }
     default:
@@ -2532,10 +3039,13 @@ function startPuzzle() {
   SND.startAmbient(worldId);
   show(null);
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   puzzleStatus();
   renderChips(0);
+  toast("⭐⭐⭐ gibt es für höchstens 1 Fehlgrabung!", 2600);
 }
 
 function puzzleStatus(prefix = "") {
@@ -2609,8 +3119,17 @@ function puzzleEnd(won) {
   const stickerBox = $("#win-sticker");
   stickerBox.hidden = true;
   if (won) {
-    $("#win-title").textContent = "Rätsel gelöst!";
-    $("#win-sub").textContent = world.words.win;
+    // star rating: fewer wrong digs = more stars, 3 stars = extra sticker
+    const misses = PUZZLE_SPADES - S.puzzle.spades;
+    const stars = misses <= 1 ? 3 : misses <= 3 ? 2 : 1;
+    $("#win-title").textContent = `Rätsel gelöst! ${"⭐".repeat(stars)}`;
+    $("#win-sub").textContent =
+      stars === 3
+        ? "PERFEKT geknobelt — dafür gibt es einen Extra-Sticker!"
+        : stars === 2
+          ? `Stark! Nur ${misses} Fehlgrabungen. Schaffst du es mit höchstens einer?`
+          : world.words.win;
+    if (flag("stickers") && stars === 3) PROG.awardSticker(S.worlds[0]);
     if (flag("stickers")) {
       const r = PROG.awardSticker(S.worlds[0]);
       const creature = getWorld(r.worldId).creatures[r.idx];
@@ -2768,6 +3287,7 @@ function startJourneyStop(i) {
       ghost: !!stop.rules.ghost,
     };
     syncRuleChips();
+    S.forceRoboLevel = "leicht"; // the journey stays kind
     startMode("ai");
   } else if (stop.type === "puzzle") {
     startPuzzle();
@@ -2802,6 +3322,14 @@ function journeyAdvance(won) {
 
 // ------------------------------------------------------------ aquarium
 
+function refreshAquarium() {
+  if (S.mode !== "aquarium" || !S.aquarium) return;
+  SCENE.populateAquarium(
+    "mine",
+    S.aquarium.map((e) => ({ ...e, custom: loadCustom(e.worldId)[e.idx] ?? null }))
+  );
+}
+
 function openAquarium() {
   SND.unlock();
   SND.whoosh();
@@ -2810,46 +3338,58 @@ function openAquarium() {
   S.phase = "aquarium";
   S.viewer = 0;
   applyUiWorld(S.worlds[0]);
-  SCENE.setupBoard("mine", S.worlds[0]);
+  // no grid, no mat — just the living world
+  SCENE.setupBoard("mine", S.worlds[0], { bare: true });
 
   const p = PROG.loadProgress();
   const list = [];
   for (const world of Object.values(WORLDS)) {
     world.creatures.forEach((c, i) => {
       if (PROG.stickerCount(world.id, i, p) > 0) {
-        list.push({
-          key: `${world.id}-${i}`,
-          worldId: world.id,
-          idx: i,
-          custom: loadCustom(world.id)[i] ?? null,
-          name: c.name,
-        });
+        list.push({ key: `${world.id}-${i}`, worldId: world.id, idx: i, name: c.name });
       }
     });
   }
   S.aquarium = list;
-  SCENE.populateAquarium("mine", list);
+  S.aquariumIdx = 0;
+  refreshAquarium();
   SCENE.focusBoard("mine");
   SCENE.clearInteraction();
   S.aquariumTap = (x, y) => {
     const key = SCENE.nearestAquariumKey("mine", x, y);
-    if (!key) return;
-    SND.sparkle();
-    SCENE.hopCreature("mine", key);
-    const item = list.find((e) => e.key === key);
-    if (item) toast(`${item.name} freut sich! 💛`, 1400);
+    if (key) {
+      SND.sparkle();
+      SCENE.hopCreature("mine", key);
+      const i = list.findIndex((e) => e.key === key);
+      if (i >= 0) {
+        S.aquariumIdx = i;
+        toast(`${list[i].name} freut sich! 💛`, 1400);
+      }
+      return;
+    }
+    if (!list.length) return;
+    // tap the water: drop a snack, the closest friend swims over
+    const px = x - 4 + 0.5;
+    const pz = y - 4 + 0.5;
+    SND.plop();
+    SCENE.dropFood("mine", px, pz);
+    const fed = SCENE.lureNearest("mine", px, pz);
+    const item = list.find((e) => e.key === fed);
+    if (item) status(`🍪 ${item.name} hat den Snack entdeckt!`);
   };
   SCENE.setTapMode("mine", S.aquariumTap);
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-style").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
+  $("#btn-style").hidden = !flag("styles") || list.length === 0;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
   status(
     list.length
-      ? `Dein Aquarium: ${list.length} ${list.length === 1 ? "Freund" : "Freunde"} — tipp sie an!`
+      ? `Dein Aquarium: ${list.length} ${list.length === 1 ? "Freund" : "Freunde"} — antippen oder füttern!`
       : "Noch ganz leer! Gewinne Spiele und sammle Sticker-Freunde."
   );
 }
@@ -2939,6 +3479,9 @@ function rematch() {
 function goHome() {
   S.phase = "title";
   SND.stopAmbient();
+  stopFriendListener();
+  S.oppPid = null;
+  S.pickingWorld = false;
   if (S.net) {
     S.net.destroy();
     S.net = null;
@@ -2962,6 +3505,8 @@ function goHome() {
   $("#btn-rematch").textContent = "Nochmal spielen";
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
+  $("#btn-world").hidden = true;
+  $("#btn-opts").hidden = true;
   $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   applyUiWorld(S.worlds[0]);
@@ -2990,10 +3535,17 @@ function boot() {
   });
   $("#btn-options").addEventListener("click", () => {
     SND.tap();
+    optionsReturn = null;
+    $("#options-note").hidden = true;
     show("screen-options");
   });
   $("#btn-options-back").addEventListener("click", () => {
     SND.tap();
+    if (optionsReturn === "game") {
+      optionsReturn = null;
+      show(null); // back into the running game HUD
+      return;
+    }
     show("screen-title");
   });
   $("#btn-powers-legend").addEventListener("click", () => {
@@ -3008,7 +3560,7 @@ function boot() {
       const row = document.createElement("div");
       row.className = "legend-row";
       const worldTag = p.world ? ` <span class="legend-world">(${getWorld(p.world).name})</span>` : "";
-      row.innerHTML = `<span class="legend-emoji">${p.emoji}</span><span class="legend-text"><b>${p.name}</b>${worldTag}<br />${p.desc}</span>`;
+      row.innerHTML = `<img class="legend-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="legend-text"><b>${p.name}</b>${worldTag}<br />${p.desc}</span>`;
       box.appendChild(row);
     }
     box.hidden = false;
@@ -3084,8 +3636,32 @@ function boot() {
     applyUiWorld(id);
   }, "ozean");
 
+  try {
+    S.roboLevel = localStorage.getItem("ff-robo") === "schlau" ? "schlau" : "leicht";
+  } catch {
+    S.roboLevel = "leicht";
+  }
   document.querySelectorAll("[data-mode]").forEach((btn) => {
-    btn.addEventListener("click", () => startMode(btn.dataset.mode));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.mode === "ai") {
+        SND.unlock();
+        SND.tap();
+        show("screen-robo");
+        return;
+      }
+      startMode(btn.dataset.mode);
+    });
+  });
+  document.querySelectorAll("[data-robo]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      S.roboLevel = btn.dataset.robo === "schlau" ? "schlau" : "leicht";
+      try {
+        localStorage.setItem("ff-robo", S.roboLevel);
+      } catch {
+        /* private mode */
+      }
+      startMode("ai");
+    });
   });
 
   $("#btn-host").addEventListener("click", hostGame);
@@ -3107,8 +3683,16 @@ function boot() {
   });
 
   $("#btn-shuffle").addEventListener("click", shuffleFleet);
+  $("#btn-world").addEventListener("click", changeMyWorld);
+  let optionsReturn = null;
+  $("#btn-opts").addEventListener("click", () => {
+    SND.tap();
+    optionsReturn = "game";
+    $("#options-note").hidden = false;
+    show("screen-options");
+  });
   $("#btn-style").addEventListener("click", () => {
-    if ($("#customizer").hidden) openCustomizer(0);
+    if ($("#customizer").hidden) openCustomizer(S.aquariumIdx ?? 0);
     else closeStylePanel();
   });
   $("#btn-cust-done").addEventListener("click", () => {

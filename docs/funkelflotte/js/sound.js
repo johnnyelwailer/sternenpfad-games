@@ -66,8 +66,116 @@ function noise(start, dur, gain = 0.12, freq = 800) {
   src.start(t0);
 }
 
+// tiny random detune so repeated sounds never feel stamped out
+function jit(f, pct = 0.05) {
+  return f * (1 + (Math.random() * 2 - 1) * pct);
+}
+
 export function tap() {
-  tone(520, 0, 0.08, "sine", 0.08);
+  tone(jit(520), 0, 0.08, "sine", 0.08);
+}
+
+// ------------------------------------------------- world-flavored combat
+// Different worlds sound different, and hits on YOUR creatures sound
+// nothing like hits you land on theirs.
+
+export function hitEnemy(worldId) {
+  if (worldId === "weltraum") {
+    // laser zap + shimmer
+    tone(jit(950), 0, 0.12, "square", 0.12, 220);
+    tone(jit(1400), 0.06, 0.16, "triangle", 0.08, 500);
+    noise(0.02, 0.12, 0.04, 2400);
+  } else if (worldId === "dino") {
+    // wood block + jungle tom
+    noise(0, 0.06, 0.16, 1400);
+    tone(jit(190), 0.03, 0.16, "sine", 0.2, 120);
+    tone(jit(520), 0.1, 0.1, "triangle", 0.1);
+  } else if (worldId === "teich") {
+    // juicy splash + froggy blip
+    tone(jit(340), 0, 0.14, "sine", 0.16, 520);
+    noise(0.03, 0.2, 0.08, 900);
+    tone(jit(660), 0.14, 0.1, "sawtooth", 0.05, 880);
+  } else {
+    // ozean: bubbly rising double-plop
+    tone(jit(300), 0, 0.12, "sine", 0.16, 480);
+    tone(jit(480), 0.09, 0.14, "sine", 0.14, 720);
+    noise(0.05, 0.18, 0.05, 1100);
+  }
+  tone(jit(1050), 0.16, 0.12, "triangle", 0.07);
+}
+
+export function hitOwn() {
+  // ominous: low thud + falling minor second
+  noise(0, 0.14, 0.12, 240);
+  tone(jit(96), 0, 0.3, "sine", 0.24, 60);
+  tone(jit(330), 0.12, 0.22, "sine", 0.08, 311);
+}
+
+export function missWorld(worldId) {
+  if (worldId === "weltraum") {
+    tone(jit(520), 0, 0.18, "triangle", 0.08, 140); // soft pew into the void
+  } else if (worldId === "dino") {
+    noise(0, 0.16, 0.07, 2600); // leaves rustle
+    tone(jit(240), 0.04, 0.1, "sine", 0.06, 180);
+  } else {
+    // watery worlds: classic plop
+    tone(jit(360), 0, 0.18, "sine", 0.16, 120);
+    noise(0.02, 0.25, 0.07, 1200);
+  }
+}
+
+export function sunkEnemy(worldId) {
+  if (worldId === "weltraum") {
+    tone(220, 0, 0.3, "sawtooth", 0.1, 880); // riser…
+    noise(0.26, 0.5, 0.14, 500); // …boom
+    tone(110, 0.28, 0.4, "sine", 0.18, 55);
+  } else if (worldId === "dino") {
+    for (let i = 0; i < 5; i += 1) noise(i * 0.07, 0.06, 0.12, 900 + i * 200); // drum roll
+    tone(140, 0.36, 0.4, "sawtooth", 0.12, 90); // triumphant rumble
+    tone(560, 0.4, 0.3, "triangle", 0.1);
+  } else if (worldId === "teich") {
+    tone(jit(300), 0, 0.2, "sine", 0.18, 640);
+    noise(0.06, 0.35, 0.12, 800); // big splash
+    for (let i = 0; i < 3; i += 1) tone(150 + i * 30, 0.3 + i * 0.14, 0.12, "sawtooth", 0.05, 110);
+  } else {
+    // ozean: harp-like rising arpeggio on a wave
+    const notes = [392, 494, 587, 784];
+    notes.forEach((f, i) => tone(f, i * 0.09, 0.25, "triangle", 0.12));
+    noise(0.1, 0.4, 0.08, 700);
+  }
+}
+
+export function sunkOwn() {
+  tone(392, 0, 0.25, "sine", 0.14, 330);
+  tone(330, 0.2, 0.3, "sine", 0.12, 262);
+  tone(98, 0.05, 0.45, "sine", 0.16, 65);
+}
+
+// music-box treasure moment
+export function treasure() {
+  noise(0, 0.18, 0.05, 300); // creaking lid
+  const notes = [784, 988, 1175, 1568, 1319];
+  notes.forEach((f, i) => tone(f, 0.12 + i * 0.09, 0.22, "triangle", 0.1));
+}
+
+// power activation timbres by temperament
+export function powerCast(category) {
+  if (category === "attack") {
+    tone(jit(880), 0, 0.14, "square", 0.09, 240);
+    tone(jit(1320), 0.07, 0.16, "square", 0.06, 330);
+  } else if (category === "defense") {
+    tone(jit(392), 0, 0.4, "triangle", 0.1);
+    tone(jit(494), 0.08, 0.42, "triangle", 0.08);
+    tone(jit(587), 0.16, 0.46, "triangle", 0.07);
+  } else if (category === "move") {
+    noise(0, 0.35, 0.08, 600);
+    tone(jit(300), 0.05, 0.25, "sine", 0.08, 620);
+  } else {
+    // info: curious ascending chime
+    tone(jit(659), 0, 0.12, "triangle", 0.1);
+    tone(jit(880), 0.1, 0.14, "triangle", 0.1);
+    tone(jit(1175), 0.2, 0.18, "triangle", 0.08);
+  }
 }
 
 export function plop() {
@@ -106,6 +214,24 @@ export function sad() {
 
 export function whoosh() {
   noise(0, 0.3, 0.06, 500);
+}
+
+// monster roar: low, mean, and a little too close
+export function growl() {
+  tone(72, 0, 0.5, "sawtooth", 0.2, 45);
+  tone(54, 0.08, 0.55, "sawtooth", 0.16, 36);
+  noise(0, 0.5, 0.05, 180);
+}
+
+// proximity heartbeat for the chase: the closer, the faster it thumps
+export function heartbeat(dist) {
+  const d = Math.min(4, Math.max(1, dist));
+  const thumps = 5 - d; // 4 at dist 1 … 1 at dist 4+
+  const gap = 0.12 + d * 0.05;
+  for (let i = 0; i < thumps; i += 1) {
+    tone(95 + (4 - d) * 18, i * gap, 0.09, "sine", 0.2, 58);
+    tone(60, i * gap + 0.045, 0.07, "sine", 0.12, 45);
+  }
 }
 
 // ---------------------------------------------------------------- ambient

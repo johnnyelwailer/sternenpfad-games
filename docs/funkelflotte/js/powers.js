@@ -4,9 +4,9 @@
 
 import * as E from "./engine.js";
 
-export const HAND_MAX = 3;
-export const TREASURES_PER_BOARD = 3;
-export const RECHARGE_EVERY = 4; // own turns between free powers
+export const HAND_MAX = 2; // powers stay scarce and precious
+export const TREASURES_PER_BOARD = 1; // one visible chest per board
+export const RECHARGE_EVERY = 6; // own turns between free powers
 
 // target: what a power needs before it fires
 //   none  — instant | cell — one enemy cell | row — one enemy row
@@ -125,9 +125,11 @@ export function worldPower(worldId) {
   return { ozean: "welle", weltraum: "radar", dino: "trommel", teich: "schild" }[worldId] ?? "fernglas";
 }
 
-export function drawPower(rng = Math.random, hand = []) {
-  // never hand out a second permanent clover
-  const pool = hand.includes("klee") ? POOL.filter((k) => k !== "klee") : POOL;
+export function drawPower(rng = Math.random, hand = [], { instant = false } = {}) {
+  let pool = hand.includes("klee") ? POOL.filter((k) => k !== "klee") : POOL;
+  // treasures auto-fire their power on the spot — the salvo would grant
+  // extra shots there, so it only ever comes from recharges
+  if (instant) pool = pool.filter((k) => k !== "salve");
   return pool[Math.floor(rng() * pool.length)];
 }
 

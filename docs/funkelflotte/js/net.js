@@ -19,6 +19,22 @@ export function normalizeCode(raw) {
   return (raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/0/g, "O");
 }
 
+// Stable per-device identity so friends can reconnect without codes.
+// It doubles as a PeerJS address (host(stableId()) makes this device
+// reachable by anyone who played with it before).
+export function stableId() {
+  try {
+    let id = localStorage.getItem("ff-pid");
+    if (!id || id.length < 8) {
+      id = makeCode(10);
+      localStorage.setItem("ff-pid", id);
+    }
+    return id;
+  } catch {
+    return makeCode(10);
+  }
+}
+
 // Optional custom signaling server via ?ps=host:port (used by the
 // e2e tests and by anyone self-hosting `scripts/peer-server.mjs`).
 export function customServer() {
