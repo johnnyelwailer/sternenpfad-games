@@ -33,6 +33,11 @@ Modes:
   uses the free public PeerJS cloud by default; `?ps=host:port` switches
   to a self-hosted `scripts/peer-server.mjs`.
 
+### 🧪 Spielideen-Labor (`games/procedural-fox/`)
+
+Small experiments that may become future games. The first entry is a
+procedural 3D fox prototype used to explore mobile controls and animation.
+
 Development:
 
 ```bash
