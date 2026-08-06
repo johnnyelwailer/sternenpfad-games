@@ -56,15 +56,20 @@ test("robo game: shooting marks cells and robo answers", async ({ page }) => {
   await expect(page.locator("#enemy-board .cell")).toHaveCount(64);
   await expect(page.locator("#own-board .creature")).toHaveCount(5);
 
-  // shoot until we get a miss (so robo takes a turn), max a few tries
+  // shoot until we get a miss (the enemy board then locks and dims
+  // while robo takes a turn), max a few tries
   for (let i = 0; i < 20; i += 1) {
+    const locked = await page
+      .locator("#enemy-wrap")
+      .evaluate((el) => el.classList.contains("locked"));
+    if (locked) break;
     const target = page.locator("#enemy-board .cell:not(.mark-miss):not(.mark-hit)").first();
     await target.click();
     const marked = await page.locator("#enemy-board .cell.mark-miss, #enemy-board .cell.mark-hit").count();
     expect(marked).toBeGreaterThan(0);
-    const status = await page.locator("#battle-status").textContent();
-    if (status.includes("Robo")) break;
+    await page.waitForTimeout(80);
   }
+  await expect(page.locator("#enemy-wrap")).toHaveClass(/locked/, { timeout: 30000 });
   // robo eventually shoots our board (1.1s delay per shot)
   await expect
     .poll(async () => page.locator("#own-board .cell.mark-miss, #own-board .cell.mark-hit").count(), {
@@ -172,6 +177,34 @@ test("online: two browsers play the first shots against each other", async ({ br
       watcher.locator("#own-board .cell.mark-miss, #own-board .cell.mark-hit").count()
     , { timeout: 15000 })
     .toBeGreaterThan(0);
+
+  // now play the whole game to the end: each page shoots whenever it's
+  // its turn, always at the first unknown cell
+  let winner = null;
+  for (let i = 0; i < 400 && !winner; i += 1) {
+    for (const page of [host, guest]) {
+      if (await page.locator("#screen-win").evaluate((el) => el.classList.contains("active"))) {
+        winner = page;
+        break;
+      }
+      const myTurn = (await page.locator("#battle-status").textContent()).includes("Du bist dran")
+        || (await page.locator("#battle-status").textContent()).includes("Nochmal");
+      if (!myTurn) continue;
+      const target = page.locator("#enemy-board .cell:not(.mark-miss):not(.mark-hit)").first();
+      if ((await target.count()) === 0) continue;
+      await target.click({ force: true });
+      await page.waitForTimeout(60);
+    }
+  }
+  expect(winner).toBeTruthy();
+  const loser = winner === host ? guest : host;
+  await expect(loser.locator("#screen-win")).toHaveClass(/active/, { timeout: 10000 });
+
+  // rematch: both press the button, both land back in placement
+  await winner.locator("#btn-rematch").click();
+  await loser.locator("#btn-rematch").click();
+  await expect(host.locator("#screen-place")).toHaveClass(/active/, { timeout: 15000 });
+  await expect(guest.locator("#screen-place")).toHaveClass(/active/, { timeout: 15000 });
 
   await ctxA.close();
   await ctxB.close();

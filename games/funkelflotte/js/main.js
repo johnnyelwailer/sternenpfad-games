@@ -495,6 +495,9 @@ function updateStatus() {
 function fxForResult(result, boardEl, x, y) {
   const pos = cellCenter(boardEl, x, y);
   const w = S.world;
+  if (navigator.vibrate) {
+    navigator.vibrate(result === E.SUNK ? [60, 40, 90] : result === E.HIT ? 40 : 15);
+  }
   if (result === E.MISS) {
     SND.plop();
     FX.splash(pos.x, pos.y, w.id === "ozean" ? "#8fd8ff" : w.colors.cellFound);
@@ -712,6 +715,8 @@ function beginOnlinePlacement() {
   S.oppReady = false;
   S.rematchMine = false;
   S.rematchTheirs = false;
+  $("#btn-rematch").disabled = false;
+  $("#btn-rematch").textContent = "🔁 Nochmal spielen";
   showPlacement(0);
 }
 
@@ -822,8 +827,13 @@ function handleNetMessage(msg) {
 
 function maybeRematch() {
   if (!(S.rematchMine && S.rematchTheirs)) return;
-  if (S.isHost) S.net.send({ t: "hello", v: 1, world: S.world.id });
-  beginOnlinePlacement();
+  // The host restarts and re-announces the game; the guest waits for
+  // that hello (same path as the very first round) so both sides
+  // restart exactly once.
+  if (S.isHost) {
+    S.net.send({ t: "hello", v: 1, world: S.world.id });
+    beginOnlinePlacement();
+  }
 }
 
 // ------------------------------------------------------------- game over
