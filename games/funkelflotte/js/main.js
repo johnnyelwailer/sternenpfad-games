@@ -1,26 +1,24 @@
-// Funkel-Flotte — app shell: screens, rendering, interactions,
-// hot-seat / robo / two-device play.
+// Funkel-Flotte — game flow. Rules live in engine.js, presentation in
+// scene.js (three.js). Each player plays from their OWN world: your
+// board is your world's diorama, the opponent's board is theirs.
 
 import * as E from "./engine.js";
 import { createAiState, noteResult, nextShot } from "./ai.js";
-import { WORLDS, getWorld } from "./worlds.js";
+import { WORLDS, getWorld, randomOtherWorld } from "./worlds.js";
 import * as SND from "./sound.js";
-import * as FX from "./particles.js";
+import * as SCENE from "./scene.js";
 import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
 
 const $ = (sel) => document.querySelector(sel);
 
-const AVATARS = ["🦊", "🐻"];
-const ROBO = "🤖";
-
 const S = {
   mode: null, // 'ai' | 'hotseat' | 'online'
   isHost: false,
-  world: getWorld("ozean"),
-  // boards[0], boards[1]. online: 0 = mine (engine), 1 = shadow of opponent
-  boards: [null, null],
-  shadow: null, // online only: { size, marks:{}, found:[] }
+  worlds: ["ozean", "ozean"], // world per board index
+  boards: [null, null], // engine boards; online: [mine, shadow]
+  shadow: null,
   turn: 0,
+  viewer: 0, // whose eyes we render through (hotseat switches)
   placingPlayer: 0,
   phase: "title",
   aiState: null,
@@ -31,18 +29,23 @@ const S = {
   rematchTheirs: false,
   inputLocked: false,
   passAction: null,
+  worldPickAction: null,
 };
 
-// ---------------------------------------------------------------- helpers
+const slotFor = (index) => (index === 0 ? "mine" : "enemy");
+const other = (i) => 1 - i;
+
+// ------------------------------------------------------------------ UI
 
 function show(screenId) {
   document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
-  $(`#${screenId}`).classList.add("active");
+  if (screenId) $(`#${screenId}`).classList.add("active");
   $("#btn-home").hidden = screenId === "screen-title";
+  $("#hud").hidden = !!screenId && screenId !== "screen-win";
 }
 
 let toastTimer = null;
-function toast(text, ms = 1800) {
+function toast(text, ms = 2000) {
   const el = $("#toast");
   el.textContent = text;
   el.classList.add("show");
@@ -50,18 +53,17 @@ function toast(text, ms = 1800) {
   toastTimer = setTimeout(() => el.classList.remove("show"), ms);
 }
 
-function applyWorld(world) {
-  S.world = world;
-  const c = world.colors;
+function applyUiWorld(worldId) {
+  const w = getWorld(worldId);
   const root = document.documentElement.style;
-  root.setProperty("--bg1", c.bg1);
-  root.setProperty("--bg2", c.bg2);
-  root.setProperty("--cell", c.cell);
-  root.setProperty("--cell-found", c.cellFound);
-  root.setProperty("--accent", c.accent);
-  root.setProperty("--text", c.text);
-  document.querySelector('meta[name="theme-color"]').setAttribute("content", c.bg1);
-  FX.setAmbient(world.ambient);
+  root.setProperty("--ui", w.colors.ui);
+  root.setProperty("--ui2", w.colors.ui2);
+  root.setProperty("--text", w.colors.text);
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", w.colors.ui);
+}
+
+function status(text) {
+  $("#status").textContent = text;
 }
 
 function goFullscreen() {
@@ -71,138 +73,68 @@ function goFullscreen() {
   }
 }
 
-function creatureFor(ship) {
-  return S.world.creatures[ship.id] || { name: "??", icon: "❓", size: ship.size };
-}
-
-function cellEl(boardEl, x, y) {
-  return boardEl.querySelector(`[data-x="${x}"][data-y="${y}"]`);
-}
-
-function cellCenter(boardEl, x, y) {
-  const el = cellEl(boardEl, x, y);
-  if (!el) return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-  const r = el.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-}
-
-// ------------------------------------------------------------- rendering
-
-function buildGrid(boardEl, size) {
-  boardEl.innerHTML = "";
-  boardEl.style.setProperty("--n", size);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const c = document.createElement("div");
-      c.className = "cell";
-      c.dataset.x = x;
-      c.dataset.y = y;
-      boardEl.appendChild(c);
-    }
+// world picker cards with live 3D thumbnails
+const thumbCache = new Map();
+function creatureThumb(worldId, idx) {
+  const key = `${worldId}-${idx}`;
+  if (!thumbCache.has(key)) {
+    thumbCache.set(key, SCENE.creatureThumb(worldId, idx, idx === 0 ? 4 : 3));
   }
+  return thumbCache.get(key);
 }
 
-function positionCapsule(el, ship, size) {
-  const pct = 100 / size;
-  el.classList.toggle("v", ship.dir === "v");
-  el.style.left = `${ship.x * pct}%`;
-  el.style.top = `${ship.y * pct}%`;
-  el.style.width = `${(ship.dir === "h" ? ship.size : 1) * pct}%`;
-  el.style.height = `${(ship.dir === "v" ? ship.size : 1) * pct}%`;
-}
-
-function capsuleContent(ship) {
-  const creature = creatureFor(ship);
-  let inner = "";
-  for (let i = 0; i < ship.size; i += 1) {
-    inner += `<span>${i === 0 ? creature.icon : "·"}</span>`;
+function buildWorldPicker(gridEl, onPick, selected) {
+  gridEl.innerHTML = "";
+  for (const world of Object.values(WORLDS)) {
+    const card = document.createElement("button");
+    card.className = `world-card${world.id === selected ? " selected" : ""}`;
+    card.dataset.world = world.id;
+    card.innerHTML = `<div class="ph"></div>${world.name}`;
+    card.addEventListener("click", () => {
+      SND.unlock();
+      SND.tap();
+      gridEl.querySelectorAll(".world-card").forEach((c) => c.classList.remove("selected"));
+      card.classList.add("selected");
+      onPick(world.id);
+    });
+    gridEl.appendChild(card);
   }
-  return inner;
+  // fill in 3D thumbnails lazily so the first paint is instant
+  setTimeout(() => {
+    gridEl.querySelectorAll(".world-card").forEach((card) => {
+      const img = document.createElement("img");
+      img.alt = "";
+      img.src = creatureThumb(card.dataset.world, 0);
+      card.querySelector(".ph")?.replaceWith(img);
+    });
+  }, 30);
 }
 
-function renderCreatures(boardEl, board, { onlySunk = false, cls = "" } = {}) {
-  boardEl.querySelectorAll(".creature").forEach((n) => n.remove());
-  for (const ship of board.ships) {
-    if (onlySunk && !E.isSunk(ship)) continue;
-    const el = document.createElement("div");
-    el.className = `creature ${cls}${E.isSunk(ship) ? " found" : ""}`;
-    el.dataset.ship = ship.id;
-    el.innerHTML = capsuleContent(ship);
-    positionCapsule(el, ship, board.size);
-    boardEl.appendChild(el);
-  }
-}
-
-function renderFoundShadow(boardEl, shadow) {
-  boardEl.querySelectorAll(".creature").forEach((n) => n.remove());
-  for (const ship of shadow.found) {
-    const el = document.createElement("div");
-    el.className = "creature found";
-    el.innerHTML = capsuleContent(ship);
-    positionCapsule(el, ship, shadow.size);
-    boardEl.appendChild(el);
-  }
-}
-
-function renderMarks(boardEl, marks, animateKey = null) {
-  const w = S.world;
-  boardEl.querySelectorAll(".cell").forEach((cell) => {
-    const k = E.key(cell.dataset.x, cell.dataset.y);
-    const mark = marks[k];
-    cell.classList.toggle("mark-miss", mark === E.MISS);
-    cell.classList.toggle("mark-hit", mark === E.HIT);
-    let mk = cell.querySelector(".mk");
-    if (mark) {
-      const icon = mark === E.MISS ? w.missIcon : w.hitIcon;
-      if (!mk) {
-        mk = document.createElement("span");
-        mk.className = "mk";
-        cell.appendChild(mk);
-      }
-      if (mk.textContent !== icon) mk.textContent = icon;
-      if (k === animateKey) {
-        cell.classList.remove("pop");
-        void cell.offsetWidth;
-        cell.classList.add("pop");
-      }
-    } else if (mk) {
-      mk.remove();
-    }
-  });
-}
-
-function renderFleetChips(found) {
-  const box = $("#fleet-status");
+function renderChips(targetIndex) {
+  const box = $("#chips");
   box.innerHTML = "";
-  S.world.creatures.forEach((c, id) => {
-    const chip = document.createElement("span");
-    chip.className = `fleet-chip${found.has(id) ? " done" : ""}`;
-    chip.innerHTML = `${c.icon} <small>${"◦".repeat(c.size)}</small>`;
+  if (S.phase !== "battle") return;
+  const worldId = S.worlds[targetIndex];
+  const found = foundIdsOn(targetIndex);
+  getWorld(worldId).creatures.forEach((c, id) => {
+    const chip = document.createElement("div");
+    chip.className = `chip${found.has(id) ? " done" : ""}`;
+    const img = document.createElement("img");
+    img.alt = c.name;
+    img.src = creatureThumb(worldId, id);
+    chip.appendChild(img);
     box.appendChild(chip);
   });
 }
 
-// ------------------------------------------------------------- title flow
-
-function buildWorldPicker() {
-  const grid = $("#world-grid");
-  grid.innerHTML = "";
-  for (const world of Object.values(WORLDS)) {
-    const card = document.createElement("button");
-    card.className = "world-card";
-    card.dataset.world = world.id;
-    card.innerHTML = `<span class="wicon">${world.icon}</span>${world.name}`;
-    card.addEventListener("click", () => {
-      SND.unlock();
-      SND.tap();
-      applyWorld(world);
-      grid.querySelectorAll(".world-card").forEach((c) => c.classList.remove("selected"));
-      card.classList.add("selected");
-    });
-    grid.appendChild(card);
+function foundIdsOn(index) {
+  if (S.mode === "online" && index === 1) {
+    return new Set(S.shadow.found.map((s) => s.id));
   }
-  grid.querySelector('[data-world="ozean"]').classList.add("selected");
+  return new Set(S.boards[index].ships.filter(E.isSunk).map((s) => s.id));
 }
+
+// --------------------------------------------------------------- helpers
 
 function newBoardWithFleet() {
   const b = E.createBoard();
@@ -210,25 +142,57 @@ function newBoardWithFleet() {
   return b;
 }
 
+function creatureName(index, shipId) {
+  return getWorld(S.worlds[index]).creatures[shipId]?.name ?? "";
+}
+
+// creatures visible: viewer's own board fully, other board only sunk
+function syncCreatureVisibility() {
+  for (const idx of [0, 1]) {
+    const slot = slotFor(idx);
+    const board = S.boards[idx];
+    if (S.mode === "online" && idx === 1) {
+      SCENE.placeCreatures(slot, S.shadow.found);
+      continue;
+    }
+    if (!board) continue;
+    const ships = idx === S.viewer ? board.ships : board.ships.filter(E.isSunk);
+    SCENE.placeCreatures(slot, ships);
+  }
+}
+
+// replay all recorded shots onto a freshly built diorama
+function replayMarks(idx) {
+  const slot = slotFor(idx);
+  const marks = S.mode === "online" && idx === 1 ? S.shadow.marks : S.boards[idx]?.shots;
+  if (!marks) return;
+  for (const [key, result] of Object.entries(marks)) {
+    const [x, y] = key.split(",").map(Number);
+    SCENE.applyShotQuiet(slot, Number(x), Number(y), result);
+  }
+}
+
+// ------------------------------------------------------------- title flow
+
 function startMode(mode) {
   SND.unlock();
   SND.whoosh();
   goFullscreen();
   S.mode = mode;
   S.turn = 0;
+  S.viewer = 0;
   S.rematchMine = false;
   S.rematchTheirs = false;
   S.inputLocked = false;
 
   if (mode === "ai") {
+    S.worlds[1] = randomOtherWorld(S.worlds[0]);
     S.boards = [newBoardWithFleet(), newBoardWithFleet()];
     S.aiState = createAiState("leicht");
-    S.placingPlayer = 0;
-    showPlacement(0);
+    startPlacement(0);
   } else if (mode === "hotseat") {
     S.boards = [newBoardWithFleet(), newBoardWithFleet()];
-    S.placingPlayer = 0;
-    showPlacement(0);
+    startPlacement(0);
   } else {
     show("screen-online");
   }
@@ -236,161 +200,120 @@ function startMode(mode) {
 
 // ------------------------------------------------------------- placement
 
-let drag = null;
-let selectedShip = null;
-
-function showPlacement(player) {
+function startPlacement(player) {
   S.phase = "place";
   S.placingPlayer = player;
-  selectedShip = null;
-  const who =
-    S.mode === "hotseat" ? `${AVATARS[player]} Spieler ${player + 1}` : `${AVATARS[0]} Du`;
-  $("#place-status").innerHTML = `<span class="avatar">${S.world.icon}</span> ${who}: Verstecke deine Freunde!`;
-  const boardEl = $("#place-board");
-  buildGrid(boardEl, S.boards[player].size);
-  renderCreatures(boardEl, S.boards[player], { cls: "bob" });
-  $("#btn-place-done").disabled = false;
-  $("#btn-place-done").textContent = "✅ Fertig!";
-  show("screen-place");
-}
-
-function placementBoard() {
-  return S.boards[S.placingPlayer];
-}
-
-function refreshPlacement() {
-  const boardEl = $("#place-board");
-  renderCreatures(boardEl, placementBoard(), { cls: "bob" });
-  if (selectedShip !== null) {
-    const el = boardEl.querySelector(`.creature[data-ship="${selectedShip}"]`);
-    if (el) el.classList.add("selected");
-  }
-}
-
-function setupPlacementInput() {
-  const boardEl = $("#place-board");
-  boardEl.addEventListener("contextmenu", (e) => e.preventDefault());
-
-  boardEl.addEventListener("pointerdown", (e) => {
-    const capsule = e.target.closest(".creature");
-    if (!capsule || S.phase !== "place") return;
-    e.preventDefault();
-    const board = placementBoard();
-    const ship = board.ships.find((s) => s.id === Number(capsule.dataset.ship));
-    if (!ship) return;
-    const rect = boardEl.getBoundingClientRect();
-    const cellSize = rect.width / board.size;
-    const px = Math.floor((e.clientX - rect.left) / cellSize);
-    const py = Math.floor((e.clientY - rect.top) / cellSize);
-    drag = {
-      ship,
-      capsule,
-      grabDx: px - ship.x,
-      grabDy: py - ship.y,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      moved: false,
-      previewX: ship.x,
-      previewY: ship.y,
-    };
-    capsule.setPointerCapture(e.pointerId);
-  });
-
-  boardEl.addEventListener("pointermove", (e) => {
-    if (!drag) return;
-    const dx = e.clientX - drag.startClientX;
-    const dy = e.clientY - drag.startClientY;
-    if (!drag.moved && Math.hypot(dx, dy) < 9) return;
-    drag.moved = true;
-    drag.capsule.classList.add("dragging");
-    const board = placementBoard();
-    const rect = boardEl.getBoundingClientRect();
-    const cellSize = rect.width / board.size;
-    const px = Math.floor((e.clientX - rect.left) / cellSize);
-    const py = Math.floor((e.clientY - rect.top) / cellSize);
-    const maxX = board.size - (drag.ship.dir === "h" ? drag.ship.size : 1);
-    const maxY = board.size - (drag.ship.dir === "v" ? drag.ship.size : 1);
-    drag.previewX = Math.max(0, Math.min(maxX, px - drag.grabDx));
-    drag.previewY = Math.max(0, Math.min(maxY, py - drag.grabDy));
-    const candidate = { ...drag.ship, x: drag.previewX, y: drag.previewY };
-    positionCapsule(drag.capsule, candidate, board.size);
-    const ok = E.canPlace(board, candidate, drag.ship.id);
-    drag.capsule.classList.toggle("invalid", !ok);
-  });
-
-  const finishDrag = (e) => {
-    if (!drag) return;
-    const board = placementBoard();
-    const { ship, capsule, moved, previewX, previewY } = drag;
-    drag = null;
-    capsule.classList.remove("dragging", "invalid");
-    let ok;
-    if (moved) {
-      ok = E.moveShip(board, ship.id, previewX, previewY, ship.dir);
-    } else {
-      // tap = rotate (around head cell, clamped into the board)
+  const idx = player;
+  const slot = slotFor(idx);
+  applyUiWorld(S.worlds[idx]);
+  SCENE.setupBoard(slot, S.worlds[idx]);
+  SCENE.placeCreatures(slot, S.boards[idx].ships, { popIn: true });
+  SCENE.focusBoard(slot, { immediate: S.phase === "title" });
+  SCENE.clearInteraction();
+  SCENE.setPlacementMode({
+    slot,
+    canPlaceAt: (id, x, y, dir) => {
+      const board = S.boards[idx];
+      const ship = board.ships.find((s) => s.id === id);
+      return E.canPlace(board, { ...ship, x, y, dir }, id);
+    },
+    onMove: (id, x, y, dir) => {
+      const board = S.boards[idx];
+      if (E.moveShip(board, id, x, y, dir)) {
+        SND.tap();
+        SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
+      } else {
+        SND.sad();
+        SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
+        SCENE.shakeCreature(slot, id);
+      }
+    },
+    onRotate: (id) => {
+      const board = S.boards[idx];
+      const ship = board.ships.find((s) => s.id === id);
       const dir = ship.dir === "h" ? "v" : "h";
       const maxX = board.size - (dir === "h" ? ship.size : 1);
       const maxY = board.size - (dir === "v" ? ship.size : 1);
       const nx = Math.max(0, Math.min(maxX, ship.x));
       const ny = Math.max(0, Math.min(maxY, ship.y));
-      ok = E.moveShip(board, ship.id, nx, ny, dir);
-    }
-    selectedShip = ship.id;
-    refreshPlacement();
-    if (ok) {
-      SND.tap();
-    } else {
-      SND.sad();
-      // shake the freshly rendered capsule so the kid sees "that
-      // spot doesn't work"
-      const fresh = boardEl.querySelector(`.creature[data-ship="${ship.id}"]`);
-      if (fresh) {
-        fresh.classList.add("shake");
-        setTimeout(() => fresh.classList.remove("shake"), 500);
+      if (E.moveShip(board, id, nx, ny, dir)) {
+        SND.tap();
+        SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
+      } else {
+        SND.sad();
+        SCENE.shakeCreature(slot, id);
       }
-    }
-  };
+    },
+  });
 
-  boardEl.addEventListener("pointerup", finishDrag);
-  boardEl.addEventListener("pointercancel", finishDrag);
+  const who = S.mode === "hotseat" ? `Spieler ${player + 1}` : "Du";
+  status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
+  show(null);
+  $("#btn-shuffle").hidden = false;
+  $("#btn-place-done").hidden = false;
+  $("#btn-place-done").disabled = false;
+  $("#btn-place-done").textContent = "Fertig!";
+  $("#btn-endturn").hidden = true;
+  renderChips(other(S.viewer));
+}
+
+function shuffleFleet() {
+  SND.whoosh();
+  const idx = S.placingPlayer;
+  E.randomFleet(S.boards[idx]);
+  SCENE.placeCreatures(slotFor(idx), S.boards[idx].ships, { popIn: true });
 }
 
 function placementDone() {
   SND.tap();
+  SCENE.clearInteraction();
+  $("#btn-shuffle").hidden = true;
+  $("#btn-place-done").hidden = true;
+
   if (S.mode === "hotseat") {
     if (S.placingPlayer === 0) {
       showPass({
-        emoji: "🙈",
-        title: `Gib das Gerät an ${AVATARS[1]} Spieler 2!`,
-        sub: "Nicht spicken! Spieler 2 versteckt jetzt seine Freunde.",
-        btn: "Ich bin Spieler 2! 👋",
-        action: () => showPlacement(1),
+        title: "Gib das Gerät an Spieler 2!",
+        sub: "Nicht spicken! Spieler 2 sucht sich jetzt eine Welt aus und versteckt seine Freunde.",
+        btn: "Ich bin Spieler 2!",
+        action: () => {
+          showWorldPick({
+            title: "Spieler 2: Wähl deine Welt!",
+            selected: S.worlds[1],
+            onDone: (worldId) => {
+              S.worlds[1] = worldId;
+              startPlacement(1);
+            },
+          });
+        },
       });
     } else {
       showPass({
-        emoji: "🎉",
-        title: `Alles versteckt! Gib das Gerät an ${AVATARS[0]} Spieler 1!`,
+        title: "Alles versteckt! Gib das Gerät an Spieler 1!",
         sub: "Spieler 1 fängt an zu suchen.",
-        btn: "Los geht die Suche! 🔍",
-        action: () => startBattle(0),
+        btn: "Los geht die Suche!",
+        action: () => {
+          S.viewer = 0;
+          startBattle(0);
+        },
       });
     }
   } else if (S.mode === "ai") {
     startBattle(0);
-  } else if (S.mode === "online") {
+  } else {
     S.myReady = true;
+    $("#btn-place-done").hidden = false;
     $("#btn-place-done").disabled = true;
-    $("#btn-place-done").textContent = "⏳ Warte auf Mitspieler …";
+    $("#btn-place-done").textContent = "Warte auf Mitspieler …";
+    status("Gleich geht es los!");
     S.net.send({ t: "ready" });
     maybeStartOnline();
   }
 }
 
-// ------------------------------------------------------------- pass screen
+// ------------------------------------------------------------ pass/world
 
-function showPass({ emoji, title, sub, btn, action }) {
-  $("#pass-emoji").textContent = emoji;
+function showPass({ title, sub, btn, action }) {
   $("#pass-title").textContent = title;
   $("#pass-sub").textContent = sub;
   $("#btn-pass-go").textContent = btn;
@@ -398,208 +321,148 @@ function showPass({ emoji, title, sub, btn, action }) {
   show("screen-pass");
 }
 
-// ------------------------------------------------------------- battle
-
-function enemyIndexFor(shooter) {
-  return 1 - shooter;
+function showWorldPick({ title, selected, onDone }) {
+  $("#worldpick-title").textContent = title;
+  let chosen = selected;
+  buildWorldPicker($("#world-grid-2"), (id) => {
+    chosen = id;
+  }, selected);
+  S.worldPickAction = () => onDone(chosen);
+  show("screen-worldpick");
 }
 
-function viewMarks(index) {
-  // marks made ON board `index`
-  if (S.mode === "online" && index === 1) return S.shadow.marks;
-  return S.boards[index].shots;
-}
-
-function foundSetOnEnemy(shooter) {
-  const idx = enemyIndexFor(shooter);
-  if (S.mode === "online" && idx === 1) {
-    return new Set(S.shadow.found.map((s) => s.id));
-  }
-  return new Set(S.boards[idx].ships.filter(E.isSunk).map((s) => s.id));
-}
+// ---------------------------------------------------------------- battle
 
 function startBattle(firstTurn) {
   S.phase = "battle";
   S.turn = firstTurn;
   S.inputLocked = false;
   $("#btn-endturn").hidden = true;
-  buildGrid($("#enemy-board"), E.DEFAULT_GRID);
-  buildGrid($("#own-board"), E.DEFAULT_GRID);
-  renderBattle();
-  show("screen-battle");
-  if (S.mode === "ai" && firstTurn === 1) {
-    scheduleRoboTurn();
-  }
-}
+  $("#btn-shuffle").hidden = true;
+  $("#btn-place-done").hidden = true;
 
-// Which player is looking at the screen right now?
-function viewer() {
-  if (S.mode === "hotseat") return S.turn;
-  return 0;
-}
-
-function renderBattle(animateEnemyKey = null, animateOwnKey = null) {
-  const me = viewer();
-  const enemyIdx = enemyIndexFor(me);
-  const enemyBoardEl = $("#enemy-board");
-  const ownBoardEl = $("#own-board");
-
-  // enemy board: marks + only found creatures
-  renderMarks(enemyBoardEl, viewMarks(enemyIdx), animateEnemyKey);
+  // make sure both dioramas exist (enemy diorama may not yet)
   if (S.mode === "online") {
-    renderFoundShadow(enemyBoardEl, S.shadow);
-  } else {
-    renderCreatures(enemyBoardEl, S.boards[enemyIdx], { onlySunk: true });
-  }
-
-  // own mini board: all my creatures + enemy's marks on me
-  renderMarks(ownBoardEl, viewMarks(me), animateOwnKey);
-  renderCreatures(ownBoardEl, S.boards[me]);
-
-  renderFleetChips(foundSetOnEnemy(me));
-  updateStatus();
-  syncEnemyLock();
-}
-
-// Dim the enemy board whenever tapping it can't do anything, so kids
-// always see where the action is.
-function syncEnemyLock() {
-  let locked;
-  if (S.mode === "hotseat") {
-    locked = S.inputLocked; // waiting for "Weitergeben"
-  } else {
-    locked = S.turn !== 0;
-  }
-  $("#enemy-wrap").classList.toggle("locked", locked && S.phase === "battle");
-  $("#enemy-label").textContent = locked ? "Gleich bist du dran …" : "Hier suchen! 👇";
-}
-
-function updateStatus() {
-  const el = $("#battle-status");
-  const w = S.world;
-  if (S.mode === "hotseat") {
-    el.innerHTML = `<span class="avatar">${AVATARS[S.turn]}</span> Spieler ${S.turn + 1}, such ${w.name === "Ozean" ? "im Wasser" : "gut"}! Tippe auf ein Feld.`;
+    SCENE.setupBoard("enemy", S.worlds[1]);
   } else if (S.mode === "ai") {
-    el.innerHTML =
-      S.turn === 0
-        ? `<span class="avatar">${AVATARS[0]}</span> Du bist dran! Tippe auf ein Feld.`
-        : `<span class="avatar">${ROBO}</span> Robo sucht gerade …`;
+    SCENE.setupBoard("enemy", S.worlds[1]);
+  }
+  syncCreatureVisibility();
+  replayMarks(0);
+  replayMarks(1);
+
+  show(null);
+  beginTurn();
+  if (S.mode === "ai" && firstTurn === 1) scheduleRoboTurn();
+}
+
+// set up camera + interaction for the current turn (from viewer's seat)
+function beginTurn() {
+  if (S.phase !== "battle") return;
+  const target = other(S.turn);
+  applyUiWorld(S.worlds[S.mode === "hotseat" ? S.turn : 0]);
+  renderChips(other(S.viewer));
+
+  if (S.turn === S.viewer) {
+    SCENE.focusBoard(slotFor(target));
+    SCENE.clearInteraction();
+    SCENE.setTapMode(slotFor(target), (x, y) => handleTap(x, y));
+    const world = getWorld(S.worlds[target]);
+    status(
+      S.mode === "hotseat"
+        ? `Spieler ${S.turn + 1}: Such ${world.words.boardIn} von Spieler ${target + 1}!`
+        : `Du bist dran! Such ${world.words.boardIn}!`
+    );
   } else {
-    el.innerHTML =
-      S.turn === 0
-        ? `<span class="avatar">${AVATARS[S.isHost ? 0 : 1]}</span> Du bist dran! Tippe auf ein Feld.`
-        : `<span class="avatar">${AVATARS[S.isHost ? 1 : 0]}</span> Dein Freund sucht gerade …`;
+    SCENE.clearInteraction();
+    SCENE.focusBoard(slotFor(S.viewer));
+    status(S.mode === "ai" ? "Robo sucht gerade …" : "Dein Mitspieler sucht gerade …");
   }
 }
 
-function fxForResult(result, boardEl, x, y) {
-  const pos = cellCenter(boardEl, x, y);
-  const w = S.world;
-  if (navigator.vibrate) {
-    navigator.vibrate(result === E.SUNK ? [60, 40, 90] : result === E.HIT ? 40 : 15);
-  }
-  if (result === E.MISS) {
-    SND.plop();
-    FX.splash(pos.x, pos.y, w.id === "ozean" ? "#8fd8ff" : w.colors.cellFound);
-  } else if (result === E.HIT) {
-    SND.sparkle();
-    FX.sparkle(pos.x, pos.y, w.colors.accent);
-  } else if (result === E.SUNK) {
-    SND.fanfare();
-    FX.sparkle(pos.x, pos.y, w.colors.accent);
-    FX.confetti(pos.x, pos.y);
-  }
-}
-
-function statusFlash(text) {
-  $("#battle-status").innerHTML = text;
-}
-
-// -- hot-seat + AI: shooter taps enemy board ------------------------------
-
-function setupBattleInput() {
-  $("#enemy-board").addEventListener("click", (e) => {
-    const cell = e.target.closest(".cell");
-    if (!cell || S.phase !== "battle" || S.inputLocked) return;
-    const x = Number(cell.dataset.x);
-    const y = Number(cell.dataset.y);
-
-    if (S.mode === "online") {
-      onlineShoot(x, y);
-      return;
-    }
-    if (S.mode === "ai" && S.turn !== 0) return;
-
-    const shooter = S.turn;
-    const targetBoard = S.boards[enemyIndexFor(shooter)];
-    const res = E.fire(targetBoard, x, y);
-    if (res.result === E.REPEAT) {
-      SND.tap();
-      return;
-    }
-    handleLocalResult(shooter, x, y, res);
-  });
-}
-
-function handleLocalResult(shooter, x, y, res) {
-  const enemyBoardEl = $("#enemy-board");
-  renderBattle(E.key(x, y));
-  fxForResult(res.result, enemyBoardEl, x, y);
-  const w = S.world;
-
-  if (res.gameOver) {
-    finishGame(shooter);
+function handleTap(x, y) {
+  if (S.phase !== "battle" || S.inputLocked || S.turn !== S.viewer) return;
+  if (S.mode === "online") {
+    onlineShoot(x, y);
     return;
   }
+  const targetIdx = other(S.turn);
+  const res = E.fire(S.boards[targetIdx], x, y);
+  if (res.result === E.REPEAT) {
+    SND.tap();
+    return;
+  }
+  showShotResult(targetIdx, x, y, res, () => afterMyShot(res));
+}
 
+// visualize a shot on board `idx`; then continue
+function showShotResult(idx, x, y, res, done) {
+  const slot = slotFor(idx);
+  SCENE.applyShot(slot, x, y, res.result === E.MISS ? "miss" : "hit");
+  if (navigator.vibrate) {
+    navigator.vibrate(res.result === E.SUNK ? [60, 40, 90] : res.result === E.HIT ? 40 : 15);
+  }
+  const world = getWorld(S.worlds[idx]);
   if (res.result === E.MISS) {
-    statusFlash(`${w.words.miss}`);
-    if (S.mode === "hotseat") {
-      S.inputLocked = true;
-      $("#btn-endturn").hidden = false;
-      syncEnemyLock();
-    } else {
-      // robo's turn
-      S.turn = 1;
-      S.inputLocked = true;
-      syncEnemyLock();
-      setTimeout(() => {
-        updateStatus();
-        scheduleRoboTurn();
-      }, 900);
-    }
+    SND.plop();
+    status(world.words.miss);
   } else if (res.result === E.HIT) {
-    statusFlash(`${w.words.hit} Nochmal! 🎯`);
+    SND.sparkle();
+    status(`${world.words.hit} Nochmal!`);
   } else if (res.result === E.SUNK) {
-    const creature = creatureFor(res.ship);
-    statusFlash(`${creature.icon} ${creature.name} ${w.words.sunk} Nochmal! 🎯`);
+    SND.fanfare();
+    SCENE.revealShip(slot, res.ship);
+    SCENE.revealWater(slot, res.revealed);
+    status(`${creatureName(idx, res.ship.id)} ${world.words.sunk} Nochmal!`);
+    renderChips(other(S.viewer));
+  }
+  setTimeout(done, res.result === E.SUNK ? 1200 : 500);
+}
+
+function afterMyShot(res) {
+  if (S.phase !== "battle") return;
+  if (res.gameOver) {
+    finishGame(S.turn);
+    return;
+  }
+  if (res.result !== E.MISS) return; // hit → same player continues
+
+  if (S.mode === "hotseat") {
+    S.inputLocked = true;
+    SCENE.clearInteraction();
+    $("#btn-endturn").hidden = false;
+  } else {
+    // robo's turn
+    S.turn = 1;
+    S.inputLocked = true;
+    SCENE.clearInteraction();
+    setTimeout(() => {
+      beginTurn();
+      scheduleRoboTurn();
+    }, 700);
   }
 }
 
 function hotseatEndTurn() {
   SND.tap();
   $("#btn-endturn").hidden = true;
-  const next = enemyIndexFor(S.turn);
+  const next = other(S.turn);
   showPass({
-    emoji: "🔄",
-    title: `Gib das Gerät an ${AVATARS[next]} Spieler ${next + 1}!`,
+    title: `Gib das Gerät an Spieler ${next + 1}!`,
     sub: "Jetzt darf der andere suchen.",
-    btn: "Ich bin dran! 👋",
+    btn: "Ich bin dran!",
     action: () => {
       S.turn = next;
+      S.viewer = next;
       S.inputLocked = false;
-      startBattleViewRefresh();
+      syncCreatureVisibility();
+      show(null);
+      beginTurn();
     },
   });
 }
 
-function startBattleViewRefresh() {
-  S.phase = "battle";
-  renderBattle();
-  show("screen-battle");
-}
-
-// -- robo -----------------------------------------------------------------
+// ------------------------------------------------------------------ robo
 
 function scheduleRoboTurn() {
   if (S.phase !== "battle" || S.mode !== "ai" || S.turn !== 1) return;
@@ -610,31 +473,29 @@ function scheduleRoboTurn() {
     if (!shot) return;
     const res = E.fire(myBoard, shot.x, shot.y);
     noteResult(S.aiState, shot.x, shot.y, res.result, res.ship ? E.shipCells(res.ship) : null);
-    renderBattle(null, E.key(shot.x, shot.y));
-    fxForResult(res.result, $("#own-board"), shot.x, shot.y);
-
-    if (res.gameOver) {
-      finishGame(1);
-      return;
-    }
-    if (res.result === E.MISS) {
-      S.turn = 0;
-      S.inputLocked = false;
-      updateStatus();
-      syncEnemyLock();
-    } else {
-      const creature = res.ship ? creatureFor(res.ship) : null;
-      statusFlash(
-        res.result === E.SUNK && creature
-          ? `${ROBO} Robo hat ${creature.name} gefunden! 😮`
-          : `${ROBO} Robo hat was gefunden! Er sucht weiter …`
-      );
-      scheduleRoboTurn();
-    }
-  }, 1100);
+    showShotResult(0, shot.x, shot.y, res, () => {
+      if (S.phase !== "battle") return;
+      if (res.gameOver) {
+        finishGame(1);
+        return;
+      }
+      if (res.result === E.MISS) {
+        S.turn = 0;
+        S.inputLocked = false;
+        beginTurn();
+      } else {
+        status(
+          res.result === E.SUNK
+            ? `Robo hat ${creatureName(0, res.ship.id)} gefunden! Er sucht weiter …`
+            : "Robo hat was gefunden! Er sucht weiter …"
+        );
+        scheduleRoboTurn();
+      }
+    });
+  }, 1000);
 }
 
-// -- online ---------------------------------------------------------------
+// ---------------------------------------------------------------- online
 
 function newShadow() {
   return { size: E.DEFAULT_GRID, marks: {}, found: [] };
@@ -661,7 +522,7 @@ function hostGame() {
       $("#qr-box").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
     })
     .catch(() => {
-      toast("Ohje, das hat nicht geklappt. Probier es nochmal! 🙈");
+      toast("Ohje, das hat nicht geklappt. Probier es nochmal!");
       goHome();
     });
 }
@@ -671,15 +532,13 @@ function joinGame(code) {
   $("#join-error").textContent = "";
   const btn = $("#btn-join-go");
   btn.disabled = true;
-  btn.textContent = "⏳ Verbinde …";
+  btn.textContent = "Verbinde …";
   S.isHost = false;
   S.net = new Net();
   wireNet();
   S.net
     .join(code)
     .then(() => {
-      // ask the host to (re)send its hello until it arrives — the very
-      // first data-channel message can get lost right after opening
       let tries = 0;
       const ping = setInterval(() => {
         if (S.phase !== "title" || !S.net) {
@@ -689,17 +548,17 @@ function joinGame(code) {
         tries += 1;
         if (tries > 8) {
           clearInterval(ping);
-          toast("Verbindung klappt nicht. Probiert es nochmal! 🙈", 2600);
+          toast("Verbindung klappt nicht. Probiert es nochmal!", 2600);
           goHome();
           return;
         }
-        S.net.send({ t: "hi" });
+        S.net.send({ t: "hi", world: S.worlds[0] });
       }, 1500);
-      S.net.send({ t: "hi" });
+      S.net.send({ t: "hi", world: S.worlds[0] });
     })
     .catch((err) => {
       btn.disabled = false;
-      btn.textContent = "Los! 🚀";
+      btn.textContent = "Los!";
       $("#join-error").textContent =
         err.message === "not-found"
           ? "Kein Spiel mit diesem Code gefunden. Stimmt der Code?"
@@ -710,17 +569,15 @@ function joinGame(code) {
 }
 
 function wireNet() {
-  S.net.onStatus = (status) => {
-    if (status === "connected" && S.isHost) {
-      $("#host-status").textContent = "Verbunden! 🎉";
-      S.net.send({ t: "hello", v: 1, world: S.world.id });
-      beginOnlinePlacement();
+  S.net.onStatus = (st) => {
+    if (st === "connected" && S.isHost) {
+      $("#host-status").textContent = "Verbunden!";
     }
   };
   S.net.onMessage = (msg) => handleNetMessage(msg);
   S.net.onClose = () => {
     if (S.phase === "over") return;
-    toast("Die Verbindung ist weg. 😢", 2600);
+    toast("Die Verbindung ist weg.", 2600);
     goHome();
   };
 }
@@ -733,8 +590,9 @@ function beginOnlinePlacement() {
   S.rematchMine = false;
   S.rematchTheirs = false;
   $("#btn-rematch").disabled = false;
-  $("#btn-rematch").textContent = "🔁 Nochmal spielen";
-  showPlacement(0);
+  $("#btn-rematch").textContent = "Nochmal spielen";
+  goFullscreen();
+  startPlacement(0);
 }
 
 function maybeStartOnline() {
@@ -743,7 +601,7 @@ function maybeStartOnline() {
     const hostStarts = Math.random() < 0.5;
     S.net.send({ t: "start", youStart: !hostStarts });
     startBattle(hostStarts ? 0 : 1);
-    toast(hostStarts ? "Du fängst an! 🍀" : "Dein Freund fängt an!");
+    toast(hostStarts ? "Du fängst an!" : "Dein Mitspieler fängt an!");
   }
 }
 
@@ -762,15 +620,17 @@ function onlineShoot(x, y) {
 function handleNetMessage(msg) {
   switch (msg.t) {
     case "hi": {
-      // guest asks for (another) hello — answer idempotently
-      if (S.isHost) S.net.send({ t: "hello", v: 1, world: S.world.id });
+      // guest announces itself (+ its world); host answers idempotently
+      if (msg.world) S.worlds[1] = msg.world;
+      if (S.isHost) {
+        S.net.send({ t: "hello", v: 2, world: S.worlds[0] });
+        if (S.phase === "title" || S.phase === "over") beginOnlinePlacement();
+      }
       break;
     }
     case "hello": {
-      // guest receives the world choice — only valid before placement
-      // (initial join) or after a finished round (rematch)
       if (S.phase !== "title" && S.phase !== "over") break;
-      applyWorld(getWorld(msg.world));
+      S.worlds[1] = msg.world || "ozean";
       beginOnlinePlacement();
       break;
     }
@@ -781,35 +641,40 @@ function handleNetMessage(msg) {
     }
     case "start": {
       startBattle(msg.youStart ? 0 : 1);
-      toast(msg.youStart ? "Du fängst an! 🍀" : "Dein Freund fängt an!");
+      toast(msg.youStart ? "Du fängst an!" : "Dein Mitspieler fängt an!");
       break;
     }
     case "shot": {
-      // opponent shoots at my real board
       const res = E.fire(S.boards[0], msg.x, msg.y);
       S.net.send({
         t: "result",
         x: msg.x,
         y: msg.y,
         result: res.result,
-        ship: res.result === E.SUNK ? { id: res.ship.id, size: res.ship.size, x: res.ship.x, y: res.ship.y, dir: res.ship.dir } : null,
+        ship:
+          res.result === E.SUNK
+            ? { id: res.ship.id, size: res.ship.size, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
+            : null,
         revealed: res.revealed,
         gameOver: res.gameOver,
       });
       if (res.result === E.REPEAT) break;
-      renderBattle(null, E.key(msg.x, msg.y));
-      fxForResult(res.result, $("#own-board"), msg.x, msg.y);
-      if (res.gameOver) {
-        finishGame(1);
-      } else if (res.result === E.MISS) {
-        S.turn = 0;
-        S.inputLocked = false;
-        updateStatus();
-        syncEnemyLock();
-        toast("Du bist dran! 🎯");
-      } else {
-        statusFlash("Dein Freund hat was gefunden und sucht weiter …");
-      }
+      showShotResult(0, msg.x, msg.y, res, () => {
+        if (S.phase !== "battle") {
+          if (res.gameOver) finishGame(1);
+          return;
+        }
+        if (res.gameOver) {
+          finishGame(1);
+        } else if (res.result === E.MISS) {
+          S.turn = 0;
+          S.inputLocked = false;
+          beginTurn();
+          toast("Du bist dran!");
+        } else {
+          status("Dein Mitspieler hat was gefunden und sucht weiter …");
+        }
+      });
       break;
     }
     case "result": {
@@ -817,26 +682,26 @@ function handleNetMessage(msg) {
       if (msg.result === E.REPEAT) break;
       const k = E.key(msg.x, msg.y);
       S.shadow.marks[k] = msg.result === E.MISS ? E.MISS : E.HIT;
+      const fakeRes = {
+        result: msg.result,
+        ship: msg.ship,
+        revealed: msg.revealed || [],
+        gameOver: msg.gameOver,
+      };
       if (msg.result === E.SUNK && msg.ship) {
         S.shadow.found.push(msg.ship);
-        for (const c of msg.revealed || []) {
-          S.shadow.marks[E.key(c.x, c.y)] = E.MISS;
+        for (const c of fakeRes.revealed) S.shadow.marks[E.key(c.x, c.y)] = E.MISS;
+      }
+      showShotResult(1, msg.x, msg.y, fakeRes, () => {
+        if (msg.gameOver) {
+          finishGame(0);
+          return;
         }
-      }
-      renderBattle(k);
-      fxForResult(msg.result === E.SUNK ? E.SUNK : msg.result, $("#enemy-board"), msg.x, msg.y);
-      if (msg.gameOver) {
-        finishGame(0);
-      } else if (msg.result === E.MISS) {
-        S.turn = 1;
-        updateStatus();
-        syncEnemyLock();
-      } else if (msg.result === E.SUNK && msg.ship) {
-        const creature = creatureFor(msg.ship);
-        statusFlash(`${creature.icon} ${creature.name} ${S.world.words.sunk} Nochmal! 🎯`);
-      } else {
-        statusFlash(`${S.world.words.hit} Nochmal! 🎯`);
-      }
+        if (msg.result === E.MISS) {
+          S.turn = 1;
+          beginTurn();
+        }
+      });
       break;
     }
     case "rematch": {
@@ -851,42 +716,36 @@ function handleNetMessage(msg) {
 
 function maybeRematch() {
   if (!(S.rematchMine && S.rematchTheirs)) return;
-  // The host restarts and re-announces the game; the guest waits for
-  // that hello (same path as the very first round) so both sides
-  // restart exactly once.
   if (S.isHost) {
-    S.net.send({ t: "hello", v: 1, world: S.world.id });
+    S.net.send({ t: "hello", v: 2, world: S.worlds[0] });
     beginOnlinePlacement();
   }
 }
 
-// ------------------------------------------------------------- game over
+// -------------------------------------------------------------- game over
 
 function finishGame(winner) {
   S.phase = "over";
-  const w = S.world;
-  const iWon = S.mode === "hotseat" || winner === 0;
-  $("#win-emoji").textContent = iWon ? "🏆" : "💪";
+  SCENE.clearInteraction();
+  const loserIdx = other(winner);
+  const world = getWorld(S.worlds[loserIdx]);
+  const iWon = S.mode === "hotseat" || winner === S.viewer;
+  SCENE.focusBoard(slotFor(loserIdx));
   if (S.mode === "hotseat") {
-    $("#win-title").textContent = `${AVATARS[winner]} Spieler ${winner + 1} hat gewonnen!`;
-    $("#win-sub").textContent = w.words.win;
+    $("#win-title").textContent = `Spieler ${winner + 1} hat gewonnen!`;
+    $("#win-sub").textContent = world.words.win;
   } else if (S.mode === "ai") {
-    $("#win-title").textContent = iWon ? "Du hast gewonnen! 🎉" : "Robo war schneller!";
-    $("#win-sub").textContent = iWon ? w.words.win : "Beim nächsten Mal schaffst du es bestimmt!";
+    $("#win-title").textContent = winner === 0 ? "Du hast gewonnen!" : "Robo war schneller!";
+    $("#win-sub").textContent =
+      winner === 0 ? world.words.win : "Beim nächsten Mal schaffst du es bestimmt!";
   } else {
-    $("#win-title").textContent = iWon ? "Du hast gewonnen! 🎉" : "Dein Freund hat gewonnen!";
-    $("#win-sub").textContent = iWon ? w.words.win : "Fast! Gleich nochmal?";
+    $("#win-title").textContent = winner === 0 ? "Du hast gewonnen!" : "Dein Mitspieler hat gewonnen!";
+    $("#win-sub").textContent = winner === 0 ? world.words.win : "Fast! Gleich nochmal?";
   }
   show("screen-win");
   if (iWon) {
     SND.bigWin();
-    let bursts = 0;
-    const rain = setInterval(() => {
-      FX.confettiRain();
-      bursts += 1;
-      if (bursts > 14 || S.phase !== "over") clearInterval(rain);
-    }, 350);
-    FX.emojiBurst(window.innerWidth / 2, window.innerHeight / 3, w.icon, 14);
+    SCENE.confettiRain(slotFor(loserIdx));
   } else {
     SND.sad();
   }
@@ -898,7 +757,7 @@ function rematch() {
     S.rematchMine = true;
     S.net.send({ t: "rematch" });
     $("#btn-rematch").disabled = true;
-    $("#btn-rematch").textContent = "⏳ Warte auf den anderen …";
+    $("#btn-rematch").textContent = "Warte auf den anderen …";
     maybeRematch();
     return;
   }
@@ -913,20 +772,25 @@ function goHome() {
   }
   S.boards = [null, null];
   S.shadow = null;
+  SCENE.resetScene();
   $("#btn-rematch").disabled = false;
-  $("#btn-rematch").textContent = "🔁 Nochmal spielen";
+  $("#btn-rematch").textContent = "Nochmal spielen";
   $("#btn-endturn").hidden = true;
+  $("#btn-shuffle").hidden = true;
+  $("#btn-place-done").hidden = true;
+  applyUiWorld(S.worlds[0]);
   show("screen-title");
 }
 
-// ------------------------------------------------------------- boot
+// ------------------------------------------------------------------ boot
 
 function boot() {
-  FX.init();
-  buildWorldPicker();
-  applyWorld(getWorld("ozean"));
-  setupPlacementInput();
-  setupBattleInput();
+  SCENE.initScene($("#stage"));
+  applyUiWorld("ozean");
+  buildWorldPicker($("#world-grid"), (id) => {
+    S.worlds[0] = id;
+    applyUiWorld(id);
+  }, "ozean");
 
   document.querySelectorAll("[data-mode]").forEach((btn) => {
     btn.addEventListener("click", () => startMode(btn.dataset.mode));
@@ -950,17 +814,18 @@ function boot() {
     if (e.key === "Enter") $("#btn-join-go").click();
   });
 
-  $("#btn-shuffle").addEventListener("click", () => {
-    SND.whoosh();
-    E.randomFleet(placementBoard());
-    selectedShip = null;
-    refreshPlacement();
-  });
+  $("#btn-shuffle").addEventListener("click", shuffleFleet);
   $("#btn-place-done").addEventListener("click", placementDone);
   $("#btn-pass-go").addEventListener("click", () => {
     SND.tap();
     const action = S.passAction;
     S.passAction = null;
+    if (action) action();
+  });
+  $("#btn-worldpick-go").addEventListener("click", () => {
+    SND.tap();
+    const action = S.worldPickAction;
+    S.worldPickAction = null;
     if (action) action();
   });
   $("#btn-endturn").addEventListener("click", hotseatEndTurn);
@@ -973,7 +838,8 @@ function boot() {
 
   const muteBtn = $("#btn-mute");
   const syncMute = () => {
-    muteBtn.textContent = SND.isMuted() ? "🔇" : "🔊";
+    $("#ic-waves").style.display = SND.isMuted() ? "none" : "";
+    muteBtn.style.opacity = SND.isMuted() ? 0.55 : 1;
   };
   syncMute();
   muteBtn.addEventListener("click", () => {
@@ -983,20 +849,43 @@ function boot() {
     if (!SND.isMuted()) SND.tap();
   });
 
-  // offline support (hot-seat + robo work without internet once visited)
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 
-  // deep link: ?join=CODE
+  // deep link: ?join=CODE — let the guest pick their world first
   const params = new URLSearchParams(window.location.search);
   const joinCode = normalizeCode(params.get("join"));
   if (joinCode.length === 4) {
     S.mode = "online";
-    show("screen-join");
-    $("#join-code").value = joinCode;
-    joinGame(joinCode);
+    showWorldPick({
+      title: "Wähl deine Welt!",
+      selected: S.worlds[0],
+      onDone: (worldId) => {
+        S.worlds[0] = worldId;
+        applyUiWorld(worldId);
+        show("screen-join");
+        $("#join-code").value = joinCode;
+        joinGame(joinCode);
+      },
+    });
   }
+
+  // hooks for automated browser tests (not part of the public UI)
+  window.__FF = {
+    state: S,
+    engine: E,
+    debugCamera: SCENE.debugCamera,
+    tap: (x, y) => handleTap(x, y),
+    placementBoard: () => S.boards[S.placingPlayer],
+    marksOn: (idx) => (S.mode === "online" && idx === 1 ? S.shadow.marks : S.boards[idx]?.shots),
+    rotateFirst: () => {
+      const b = S.boards[S.placingPlayer];
+      const ship = b.ships[0];
+      const dir = ship.dir === "h" ? "v" : "h";
+      return E.moveShip(b, ship.id, ship.x, ship.y, dir);
+    },
+  };
 }
 
 boot();

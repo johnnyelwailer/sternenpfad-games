@@ -2,7 +2,7 @@
 // (WebRTC; the free public PeerJS cloud is only used to introduce
 // the two browsers to each other — game data flows peer to peer).
 
-const PREFIX = "funkelflotte-v1-";
+const PREFIX = "funkelflotte-v2-";
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
 
 export function makeCode(len = 4) {

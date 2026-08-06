@@ -1,6 +1,6 @@
 // Funkel-Flotte service worker: stale-while-revalidate for everything
 // in this game's directory, so hot-seat and robo mode work offline.
-const CACHE = "funkelflotte-v3";
+const CACHE = "funkelflotte-v6";
 
 const PRECACHE = [
   "./",
@@ -11,8 +11,13 @@ const PRECACHE = [
   "./js/ai.js",
   "./js/worlds.js",
   "./js/sound.js",
-  "./js/particles.js",
   "./js/net.js",
+  "./js/scene.js",
+  "./js/tween.js",
+  "./js/models.js",
+  "./js/environments.js",
+  "./vendor/three.module.min.js",
+  "./vendor/three.core.min.js",
   "./vendor/peerjs.min.js",
   "./vendor/qrcode.js",
   "./manifest.json",
@@ -44,7 +49,9 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(event.request, { ignoreSearch: url.pathname.endsWith("/") || url.pathname.endsWith("index.html") });
+      const cached = await cache.match(event.request, {
+        ignoreSearch: url.pathname.endsWith("/") || url.pathname.endsWith("index.html"),
+      });
       const network = fetch(event.request)
         .then((response) => {
           if (response.ok) cache.put(event.request, response.clone());
