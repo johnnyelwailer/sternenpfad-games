@@ -67,6 +67,37 @@ test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async
   expect(stillValid).toBe(true);
 });
 
+test("style panel: tint + hat customize, persists and applies", async ({ page }) => {
+  await page.locator('[data-mode="ai"]').click();
+  await page.locator("#btn-style").click();
+  await expect(page.locator("#style-panel")).toBeVisible();
+  await expect(page.locator(".style-row")).toHaveCount(5);
+
+  // pick the 2nd tint and one hat for the first creature
+  const firstRow = page.locator(".style-row").first();
+  await firstRow.locator(".tint-dot").nth(1).click();
+  await firstRow.locator(".hat-btn").click();
+  await expect(firstRow.locator(".tint-dot").nth(1)).toHaveClass(/selected/);
+  await expect(firstRow.locator(".hat-btn")).not.toHaveText("Ohne Hut");
+
+  const custom = await page.evaluate(() => window.__FF.state.customs[0]);
+  expect(custom[0]).toEqual({ tint: 1, hat: 1 });
+  const stored = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem(`ff-custom-${window.__FF.state.worlds[0]}`) || "{}")
+  );
+  expect(stored[0]).toEqual({ tint: 1, hat: 1 });
+
+  await page.locator("#btn-style-close").click();
+  await expect(page.locator("#style-panel")).toBeHidden();
+
+  // survives into battle and a reload (placement reloads the saved map)
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await page.locator('[data-mode="ai"]').click();
+  const reloaded = await page.evaluate(() => window.__FF.state.customs[0]);
+  expect(reloaded[0]).toEqual({ tint: 1, hat: 1 });
+});
+
 test("robo game: my shots mark the enemy board, robo answers on mine", async ({ page }) => {
   await page.locator('[data-mode="ai"]').click();
   await page.locator("#btn-place-done").click();
@@ -215,10 +246,15 @@ test("online: full cross-world P2P game with rematch", async ({ browser }) => {
     .poll(() => guest.evaluate(() => window.__FF.state.worlds[1]))
     .toBe("weltraum");
 
+  // host styles a creature; the guest must see it once the battle starts
+  await host.evaluate(() => window.__FF.setStyle(0, 2, 1));
   await host.locator("#btn-place-done").click();
   await guest.locator("#btn-place-done").click();
   await expect(host.locator("#status")).toContainText(/dran|sucht/, { timeout: 20000 });
   await expect(guest.locator("#status")).toContainText(/dran|sucht/, { timeout: 20000 });
+  await expect
+    .poll(() => guest.evaluate(() => window.__FF.state.oppCustom))
+    .toEqual({ 0: { tint: 2, hat: 1 } });
 
   // play the full game via hooks
   let winner = null;

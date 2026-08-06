@@ -5,6 +5,7 @@
 import * as E from "./engine.js";
 import { createAiState, noteResult, nextShot } from "./ai.js";
 import { WORLDS, getWorld, randomOtherWorld } from "./worlds.js";
+import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
 import * as SND from "./sound.js";
 import * as SCENE from "./scene.js";
 import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
@@ -30,6 +31,8 @@ const S = {
   inputLocked: false,
   passAction: null,
   worldPickAction: null,
+  customs: [{}, {}], // per board index: shipId -> { tint, hat }
+  oppCustom: null, // online: opponent's map (arrives with their "ready")
 };
 
 const slotFor = (index) => (index === 0 ? "mine" : "enemy");
@@ -74,12 +77,50 @@ function goFullscreen() {
   }
 }
 
+// ---------------------------------------------------------- customization
+
+function loadCustom(worldId) {
+  try {
+    const map = JSON.parse(localStorage.getItem(`ff-custom-${worldId}`) || "{}");
+    return sanitizeCustomMap(map);
+  } catch {
+    return {};
+  }
+}
+
+function saveCustom(worldId, map) {
+  try {
+    localStorage.setItem(`ff-custom-${worldId}`, JSON.stringify(map));
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+// keep only well-formed entries (also guards data arriving over the wire)
+function sanitizeCustomMap(map) {
+  const out = {};
+  if (!map || typeof map !== "object") return out;
+  for (const [id, c] of Object.entries(map)) {
+    if (!c || typeof c !== "object") continue;
+    const tint = Number.isInteger(c.tint) && c.tint > 0 && c.tint < TINTS.length ? c.tint : 0;
+    const hat = Number.isInteger(c.hat) && c.hat > 0 && c.hat < ACCESSORIES.length ? c.hat : 0;
+    if (tint || hat) out[id] = { tint, hat };
+  }
+  return out;
+}
+
+// which customization applies to board `index` right now?
+function customFor(index) {
+  if (S.mode === "online" && index === 1) return S.oppCustom || {};
+  return S.customs[index] || {};
+}
+
 // world picker cards with live 3D thumbnails
 const thumbCache = new Map();
-function creatureThumb(worldId, idx) {
-  const key = `${worldId}-${idx}`;
+function creatureThumb(worldId, idx, custom = null) {
+  const key = `${worldId}-${idx}-${custom ? `${custom.tint || 0}.${custom.hat || 0}` : "0.0"}`;
   if (!thumbCache.has(key)) {
-    thumbCache.set(key, SCENE.creatureThumb(worldId, idx, idx === 0 ? 4 : 3));
+    thumbCache.set(key, SCENE.creatureThumb(worldId, idx, idx === 0 ? 4 : 3, 128, custom));
   }
   return thumbCache.get(key);
 }
@@ -105,7 +146,7 @@ function buildWorldPicker(gridEl, onPick, selected) {
     gridEl.querySelectorAll(".world-card").forEach((card) => {
       const img = document.createElement("img");
       img.alt = "";
-      img.src = creatureThumb(card.dataset.world, 0);
+      img.src = creatureThumb(card.dataset.world, 0, loadCustom(card.dataset.world)[0]);
       card.querySelector(".ph")?.replaceWith(img);
     });
   }, 30);
@@ -117,12 +158,13 @@ function renderChips(targetIndex) {
   if (S.phase !== "battle") return;
   const worldId = S.worlds[targetIndex];
   const found = foundIdsOn(targetIndex);
+  const custom = customFor(targetIndex);
   getWorld(worldId).creatures.forEach((c, id) => {
     const chip = document.createElement("div");
     chip.className = `chip${found.has(id) ? " done" : ""}`;
     const img = document.createElement("img");
     img.alt = c.name;
-    img.src = creatureThumb(worldId, id);
+    img.src = creatureThumb(worldId, id, custom[id]);
     chip.appendChild(img);
     box.appendChild(chip);
   });
@@ -208,6 +250,8 @@ function startPlacement(player) {
   const slot = slotFor(idx);
   applyUiWorld(S.worlds[idx]);
   SCENE.setupBoard(slot, S.worlds[idx]);
+  S.customs[idx] = loadCustom(S.worlds[idx]);
+  SCENE.setCustomization(slot, S.customs[idx]);
   SCENE.placeCreatures(slot, S.boards[idx].ships, { popIn: true });
   SCENE.focusBoard(slot, { immediate: S.phase === "title" });
   SCENE.clearInteraction();
@@ -252,11 +296,97 @@ function startPlacement(player) {
   status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
   show(null);
   $("#btn-shuffle").hidden = false;
+  $("#btn-style").hidden = false;
   $("#btn-place-done").hidden = false;
   $("#btn-place-done").disabled = false;
   $("#btn-place-done").textContent = "Fertig!";
   $("#btn-endturn").hidden = true;
   renderChips(other(S.viewer));
+}
+
+// ----------------------------------------------------------- style panel
+
+function hatLabel(hatIdx) {
+  const kind = ACCESSORIES[hatIdx];
+  return kind ? `🎩 ${ACCESSORY_NAMES[kind]}` : "Ohne Hut";
+}
+
+function setShipCustom(shipId, patch) {
+  const idx = S.placingPlayer;
+  const cur = S.customs[idx][shipId] || { tint: 0, hat: 0 };
+  const next = { ...cur, ...patch };
+  if (!next.tint && !next.hat) delete S.customs[idx][shipId];
+  else S.customs[idx][shipId] = next;
+  saveCustom(S.worlds[idx], S.customs[idx]);
+  SCENE.setCustomization(slotFor(idx), S.customs[idx]);
+  SCENE.placeCreatures(slotFor(idx), S.boards[idx].ships);
+}
+
+function openStylePanel() {
+  SND.tap();
+  const idx = S.placingPlayer;
+  const worldId = S.worlds[idx];
+  const world = getWorld(worldId);
+  const rows = $("#style-rows");
+  rows.innerHTML = "";
+
+  for (const ship of S.boards[idx].ships) {
+    const row = document.createElement("div");
+    row.className = "style-row";
+    const img = document.createElement("img");
+    img.className = "style-thumb";
+    img.alt = "";
+    const info = document.createElement("div");
+    info.className = "style-info";
+    const name = document.createElement("div");
+    name.className = "style-name";
+    name.textContent = world.creatures[ship.id]?.name ?? "";
+    const dots = document.createElement("div");
+    dots.className = "tint-dots";
+    const hatBtn = document.createElement("button");
+    hatBtn.className = "hat-btn";
+
+    const sync = () => {
+      const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
+      img.src = creatureThumb(worldId, ship.id, cur.tint || cur.hat ? cur : null);
+      hatBtn.textContent = hatLabel(cur.hat);
+      dots.querySelectorAll(".tint-dot").forEach((dot, ti) => {
+        dot.classList.toggle("selected", ti === cur.tint);
+      });
+    };
+
+    TINTS.forEach((hex, ti) => {
+      const dot = document.createElement("button");
+      dot.className = `tint-dot${hex === null ? " none" : ""}`;
+      dot.setAttribute("aria-label", ti === 0 ? "Naturfarbe" : `Farbe ${ti}`);
+      if (hex !== null) dot.style.background = `#${hex.toString(16).padStart(6, "0")}`;
+      dot.addEventListener("click", () => {
+        SND.tap();
+        setShipCustom(ship.id, { tint: ti });
+        sync();
+      });
+      dots.appendChild(dot);
+    });
+    hatBtn.addEventListener("click", () => {
+      SND.sparkle();
+      const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
+      setShipCustom(ship.id, { hat: (cur.hat + 1) % ACCESSORIES.length });
+      sync();
+    });
+
+    sync();
+    info.appendChild(name);
+    info.appendChild(dots);
+    row.appendChild(img);
+    row.appendChild(info);
+    row.appendChild(hatBtn);
+    rows.appendChild(row);
+  }
+  $("#style-panel").hidden = false;
+}
+
+function closeStylePanel() {
+  $("#style-panel").hidden = true;
 }
 
 function shuffleFleet() {
@@ -269,7 +399,9 @@ function shuffleFleet() {
 function placementDone() {
   SND.tap();
   SCENE.clearInteraction();
+  closeStylePanel();
   $("#btn-shuffle").hidden = true;
+  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
   if (S.mode === "hotseat") {
@@ -308,7 +440,7 @@ function placementDone() {
     $("#btn-place-done").disabled = true;
     $("#btn-place-done").textContent = "Warte auf Mitspieler …";
     status("Gleich geht es los!");
-    S.net.send({ t: "ready" });
+    S.net.send({ t: "ready", custom: S.customs[0] });
     maybeStartOnline();
   }
 }
@@ -339,16 +471,18 @@ function startBattle(firstTurn) {
   S.phase = "battle";
   S.turn = firstTurn;
   S.inputLocked = false;
+  closeStylePanel();
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
+  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
   // make sure both dioramas exist (enemy diorama may not yet)
-  if (S.mode === "online") {
-    SCENE.setupBoard("enemy", S.worlds[1]);
-  } else if (S.mode === "ai") {
+  if (S.mode === "online" || S.mode === "ai") {
     SCENE.setupBoard("enemy", S.worlds[1]);
   }
+  SCENE.setCustomization("mine", customFor(0));
+  SCENE.setCustomization("enemy", customFor(1));
   syncCreatureVisibility();
   replayMarks(0);
   replayMarks(1);
@@ -599,6 +733,7 @@ function beginOnlinePlacement() {
   S.shadow = newShadow();
   S.myReady = false;
   S.oppReady = false;
+  S.oppCustom = null;
   S.rematchMine = false;
   S.rematchTheirs = false;
   $("#btn-rematch").disabled = false;
@@ -648,6 +783,7 @@ function handleNetMessage(msg) {
     }
     case "ready": {
       S.oppReady = true;
+      S.oppCustom = sanitizeCustomMap(msg.custom);
       maybeStartOnline();
       break;
     }
@@ -785,11 +921,15 @@ function goHome() {
   }
   S.boards = [null, null];
   S.shadow = null;
+  S.customs = [{}, {}];
+  S.oppCustom = null;
   SCENE.resetScene();
+  closeStylePanel();
   $("#btn-rematch").disabled = false;
   $("#btn-rematch").textContent = "Nochmal spielen";
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
+  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   applyUiWorld(S.worlds[0]);
   show("screen-title");
@@ -828,6 +968,14 @@ function boot() {
   });
 
   $("#btn-shuffle").addEventListener("click", shuffleFleet);
+  $("#btn-style").addEventListener("click", () => {
+    if ($("#style-panel").hidden) openStylePanel();
+    else closeStylePanel();
+  });
+  $("#btn-style-close").addEventListener("click", () => {
+    SND.tap();
+    closeStylePanel();
+  });
   $("#btn-place-done").addEventListener("click", placementDone);
   $("#btn-pass-go").addEventListener("click", () => {
     SND.tap();
@@ -901,6 +1049,7 @@ function boot() {
       FAST = true;
     },
     tap: (x, y) => handleTap(x, y),
+    setStyle: (id, tint, hat) => setShipCustom(id, { tint, hat }),
     placementBoard: () => S.boards[S.placingPlayer],
     marksOn: (idx) => (S.mode === "online" && idx === 1 ? S.shadow.marks : S.boards[idx]?.shots),
     rotateFirst: () => {

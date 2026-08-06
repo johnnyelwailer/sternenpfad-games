@@ -30,6 +30,13 @@ let camKick = 0;
 
 const dioramas = { mine: null, enemy: null };
 
+// per-slot creature customization: shipId -> { tint, hat } (see models.js)
+const customs = { mine: {}, enemy: {} };
+
+export function setCustomization(slot, map) {
+  customs[slot] = map || {};
+}
+
 let tapHandler = null;
 let placement = null;
 let drag = null;
@@ -301,6 +308,8 @@ function disposeDiorama(slot) {
 export function resetScene() {
   disposeDiorama("mine");
   disposeDiorama("enemy");
+  customs.mine = {};
+  customs.enemy = {};
   tapHandler = null;
   placement = null;
   drag = null;
@@ -334,7 +343,7 @@ export function placeCreatures(slot, ships, { popIn = false, found = null } = {}
 export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   const d = dioramas[slot];
   if (!d) return null;
-  const model = buildCreature(d.worldId, ship.id, ship.size);
+  const model = buildCreature(d.worldId, ship.id, ship.size, customs[slot]?.[ship.id] ?? null);
   model.rotation.y = 0.16; // subtle 3/4 turn so faces catch the camera
   const holder = new THREE.Group();
   holder.add(model);
@@ -1228,7 +1237,7 @@ function onPointerUp(e) {
 // ------------------------------------------------------------- thumbnails
 
 let thumbRenderer = null;
-export function creatureThumb(worldId, index, size = 3, px = 128) {
+export function creatureThumb(worldId, index, size = 3, px = 128, custom = null) {
   if (!thumbRenderer) {
     thumbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     thumbRenderer.setSize(px, px);
@@ -1243,7 +1252,7 @@ export function creatureThumb(worldId, index, size = 3, px = 128) {
   const dl = new THREE.DirectionalLight(world.colors.light, 1.7);
   dl.position.set(-3, 5, 4);
   s.add(dl);
-  const model = buildCreature(worldId, index, size);
+  const model = buildCreature(worldId, index, size, custom);
   s.add(model);
   thumbRenderer.render(s, cam);
   const url = thumbRenderer.domElement.toDataURL("image/png");
