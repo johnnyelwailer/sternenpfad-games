@@ -37,14 +37,27 @@
       </div>
     </div>
 
-    <!-- creature style panel (placement only) -->
-    <div id="style-panel" hidden>
-      <div class="style-head">
-        <div class="style-title">Mach sie zu deinen! ✨</div>
-        <button class="btn small" id="btn-style-close">Fertig</button>
+    <!-- full-view creature customizer (placement only) -->
+    <div id="customizer" hidden>
+      <div class="cust-card">
+        <div class="cust-head">
+          <button class="pager-btn" id="cust-prev" aria-label="voriger Freund">‹</button>
+          <div class="cust-title">
+            <div class="cust-name" id="cust-name"></div>
+            <div class="cust-count" id="cust-count"></div>
+          </div>
+          <button class="pager-btn" id="cust-next" aria-label="nächster Freund">›</button>
+        </div>
+        <canvas id="cust-canvas" aria-label="Vorschau"></canvas>
+        <div class="tint-dots" id="cust-tints"></div>
+        <div class="cust-hat-row">
+          <button class="pager-btn" id="cust-hat-prev" aria-label="voriger Hut">‹</button>
+          <div class="cust-hat-name" id="cust-hat-name">Ohne Hut</div>
+          <button class="pager-btn" id="cust-hat-next" aria-label="nächster Hut">›</button>
+        </div>
+        <p class="style-hint" id="cust-hint" hidden></p>
+        <button class="btn" id="btn-cust-done">Fertig ✨</button>
       </div>
-      <p class="style-hint" id="style-hint" hidden></p>
-      <div id="style-rows"></div>
     </div>
 
     <!-- Title -->
@@ -64,12 +77,28 @@
         <button class="btn big" data-mode="hotseat">Zu zweit an einem Gerät</button>
         <button class="btn big" data-mode="online">Mit zwei Geräten</button>
       </div>
+      <p class="label">Mehr Spiele:</p>
+      <div class="extras-grid">
+        <button class="extra-card" id="btn-puzzle"><span class="xemoji">🧩</span><span>Knobel-Insel</span></button>
+        <button class="extra-card" id="btn-chase"><span class="xemoji">🙈</span><span>Fang mich!</span></button>
+        <button class="extra-card" id="btn-boss"><span class="xemoji">👑</span><span>Monster-Jagd</span></button>
+        <button class="extra-card" id="btn-journey"><span class="xemoji">🗺️</span><span>Weltreise</span></button>
+      </div>
       <div class="extras-row">
-        <button class="btn ghost" id="btn-puzzle">🧩 Knobel-Insel</button>
-        <button class="btn ghost" id="btn-chase">🙈 Fang mich!</button>
-        <button class="btn ghost" id="btn-boss">👑 Monster-Jagd</button>
         <button class="btn ghost" id="btn-album">📖 Sticker-Album</button>
         <button class="btn ghost" id="btn-aquarium">🐠 Aquarium</button>
+      </div>
+    </section>
+
+    <!-- Weltreise campaign -->
+    <section id="screen-journey" class="screen opaque">
+      <div class="stars" aria-hidden="true"></div>
+      <h2 class="h2" id="journey-title">🗺️ Deine Weltreise</h2>
+      <p class="hint">Acht Etappen durch alle Welten — jede bringt einen neuen Trick bei!</p>
+      <div id="journey-stops"></div>
+      <div class="stack">
+        <button class="btn big" id="btn-journey-go">Etappe spielen!</button>
+        <button class="btn big ghost" id="btn-journey-back">Zurück</button>
       </div>
     </section>
 

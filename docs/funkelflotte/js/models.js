@@ -1057,9 +1057,18 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 // kid-friendly tint palette (null = the creature's natural colors)
 export const TINTS = [null, 0xff7a6b, 0x5fb8e8, 0x8fd05f, 0xb388ff, 0xff8ac2, 0xffc94d];
 
-// snap-on accessories, auto-anchored on top of any creature
-export const ACCESSORIES = [null, "party", "krone", "propeller", "blume", "schleife"];
-export const ACCESSORY_NAMES = { party: "Partyhut", krone: "Krone", propeller: "Propeller", blume: "Blume", schleife: "Schleife" };
+// snap-on accessories, auto-anchored on top of any creature.
+// Only APPEND here — saved customizations store indexes.
+export const ACCESSORIES = [null, "party", "krone", "propeller", "blume", "schleife", "kappe", "zauberhut"];
+export const ACCESSORY_NAMES = {
+  party: "Partyhut",
+  krone: "Krone",
+  propeller: "Propeller",
+  blume: "Blume",
+  schleife: "Schleife",
+  kappe: "Kappe",
+  zauberhut: "Zauberhut",
+};
 
 function buildAccessory(kind) {
   const g = new THREE.Group();
@@ -1109,26 +1118,47 @@ function buildAccessory(kind) {
       loop.rotation.z = sd * 0.4;
     }
     add(g, new THREE.SphereGeometry(0.055, 8, 6), bowM, 0, 0.06, 0);
+  } else if (kind === "kappe") {
+    const capM = mat(0x4f8fd0, { roughness: 0.6 });
+    const dome = add(g, new THREE.SphereGeometry(0.19, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), capM, 0, 0.02, 0);
+    dome.scale.set(1, 0.85, 1);
+    const brim = add(g, new THREE.CylinderGeometry(0.14, 0.15, 0.03, 12), capM, -0.2, 0.03, 0);
+    brim.scale.set(1.5, 1, 1);
+    add(g, new THREE.SphereGeometry(0.045, 8, 6), mat(0xffd447), 0, 0.19, 0);
+  } else if (kind === "zauberhut") {
+    const hatM = mat(0x5a4fc9, { roughness: 0.55 });
+    add(g, new THREE.ConeGeometry(0.19, 0.5, 10), hatM, 0, 0.25, 0).rotation.z = -0.12;
+    add(g, new THREE.TorusGeometry(0.2, 0.04, 6, 14), hatM, 0, 0.02, 0).rotation.x = Math.PI / 2;
+    // little stars on the cone
+    for (const [dx, dy, dz] of [[0.1, 0.18, 0.08], [-0.06, 0.32, -0.1], [0.02, 0.44, 0.05]]) {
+      add(g, new THREE.OctahedronGeometry(0.035, 0), mat(0xffd447, { emissive: 0xffd447, emissiveIntensity: 0.9 }), dx, dy, dz);
+    }
   }
   g.userData.animate = animate;
   return g;
 }
 
 // generic tint: shift body materials toward the chosen color while
-// keeping eyes, whites and glowing bits untouched
+// keeping eyes, whites and glowing bits untouched. Materials can be
+// shared across meshes, so collect them first and lerp each ONCE.
 function applyTint(root, tintHex) {
   const tint = new THREE.Color(tintHex);
+  const mats = new Set();
   root.traverse((o) => {
-    if (!o.isMesh || !o.material || !o.material.color) return;
-    const m = o.material;
-    if (m.emissiveIntensity && m.emissiveIntensity >= 0.8) return;
+    if (o.isMesh && o.material && o.material.color) mats.add(o.material);
+  });
+  for (const m of mats) {
+    // skip only materials that actually glow (emissive intensity is 1
+    // by default even on non-glowing materials — check the color too)
+    const e = m.emissive;
+    if (e && e.r + e.g + e.b > 0.05 && (m.emissiveIntensity ?? 1) >= 0.8) continue;
     const c = m.color;
     const max = Math.max(c.r, c.g, c.b);
     const min = Math.min(c.r, c.g, c.b);
-    if (max > 0.86 && min > 0.72) return; // whites/creams (eyes, bellies)
-    if (max < 0.22) return; // near-black (pupils)
-    c.lerp(tint, 0.5);
-  });
+    if (max > 0.86 && min > 0.72) continue; // whites/creams (eyes, bellies)
+    if (max < 0.22) continue; // near-black (pupils)
+    c.lerp(tint, 0.55);
+  }
 }
 
 // Build a creature and normalize its footprint so every model clearly

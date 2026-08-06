@@ -326,6 +326,7 @@ function startMode(mode) {
   S.gameMode = "classic";
   S.chase = null;
   S.boss = null;
+  S.journey = null;
   S.turn = 0;
   S.viewer = 0;
   S.rematchMine = false;
@@ -368,11 +369,39 @@ function startPlacement(player) {
       const ship = board.ships.find((s) => s.id === id);
       return E.canPlace(board, { ...ship, x, y, dir }, id);
     },
+    // cells this creature must keep clear (the one-gap no-touch rule),
+    // shown as a soft red wash while dragging
+    blockedCells: (id) => {
+      const board = S.boards[idx];
+      const set = new Set();
+      const markAround = (cx, cy) => {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          for (let dy = -1; dy <= 1; dy += 1) {
+            const x = cx + dx;
+            const y = cy + dy;
+            if (E.inBounds(board, x, y)) set.add(E.key(x, y));
+          }
+        }
+      };
+      for (const s of board.ships) {
+        if (String(s.id) === String(id)) continue;
+        for (const c of E.shipCells(s)) markAround(c.x, c.y);
+      }
+      if (board.decoy && id !== "decoy") markAround(board.decoy.x, board.decoy.y);
+      return [...set].map((k) => {
+        const [x, y] = k.split(",").map(Number);
+        return { x, y };
+      });
+    },
     onMove: (id, x, y, dir) => {
       const board = S.boards[idx];
       if (id === "decoy") {
-        if (E.placeDecoy(board, x, y)) SND.tap();
-        else SND.sad();
+        if (E.placeDecoy(board, x, y)) {
+          SND.tap();
+        } else {
+          SND.sad();
+          toast("Der Ballon braucht ein Feld Abstand zu den Freunden!");
+        }
         SCENE.moveCreature(slot, decoyShipOf(board));
         return;
       }
@@ -381,6 +410,7 @@ function startPlacement(player) {
         SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
       } else {
         SND.sad();
+        toast("Die Freunde brauchen ein Feld Abstand zueinander!");
         SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
         SCENE.shakeCreature(slot, id);
       }
@@ -439,82 +469,97 @@ function setShipCustom(shipId, patch) {
   SCENE.placeCreatures(slotFor(idx), S.boards[idx].ships);
 }
 
-function openStylePanel() {
+// full-view customizer: one big live 3D creature, tints + hats with
+// sticker locks, ‹ › to flip through the fleet
+let custPreview = null;
+const cust = { i: 0, lockedHat: null };
+
+function openCustomizer(startIdx = 0) {
   SND.tap();
-  const idx = S.placingPlayer;
-  const worldId = S.worlds[idx];
-  const world = getWorld(worldId);
-  const rows = $("#style-rows");
-  rows.innerHTML = "";
-
-  for (const ship of S.boards[idx].ships) {
-    const row = document.createElement("div");
-    row.className = "style-row";
-    const img = document.createElement("img");
-    img.className = "style-thumb";
-    img.alt = "";
-    const info = document.createElement("div");
-    info.className = "style-info";
-    const name = document.createElement("div");
-    name.className = "style-name";
-    name.textContent = world.creatures[ship.id]?.name ?? "";
-    const dots = document.createElement("div");
-    dots.className = "tint-dots";
-    const hatBtn = document.createElement("button");
-    hatBtn.className = "hat-btn";
-
-    const sync = () => {
-      const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
-      img.src = creatureThumb(worldId, ship.id, cur.tint || cur.hat ? cur : null);
-      hatBtn.textContent = hatLabel(cur.hat);
-      dots.querySelectorAll(".tint-dot").forEach((dot, ti) => {
-        dot.classList.toggle("selected", ti === cur.tint);
-      });
-    };
-
-    TINTS.forEach((hex, ti) => {
-      const dot = document.createElement("button");
-      dot.className = `tint-dot${hex === null ? " none" : ""}`;
-      dot.setAttribute("aria-label", ti === 0 ? "Naturfarbe" : `Farbe ${ti}`);
-      if (hex !== null) dot.style.background = `#${hex.toString(16).padStart(6, "0")}`;
-      dot.addEventListener("click", () => {
-        SND.tap();
-        setShipCustom(ship.id, { tint: ti });
-        sync();
-      });
-      dots.appendChild(dot);
-    });
-    hatBtn.addEventListener("click", () => {
-      SND.sparkle();
-      const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
-      // cycle through unlocked hats only (stickers unlock more);
-      // with the sticker feature off, every hat is available
-      let h = cur.hat;
-      do {
-        h = (h + 1) % ACCESSORIES.length;
-      } while (flag("stickers") && !PROG.isHatUnlocked(h) && h !== cur.hat);
-      setShipCustom(ship.id, { hat: h });
-      sync();
-    });
-
-    sync();
-    info.appendChild(name);
-    info.appendChild(dots);
-    row.appendChild(img);
-    row.appendChild(info);
-    row.appendChild(hatBtn);
-    rows.appendChild(row);
-  }
-  const nu = flag("stickers") ? PROG.nextUnlock() : null;
-  $("#style-hint").textContent = nu
-    ? `Noch ${nu.remaining} Sticker bis zum nächsten Hut: ${ACCESSORY_NAMES[nu.kind]}!`
-    : "";
-  $("#style-hint").hidden = !nu;
-  $("#style-panel").hidden = false;
+  cust.i = startIdx;
+  cust.lockedHat = null;
+  $("#customizer").hidden = false;
+  if (!custPreview) custPreview = SCENE.createPreview($("#cust-canvas"));
+  renderCustomizer();
 }
 
 function closeStylePanel() {
-  $("#style-panel").hidden = true;
+  // (kept name: called from placement/battle/goHome transitions)
+  $("#customizer").hidden = true;
+  if (custPreview) {
+    custPreview.stop();
+    custPreview = null;
+  }
+}
+
+function currentCustShip() {
+  const ships = S.boards[S.placingPlayer]?.ships ?? [];
+  cust.i = ((cust.i % ships.length) + ships.length) % ships.length;
+  return ships[cust.i];
+}
+
+function renderCustomizer() {
+  const idx = S.placingPlayer;
+  const worldId = S.worlds[idx];
+  const world = getWorld(worldId);
+  const ship = currentCustShip();
+  if (!ship) return;
+  const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
+  $("#cust-name").textContent = world.creatures[ship.id]?.name ?? "";
+  $("#cust-count").textContent = `${cust.i + 1} / ${S.boards[idx].ships.length}`;
+  custPreview.show(worldId, ship.id, ship.size, cur.tint || cur.hat ? cur : null);
+
+  const dots = $("#cust-tints");
+  dots.innerHTML = "";
+  TINTS.forEach((hex, ti) => {
+    const locked = flag("stickers") && !PROG.isTintUnlocked(ti);
+    const dot = document.createElement("button");
+    dot.className = `tint-dot${hex === null ? " none" : ""}${ti === cur.tint ? " selected" : ""}${locked ? " locked" : ""}`;
+    dot.setAttribute("aria-label", ti === 0 ? "Naturfarbe" : `Farbe ${ti}`);
+    if (hex !== null) dot.style.background = `#${hex.toString(16).padStart(6, "0")}`;
+    dot.addEventListener("click", () => {
+      if (locked) {
+        SND.sad();
+        toast(`🔒 Noch ${PROG.tintUnlockAt(ti) - PROG.totalStickers()} Sticker bis zu dieser Farbe!`);
+        return;
+      }
+      SND.tap();
+      cust.lockedHat = null;
+      setShipCustom(ship.id, { tint: ti });
+      renderCustomizer();
+    });
+    dots.appendChild(dot);
+  });
+
+  $("#cust-hat-name").textContent = hatLabel(cur.hat);
+  const nu = flag("stickers") ? PROG.nextUnlock() : null;
+  $("#cust-hint").textContent = nu
+    ? `Gewinne Sticker: noch ${nu.remaining} bis ${ACCESSORY_NAMES[nu.kind]}! 🎁`
+    : "";
+  $("#cust-hint").hidden = !nu;
+}
+
+function cycleHat(step) {
+  const idx = S.placingPlayer;
+  const ship = currentCustShip();
+  if (!ship) return;
+  const cur = S.customs[idx][ship.id] || { tint: 0, hat: 0 };
+  let h = cust.lockedHat ?? cur.hat;
+  h = (h + step + ACCESSORIES.length) % ACCESSORIES.length;
+  if (flag("stickers") && !PROG.isHatUnlocked(h)) {
+    // browsing a still-locked hat: show what it takes, keep cycling
+    cust.lockedHat = h;
+    const kind = ACCESSORIES[h];
+    $("#cust-hat-name").textContent = `🔒 ${ACCESSORY_NAMES[kind]} — noch ${
+      PROG.hatUnlockAt(h) - PROG.totalStickers()
+    } Sticker`;
+    SND.tap();
+    return;
+  }
+  cust.lockedHat = null;
+  SND.sparkle();
+  setShipCustom(ship.id, { hat: h });
+  renderCustomizer();
 }
 
 function shuffleFleet() {
@@ -1156,6 +1201,7 @@ function startChase(kind) {
   S.mode = "chase";
   S.phase = "chase";
   S.gameMode = "chase";
+  S.journey = null;
   S.chase = { kind, st: CHASE.createChase(), role: "seeker", waiting: false, marks: {} };
   if (kind === "online") {
     show("screen-online");
@@ -1359,6 +1405,7 @@ function chaseEnd(caught) {
     stickerBox.hidden = false;
   }
   $("#btn-rematch").textContent = "Nochmal spielen";
+  journeyAdvance(iWon);
   show("screen-win");
   if (iWon) {
     SND.bigWin();
@@ -1531,6 +1578,7 @@ function startBoss(kind) {
   S.mode = "boss";
   S.phase = "boss";
   S.gameMode = "boss";
+  S.journey = null;
   S.boss = { kind, st: BOSS.createBoss(), role: "hunter", marks: {}, shotsLeft: BOSS.BOSS_SHOTS, wounds: 0 };
   if (kind === "online") {
     show("screen-online");
@@ -1715,6 +1763,7 @@ function bossEnd(hunterWon) {
     stickerBox.hidden = false;
   }
   $("#btn-rematch").textContent = "Nochmal spielen";
+  journeyAdvance(iWon);
   show("screen-win");
   if (iWon) {
     SND.bigWin();
@@ -1862,6 +1911,7 @@ function startPuzzle() {
   S.mode = "puzzle";
   S.phase = "puzzle";
   S.viewer = 0;
+  S.journey = null;
   const worldId = S.worlds[0];
   applyUiWorld(worldId);
 
@@ -1998,6 +2048,7 @@ function puzzleEnd(won) {
     SND.sad();
   }
   $("#btn-rematch").textContent = "Neues Rätsel";
+  journeyAdvance(won);
   show("screen-win");
 }
 
@@ -2049,12 +2100,113 @@ function finishGame(winner) {
     }
     stickerBox.hidden = false;
   }
+  journeyAdvance(iWon);
   show("screen-win");
   if (iWon) {
     SND.bigWin();
     SCENE.confettiRain(slotFor(loserIdx));
   } else {
     SND.sad();
+  }
+}
+
+// ------------------------------------------------------------ Weltreise
+
+// eight stops across the four worlds — each teaches one game or twist
+const JOURNEY = [
+  { world: "ozean", type: "classic", rules: {}, emoji: "🌊", label: "Die erste Suche" },
+  { world: "ozean", type: "classic", rules: { sonar: true }, emoji: "🐬", label: "Delfin-Sonar" },
+  { world: "teich", type: "puzzle", emoji: "🧩", label: "Knobel-Teich" },
+  { world: "teich", type: "classic", rules: { decoy: true }, emoji: "🎈", label: "Ballon-Trick" },
+  { world: "dino", type: "chase", emoji: "🙈", label: "Fang den Frechdachs" },
+  { world: "dino", type: "classic", rules: { ghost: true }, emoji: "👻", label: "Geisterstunde" },
+  { world: "weltraum", type: "puzzle", emoji: "✨", label: "Sternen-Rätsel" },
+  { world: "weltraum", type: "boss", emoji: "👑", label: "Das König-Monster" },
+];
+
+function loadJourney() {
+  const n = parseInt(localStorage.getItem("ff-weltreise") || "0", 10);
+  return Number.isFinite(n) ? Math.max(0, Math.min(JOURNEY.length, n)) : 0;
+}
+
+function saveJourney(n) {
+  try {
+    localStorage.setItem("ff-weltreise", String(n));
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+function openJourney() {
+  SND.tap();
+  const done = loadJourney();
+  const list = $("#journey-stops");
+  list.innerHTML = "";
+  JOURNEY.forEach((stop, i) => {
+    const row = document.createElement("div");
+    row.className = `journey-stop${i < done ? " done" : i === done ? " current" : " locked"}`;
+    const world = getWorld(stop.world);
+    row.innerHTML = `<span class="journey-emoji">${i < done ? "✅" : i === done ? stop.emoji : "🔒"}</span>
+      <span class="journey-label">${i + 1}. ${stop.label}</span>
+      <span class="journey-world">${world.name}</span>`;
+    list.appendChild(row);
+  });
+  const btn = $("#btn-journey-go");
+  if (done >= JOURNEY.length) {
+    $("#journey-title").textContent = "🎉 Weltreise geschafft!";
+    btn.textContent = "Nochmal von vorn";
+  } else {
+    $("#journey-title").textContent = "🗺️ Deine Weltreise";
+    btn.textContent = `Etappe ${done + 1} spielen!`;
+  }
+  show("screen-journey");
+}
+
+function startJourneyStop(i) {
+  if (i >= JOURNEY.length) {
+    saveJourney(0);
+    openJourney();
+    return;
+  }
+  const stop = JOURNEY[i];
+  S.worlds[0] = stop.world;
+  applyUiWorld(stop.world);
+  if (stop.type === "classic") {
+    S.rules = {
+      decoy: !!stop.rules.decoy,
+      sonar: !!stop.rules.sonar,
+      ghost: !!stop.rules.ghost,
+    };
+    syncRuleChips();
+    startMode("ai");
+  } else if (stop.type === "puzzle") {
+    startPuzzle();
+  } else if (stop.type === "chase") {
+    startChase("ai");
+  } else {
+    startBoss("ai");
+  }
+  // the starters clear any stale journey state — claim it afterwards
+  S.journey = { stop: i, nextStop: i };
+  toast(`${stop.emoji} Etappe ${i + 1}: ${stop.label}`, 2600);
+}
+
+// call from every win path — upgrades the win screen into a stage clear
+function journeyAdvance(won) {
+  if (!S.journey) return;
+  if (!won) {
+    $("#btn-rematch").textContent = "Nochmal versuchen!";
+    return;
+  }
+  const next = S.journey.stop + 1;
+  S.journey.nextStop = next;
+  if (next > loadJourney()) saveJourney(next);
+  if (next >= JOURNEY.length) {
+    $("#win-sub").textContent = "🎉 Die ganze Weltreise geschafft! Du bist ein Funkel-Held!";
+    $("#btn-rematch").textContent = "Zur Weltreise";
+  } else {
+    $("#win-sub").textContent = `Etappe ${next} von ${JOURNEY.length} geschafft — weiter geht's!`;
+    $("#btn-rematch").textContent = "Nächste Etappe!";
   }
 }
 
@@ -2161,6 +2313,16 @@ function openAlbum() {
 
 function rematch() {
   SND.tap();
+  if (S.journey) {
+    if (S.journey.nextStop >= JOURNEY.length) {
+      S.journey = null;
+      goHome();
+      openJourney();
+      return;
+    }
+    startJourneyStop(S.journey.nextStop);
+    return;
+  }
   if (S.mode === "puzzle") {
     startPuzzle();
     return;
@@ -2197,7 +2359,10 @@ function goHome() {
   S.chase = null;
   S.boss = null;
   S.aquarium = null;
+  S.journey = null;
   S.gameMode = "classic";
+  S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
+  syncRuleChips();
   S.customs = [{}, {}];
   S.oppCustom = null;
   $("#chase-move").hidden = true;
@@ -2234,6 +2399,16 @@ function boot() {
   });
   $("#btn-aquarium").hidden = !flag("aquarium");
   $("#btn-aquarium").addEventListener("click", openAquarium);
+  $("#btn-journey").hidden = !flag("weltreise");
+  $("#btn-journey").addEventListener("click", openJourney);
+  $("#btn-journey-go").addEventListener("click", () => {
+    SND.tap();
+    startJourneyStop(loadJourney());
+  });
+  $("#btn-journey-back").addEventListener("click", () => {
+    SND.tap();
+    show("screen-title");
+  });
   $("#btn-boss").hidden = !flag("boss");
   $("#btn-boss").addEventListener("click", () => {
     SND.tap();
@@ -2306,13 +2481,27 @@ function boot() {
 
   $("#btn-shuffle").addEventListener("click", shuffleFleet);
   $("#btn-style").addEventListener("click", () => {
-    if ($("#style-panel").hidden) openStylePanel();
+    if ($("#customizer").hidden) openCustomizer(0);
     else closeStylePanel();
   });
-  $("#btn-style-close").addEventListener("click", () => {
+  $("#btn-cust-done").addEventListener("click", () => {
     SND.tap();
     closeStylePanel();
   });
+  $("#cust-prev").addEventListener("click", () => {
+    SND.tap();
+    cust.i -= 1;
+    cust.lockedHat = null;
+    renderCustomizer();
+  });
+  $("#cust-next").addEventListener("click", () => {
+    SND.tap();
+    cust.i += 1;
+    cust.lockedHat = null;
+    renderCustomizer();
+  });
+  $("#cust-hat-prev").addEventListener("click", () => cycleHat(-1));
+  $("#cust-hat-next").addEventListener("click", () => cycleHat(1));
   $("#btn-place-done").addEventListener("click", placementDone);
   $("#btn-pass-go").addEventListener("click", () => {
     SND.tap();
