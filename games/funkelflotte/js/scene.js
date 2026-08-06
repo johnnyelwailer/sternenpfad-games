@@ -810,6 +810,7 @@ function framingDistance() {
 }
 
 export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
+  const wasFocused = focused;
   focused = slot;
   const cx = dioramaX(slot);
   const dist = framingDistance();
@@ -819,6 +820,12 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
 
   const d = dioramas[slot];
   const world = d ? d.world : getWorld("ozean");
+
+  // already looking at this board and at rest: nothing to animate
+  if (!immediate && wasFocused === slot && !camTween && camBase.pos.distanceTo(pos) < 0.5) {
+    if (onDone) onDone();
+    return;
+  }
 
   if (camTween) {
     camTween.cancel();
@@ -833,6 +840,7 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
     if (onDone) onDone();
     return;
   }
+
   const fromPos = camera.position.clone();
   const fromLook = camBase.look.clone();
   const fromTop = sky.material.uniforms.top.value.clone();
@@ -843,20 +851,63 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
   const toHor = new THREE.Color(world.colors.horizon ?? world.colors.fog);
   const toFog = new THREE.Color(world.colors.fog);
   const toHemi = new THREE.Color(world.colors.light);
+
+  const lerpSky = (v) => {
+    sky.material.uniforms.top.value.lerpColors(fromTop, toTop, v);
+    sky.material.uniforms.horizon.value.lerpColors(fromHor, toHor, v);
+    scene.fog.color.lerpColors(fromFog, toFog, v);
+    hemi.color.lerpColors(fromHemi, toHemi, v);
+  };
+
+  const sameBoard = Math.abs(fromPos.x - cx) < DIORAMA_GAP / 2;
+
+  if (sameBoard) {
+    // small reframe on the same board: gentle glide
+    camTween = tween(
+      (v) => {
+        camera.position.lerpVectors(fromPos, pos, v);
+        camBase.look.lerpVectors(fromLook, look, v);
+        camera.lookAt(camBase.look);
+        lerpSky(v);
+      },
+      {
+        dur: 0.5,
+        ease: Ease.inOutQuad,
+        onDone: () => {
+          camBase.pos.copy(pos);
+          camTween = null;
+          if (onDone) onDone();
+        },
+      }
+    );
+    return;
+  }
+
+  // Board switch: quick "flip through the sky" — pitch up until only
+  // sky fills the view, hop sideways unseen, then drop down onto the
+  // other board. Short, and no long lateral dash.
+  const upFrom = fromPos.clone().add(new THREE.Vector3(0, 6, 2));
+  const upTo = pos.clone().add(new THREE.Vector3(0, 6, 2));
+  const skyFrom = new THREE.Vector3(fromPos.x, fromPos.y + 70, fromPos.z - 20);
+  const skyTo = new THREE.Vector3(pos.x, pos.y + 70, pos.z - 20);
+
   camTween = tween(
     (v) => {
-      camera.position.lerpVectors(fromPos, pos, v);
-      camera.position.y += Math.sin(v * Math.PI) * 7;
-      camBase.look.lerpVectors(fromLook, look, v);
+      if (v < 0.5) {
+        const k = Ease.inOutQuad(v * 2);
+        camera.position.lerpVectors(fromPos, upFrom, k);
+        camBase.look.lerpVectors(fromLook, skyFrom, k * k);
+      } else {
+        const k = Ease.inOutQuad((v - 0.5) * 2);
+        camera.position.lerpVectors(upTo, pos, k);
+        camBase.look.lerpVectors(skyTo, look, 1 - (1 - k) * (1 - k));
+      }
       camera.lookAt(camBase.look);
-      sky.material.uniforms.top.value.lerpColors(fromTop, toTop, v);
-      sky.material.uniforms.horizon.value.lerpColors(fromHor, toHor, v);
-      scene.fog.color.lerpColors(fromFog, toFog, v);
-      hemi.color.lerpColors(fromHemi, toHemi, v);
+      lerpSky(v);
     },
     {
-      dur: 1.0,
-      ease: Ease.inOutCubic,
+      dur: 0.85,
+      ease: Ease.linear,
       onDone: () => {
         camBase.pos.copy(pos);
         camTween = null;

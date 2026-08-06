@@ -104,18 +104,18 @@ function flyer(color, size, wingShape = "round") {
 
 // stylized water: calm bright lagoon around the board, waves further
 // out, caustic sparkles inside, animated foam ring at the beach edge
-function makeWater(lagoonR, beachR) {
+function makeWater(lagoonR, beachR, { shallow = 0x6fd4e8, deep = 0x1e72b8, fog = 0xa8dcef } = {}) {
   const geo = new THREE.PlaneGeometry(120, 120, 52, 52);
   geo.rotateX(-Math.PI / 2);
   const material = new THREE.ShaderMaterial({
     transparent: false,
     uniforms: {
       uTime: { value: 0 },
-      uShallow: { value: new THREE.Color(0x6fd4e8) },
-      uDeep: { value: new THREE.Color(0x1e72b8) },
+      uShallow: { value: new THREE.Color(shallow) },
+      uDeep: { value: new THREE.Color(deep) },
       uLagoonR: { value: lagoonR },
       uBeachR: { value: beachR },
-      uFog: { value: new THREE.Color(0xa8dcef) },
+      uFog: { value: new THREE.Color(fog) },
     },
     vertexShader: `
       uniform float uTime;
