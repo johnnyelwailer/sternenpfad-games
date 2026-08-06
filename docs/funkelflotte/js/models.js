@@ -1052,11 +1052,92 @@ const BUILDERS = {
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
+// ------------------------------------------------------- customization
+
+// kid-friendly tint palette (null = the creature's natural colors)
+export const TINTS = [null, 0xff7a6b, 0x5fb8e8, 0x8fd05f, 0xb388ff, 0xff8ac2, 0xffc94d];
+
+// snap-on accessories, auto-anchored on top of any creature
+export const ACCESSORIES = [null, "party", "krone", "propeller", "blume", "schleife"];
+export const ACCESSORY_NAMES = { party: "Partyhut", krone: "Krone", propeller: "Propeller", blume: "Blume", schleife: "Schleife" };
+
+function buildAccessory(kind) {
+  const g = new THREE.Group();
+  let animate = null;
+  if (kind === "party") {
+    const cone = add(g, new THREE.ConeGeometry(0.17, 0.42, 10), mat(0xff8ac2, { roughness: 0.55 }), 0, 0.21, 0);
+    add(g, new THREE.TorusGeometry(0.17, 0.028, 6, 14), mat(0xffd447), 0, 0.02, 0).rotation.x = Math.PI / 2;
+    add(g, new THREE.SphereGeometry(0.06, 8, 6), mat(0x5fb8e8), 0, 0.45, 0);
+    for (const [dy, dz] of [[0.12, 0.08], [0.24, -0.06], [0.3, 0.05]]) {
+      add(g, new THREE.SphereGeometry(0.03, 6, 5), mat(0xfdf6e3), 0.1, dy, dz);
+    }
+  } else if (kind === "krone") {
+    const goldM = mat(0xffc94d, { metalness: 0.45, roughness: 0.35 });
+    add(g, new THREE.CylinderGeometry(0.17, 0.19, 0.14, 10), goldM, 0, 0.07, 0);
+    for (let i = 0; i < 5; i += 1) {
+      const a = (i / 5) * Math.PI * 2;
+      add(g, new THREE.ConeGeometry(0.05, 0.16, 5), goldM, Math.cos(a) * 0.15, 0.2, Math.sin(a) * 0.15);
+    }
+    add(g, new THREE.SphereGeometry(0.045, 8, 6), mat(0xe85d75, { roughness: 0.3 }), 0, 0.16, 0.14);
+  } else if (kind === "propeller") {
+    add(g, new THREE.SphereGeometry(0.19, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x5fb8e8, { roughness: 0.6 }), 0, 0, 0);
+    add(g, new THREE.CylinderGeometry(0.02, 0.02, 0.14, 5), mat(0xcfd6ea), 0, 0.2, 0);
+    const rotor = new THREE.Group();
+    rotor.position.y = 0.28;
+    for (const sd of [-1, 1]) {
+      const blade = add(rotor, new THREE.BoxGeometry(0.3, 0.02, 0.08), mat(0xff7a6b), sd * 0.16, 0, 0);
+      blade.rotation.y = sd * 0.12;
+    }
+    add(rotor, new THREE.SphereGeometry(0.035, 6, 5), mat(0xcfd6ea), 0, 0, 0);
+    g.add(rotor);
+    animate = (t) => {
+      rotor.rotation.y = t * 9;
+    };
+  } else if (kind === "blume") {
+    add(g, new THREE.CylinderGeometry(0.015, 0.02, 0.22, 5), mat(0x5fae4f), 0, 0.11, 0);
+    for (let i = 0; i < 6; i += 1) {
+      const a = (i / 6) * Math.PI * 2;
+      const petal = add(g, new THREE.SphereGeometry(0.075, 8, 6), mat(0xfdf6e3, { roughness: 0.6 }), Math.cos(a) * 0.1, 0.26, Math.sin(a) * 0.1);
+      petal.scale.y = 0.5;
+    }
+    add(g, new THREE.SphereGeometry(0.06, 8, 6), mat(0xffd447), 0, 0.27, 0);
+  } else if (kind === "schleife") {
+    const bowM = mat(0xe85d75, { roughness: 0.55 });
+    for (const sd of [-1, 1]) {
+      const loop = add(g, new THREE.SphereGeometry(0.11, 8, 6), bowM, sd * 0.12, 0.06, 0);
+      loop.scale.set(1.2, 0.7, 0.5);
+      loop.rotation.z = sd * 0.4;
+    }
+    add(g, new THREE.SphereGeometry(0.055, 8, 6), bowM, 0, 0.06, 0);
+  }
+  g.userData.animate = animate;
+  return g;
+}
+
+// generic tint: shift body materials toward the chosen color while
+// keeping eyes, whites and glowing bits untouched
+function applyTint(root, tintHex) {
+  const tint = new THREE.Color(tintHex);
+  root.traverse((o) => {
+    if (!o.isMesh || !o.material || !o.material.color) return;
+    const m = o.material;
+    if (m.emissiveIntensity && m.emissiveIntensity >= 0.8) return;
+    const c = m.color;
+    const max = Math.max(c.r, c.g, c.b);
+    const min = Math.min(c.r, c.g, c.b);
+    if (max > 0.86 && min > 0.72) return; // whites/creams (eyes, bellies)
+    if (max < 0.22) return; // near-black (pupils)
+    c.lerp(tint, 0.5);
+  });
+}
+
 // Build a creature and normalize its footprint so every model clearly
 // spans its `size` cells along X and stays within ~1 cell of depth.
-export function buildCreature(worldId, index, size) {
+// `custom` = { tint: index into TINTS, hat: index into ACCESSORIES }
+export function buildCreature(worldId, index, size, custom = null) {
   const builders = BUILDERS[worldId] || BUILDERS.ozean;
   const inner = builders[index % builders.length](size);
+  if (custom && TINTS[custom.tint]) applyTint(inner, TINTS[custom.tint]);
   const bbox = new THREE.Box3().setFromObject(inner);
   const w = Math.max(0.001, bbox.max.x - bbox.min.x);
   const d = Math.max(0.001, bbox.max.z - bbox.min.z);
@@ -1065,6 +1146,23 @@ export function buildCreature(worldId, index, size) {
   inner.scale.set(sx, clamp((sx + sz) / 2, 0.85, 1.25), sz);
   const wrap = new THREE.Group();
   wrap.add(inner);
-  wrap.userData.animate = inner.userData.animate;
+
+  let hatAnim = null;
+  const hatKind = custom ? ACCESSORIES[custom.hat] : null;
+  if (hatKind) {
+    const hat = buildAccessory(hatKind);
+    const scaled = new THREE.Box3().setFromObject(wrap);
+    // sit on the highest point, slightly toward the face (-X)
+    hat.position.set((scaled.min.x + scaled.max.x) / 2 - size * 0.12, scaled.max.y - 0.03, (scaled.min.z + scaled.max.z) / 2);
+    hat.scale.setScalar(clamp(size * 0.45, 0.85, 1.35));
+    wrap.add(hat);
+    hatAnim = hat.userData.animate;
+  }
+
+  const innerAnim = inner.userData.animate;
+  wrap.userData.animate = (t) => {
+    if (innerAnim) innerAnim(t);
+    if (hatAnim) hatAnim(t);
+  };
   return wrap;
 }
