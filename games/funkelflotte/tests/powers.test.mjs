@@ -30,6 +30,12 @@ test("every power has complete metadata and a sane target", () => {
   }
 });
 
+test("treasure defaults are scarce", () => {
+  assert.equal(P.TREASURES_PER_BOARD, 1);
+  assert.equal(P.HAND_MAX, 2);
+  assert.ok(P.RECHARGE_EVERY >= 6);
+});
+
 test("treasures avoid creatures, balloons and each other", () => {
   const rng = seeded(99);
   for (let round = 0; round < 5; round += 1) {

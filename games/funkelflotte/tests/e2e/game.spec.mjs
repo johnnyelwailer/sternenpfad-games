@@ -239,18 +239,26 @@ test("Zauber-Kräfte: legend explains, world power + treasure + powers work", as
   await page.locator("#btn-place-done").click();
   await waitMyTurn(page);
 
-  // ozean's world power is in hand, treasures are hidden on both boards
+  // ozean's world power is in hand, ONE visible treasure per board
   expect(await page.evaluate(() => window.__FF.state.powers[0].hand)).toEqual(["welle"]);
-  expect(await page.evaluate(() => window.__FF.state.boards[1].treasures.length)).toBe(3);
+  expect(await page.evaluate(() => window.__FF.state.boards[1].treasures.length)).toBe(1);
   await expect(page.locator('.power-chip[data-power="welle"]')).toBeVisible();
+  // chips carry rendered icons, not glyphs
+  await expect(page.locator(".power-chip .power-icon").first()).toHaveAttribute(
+    "src",
+    /^data:image\/png/
+  );
 
-  // dig up a treasure: a new power arrives and the turn continues
+  // dig up the visible treasure: a power arrives, but it costs the turn
   const t = await page.evaluate(() => window.__FF.state.boards[1].treasures[0]);
   await page.evaluate(([x, y]) => window.__FF.tap(x, y), [t.x, t.y]);
   await expect
     .poll(() => page.evaluate(() => window.__FF.state.powers[0].hand.length))
     .toBe(2);
-  expect(await page.evaluate(() => window.__FF.state.turn)).toBe(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.boards[1].treasures.length))
+    .toBe(0);
+  await waitMyTurn(page); // the dig ended our turn — robo answered
 
   // fernglas peeks a creature cell without marking it
   await page.evaluate(() => window.__FF.power("fernglas"));

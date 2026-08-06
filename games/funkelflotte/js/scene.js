@@ -7,7 +7,7 @@
 import * as THREE from "../vendor/three.module.min.js";
 import { tween, Ease, updateTweens } from "./tween.js";
 import { getWorld } from "./worlds.js";
-import { buildCreature, buildDecoy } from "./models.js";
+import { buildCreature, buildDecoy, buildTreasureChest, buildPowerIcon } from "./models.js";
 import { buildEnvironment } from "./environments.js";
 
 const GRID = 8;
@@ -182,6 +182,11 @@ export function initScene(canvasEl) {
           if (c.model.userData.animate) c.model.userData.animate(clockT + c.phase);
           c.holder.position.y = c.baseY + Math.sin(clockT * 1.4 + c.phase) * 0.05;
           if (c.wander) updateWander(c, dt);
+        }
+        if (d.chests) {
+          for (const ch of d.chests.values()) {
+            ch.userData.animate?.(clockT + (ch.userData.phase || 0));
+          }
         }
         updateBursts(d, dt);
       }
@@ -866,7 +871,246 @@ export function dimEdgeCount(slot, axis, index) {
   spr.material.opacity = 0.55;
 }
 
+// ---------------------------------------------------- treasure chests
+// Chests are VISIBLE to both players — digging one is a real choice.
+
+export function renderTreasures(slot, positions) {
+  const d = dioramas[slot];
+  if (!d) return;
+  if (!d.chests) d.chests = new Map();
+  for (const [, old] of d.chests) d.root.remove(old);
+  d.chests.clear();
+  for (const t of positions || []) {
+    const tile = d.tiles.get(`${t.x},${t.y}`);
+    if (!tile) continue;
+    const chest = buildTreasureChest();
+    chest.position.set(tile.position.x, 0.05, tile.position.z);
+    chest.rotation.y = 0.4;
+    chest.userData.phase = Math.random() * 7;
+    d.root.add(chest);
+    d.chests.set(`${t.x},${t.y}`, chest);
+    chest.scale.setScalar(0.01);
+    tween((v) => chest.scale.setScalar(v), { dur: 0.6, ease: Ease.outBack });
+  }
+}
+
+// rich dig-up moment: lid flies open, gold fountains out, chest fades
+export function openTreasure(slot, x, y) {
+  const d = dioramas[slot];
+  const chest = d?.chests?.get(`${x},${y}`);
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  const center = tile ? tile.position : { x: 0, z: 0 };
+  flash(d, center, 0xffc94d);
+  starburst(d, center);
+  ringWave(d, center, 0xffc94d);
+  ringWave(d, center, 0xffffff);
+  const pos = new THREE.Vector3(center.x + d.root.position.x, 0.4, center.z);
+  burst(d, pos, 0xffc94d, { count: 60, up: true });
+  burst(d, pos, 0xfff3c2, { count: 30, up: true });
+  camKick = 0.45;
+  if (!chest) return;
+  d.chests.delete(`${x},${y}`);
+  const lid = chest.userData.lid;
+  tween((v) => {
+    if (lid) lid.rotation.x = -v * 2.1;
+    chest.position.y = 0.05 + Math.sin(v * Math.PI) * 0.35;
+  }, {
+    dur: 0.5,
+    ease: Ease.outCubic,
+    onDone: () => {
+      setTimeout(() => {
+        tween((v) => chest.scale.setScalar(Math.max(0.01, 1 - v)), {
+          dur: 0.5,
+          ease: Ease.outQuad,
+          onDone: () => d.root.remove(chest),
+        });
+      }, 900);
+    },
+  });
+}
+
 // ------------------------------------------------------ power effects
+
+// each power projects its purpose with its own signature effect
+
+export function waveSweep(slot, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  for (let x = 0; x < GRID; x += 1) {
+    const tile = d.tiles.get(`${x},${y}`);
+    if (!tile) continue;
+    setTimeout(() => {
+      splashColumn(d, tile.position, d.world.colors.splash ?? 0x9fdcff);
+      if (x % 2 === 0) ringWave(d, tile.position, 0xffffff);
+    }, x * 90);
+  }
+  camKick = 0.3;
+}
+
+export function radarPing(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  const center = { x: tile.position.x + 0.5, z: tile.position.z + 0.5 };
+  flash(d, center, 0x7dff9a);
+  for (let i = 0; i < 3; i += 1) {
+    setTimeout(() => ringWave(d, center, 0x7dff9a), i * 220);
+  }
+}
+
+export function spotlight(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  flash(d, tile.position, 0xfff3c2);
+  // focusing ring: shrinks ONTO the cell instead of expanding away
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.3, 0.42, 26),
+    new THREE.MeshBasicMaterial({ color: 0xfff3c2, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(tile.position.x, 0.16, tile.position.z);
+  d.root.add(ring);
+  tween(
+    (v) => {
+      ring.scale.setScalar(3.4 - v * 2.7);
+      ring.material.opacity = 0.35 + v * 0.55;
+    },
+    {
+      dur: 0.55,
+      ease: Ease.outCubic,
+      onDone: () => {
+        d.root.remove(ring);
+        ring.geometry.dispose();
+        ring.material.dispose();
+      },
+    }
+  );
+}
+
+export function clockRipple(slot) {
+  const d = dioramas[slot];
+  if (!d) return;
+  flash(d, { x: 0, z: 0 }, 0x9fdcff);
+  for (let i = 0; i < 2; i += 1) setTimeout(() => ringWave(d, { x: 0, z: 0 }, 0xffd447), i * 240);
+  starburst(d, { x: 0, z: 0 });
+}
+
+export function tornadoAt(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  const cx = tile ? tile.position.x : 0;
+  const cz = tile ? tile.position.z : 0;
+  const holder = new THREE.Group();
+  const rings = [];
+  for (let i = 0; i < 4; i += 1) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.14 + i * 0.12, 0.045, 8, 16),
+      new THREE.MeshBasicMaterial({ color: 0xdfe9f2, transparent: true, opacity: 0.85, depthWrite: false })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.15 + i * 0.3;
+    holder.add(ring);
+    rings.push(ring);
+  }
+  holder.position.set(cx, 0, cz);
+  d.root.add(holder);
+  tween(
+    (v) => {
+      holder.rotation.y = v * 14;
+      holder.position.y = v * 0.7;
+      rings.forEach((r) => (r.material.opacity = 0.85 * (1 - v)));
+    },
+    {
+      dur: 1.1,
+      ease: Ease.outQuad,
+      onDone: () => {
+        d.root.remove(holder);
+        rings.forEach((r) => {
+          r.geometry.dispose();
+          r.material.dispose();
+        });
+      },
+    }
+  );
+  camKick = 0.35;
+}
+
+export function bellToll(slot) {
+  const d = dioramas[slot];
+  if (!d) return;
+  for (let i = 0; i < 3; i += 1) setTimeout(() => ringWave(d, { x: 0, z: 0 }, 0xffc94d), i * 260);
+  flash(d, { x: 0, z: 0 }, 0xffc94d);
+}
+
+export function cloverRain(slot) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const pos = new THREE.Vector3(d.root.position.x, 3.4, 0);
+  burst(d, pos, 0x6fd087, { count: 60, up: false });
+  burst(d, pos, 0xa7e8b8, { count: 30, up: false });
+  flash(d, { x: 0, z: 0 }, 0x6fd087);
+}
+
+export function starComet(slot, x, y, delay = 0) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  setTimeout(() => {
+    const spr = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: padTexture(), color: 0xffe066, transparent: true, depthWrite: false })
+    );
+    const fromY = 5.5;
+    spr.position.set(tile.position.x - 2.2, fromY, tile.position.z - 1.4);
+    spr.scale.setScalar(0.9);
+    d.root.add(spr);
+    tween(
+      (v) => {
+        spr.position.x = tile.position.x - 2.2 * (1 - v);
+        spr.position.y = fromY - (fromY - 0.3) * v;
+        spr.position.z = tile.position.z - 1.4 * (1 - v);
+      },
+      {
+        dur: 0.4,
+        ease: Ease.inQuad,
+        onDone: () => {
+          d.root.remove(spr);
+          spr.material.dispose();
+          starburst(d, tile.position);
+          ringWave(d, tile.position, 0xffe066);
+          camKick = 0.3;
+        },
+      }
+    );
+  }, delay);
+}
+
+// crisp rendered icon for a power (cached data URL — no glyphs)
+const powerIconCache = new Map();
+export function powerIconUrl(kind, px = 96) {
+  if (powerIconCache.has(kind)) return powerIconCache.get(kind);
+  const r = ensureThumbRenderer(px);
+  const s = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 20);
+  s.add(new THREE.HemisphereLight(0xffffff, 0x556677, 1.2));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.6);
+  dl.position.set(-2, 4, 3);
+  s.add(dl);
+  const model = buildPowerIcon(kind);
+  model.rotation.y = 0.5;
+  s.add(model);
+  frameToFit(cam, model, 1.15);
+  r.render(s, cam);
+  const url = r.domElement.toDataURL("image/png");
+  disposeSceneTree(s);
+  powerIconCache.set(kind, url);
+  return url;
+}
 
 // secret peek info: "!" over a creature cell, a soft dot over water.
 // The tile itself stays untouched (and shootable).

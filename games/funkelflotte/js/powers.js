@@ -4,9 +4,9 @@
 
 import * as E from "./engine.js";
 
-export const HAND_MAX = 3;
-export const TREASURES_PER_BOARD = 3;
-export const RECHARGE_EVERY = 4; // own turns between free powers
+export const HAND_MAX = 2; // powers stay scarce and precious
+export const TREASURES_PER_BOARD = 1; // one visible chest per board
+export const RECHARGE_EVERY = 6; // own turns between free powers
 
 // target: what a power needs before it fires
 //   none  — instant | cell — one enemy cell | row — one enemy row

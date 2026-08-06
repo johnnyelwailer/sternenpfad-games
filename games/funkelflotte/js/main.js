@@ -318,6 +318,13 @@ function resetRuleState() {
   S.sonarMap = [{}, {}];
 }
 
+// seed a board's treasure exactly once — positions may already have
+// been announced to the opponent
+function ensureTreasures(board) {
+  if (!board.treasures) PW.seedTreasures(board);
+  return board.treasures;
+}
+
 // ghost rule: count shots per board, fade old miss marks
 function ghostTick(idx, x, y, result) {
   if (!S.rules.ghost) return;
@@ -721,7 +728,11 @@ function placementDone() {
     $("#btn-place-done").disabled = true;
     $("#btn-place-done").textContent = "Warte auf Mitspieler …";
     status("Gleich geht es los!");
-    S.net.send({ t: "ready", custom: S.customs[0] });
+    S.net.send({
+      t: "ready",
+      custom: S.customs[0],
+      treasures: flag("powers") && S.powersOn ? ensureTreasures(S.boards[0]) : [],
+    });
     maybeStartOnline();
   }
 }
@@ -745,24 +756,43 @@ function renderPowers() {
     const chip = document.createElement("button");
     chip.className = `power-chip${S.pendingPower === kind ? " armed" : ""}`;
     chip.dataset.power = kind;
-    chip.innerHTML = `<span class="power-emoji">${p.emoji}</span><span class="power-name">${p.name}</span>${
+    chip.innerHTML = `<img class="power-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="power-name">${p.name}</span>${
       n > 1 ? `<span class="power-count">${n}×</span>` : ""
     }`;
     chip.addEventListener("click", () => onPowerTap(kind));
     box.appendChild(chip);
   }
   // passive badges so kids see what is active
-  if (st.shield) box.appendChild(passiveBadge("🪷", "Schild aktiv"));
-  if (st.clover) box.appendChild(passiveBadge("🍀", "Glücksklee"));
-  if (st.doubleShot) box.appendChild(passiveBadge("🎯", "Doppelschuss"));
+  if (st.shield) box.appendChild(passiveBadge("schild", "Schild aktiv"));
+  if (st.clover) box.appendChild(passiveBadge("klee", "Glücksklee"));
+  if (st.doubleShot) box.appendChild(passiveBadge("doppel", "Doppelschuss"));
   box.hidden = box.children.length === 0;
 }
 
-function passiveBadge(emoji, label) {
+function passiveBadge(kind, label) {
   const b = document.createElement("div");
   b.className = "power-chip passive";
-  b.innerHTML = `<span class="power-emoji">${emoji}</span><span class="power-name">${label}</span>`;
+  b.innerHTML = `<img class="power-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="power-name">${label}</span>`;
   return b;
+}
+
+// big reveal card whenever a power arrives — icon, name, what it does
+let gainTimer = null;
+function showPowerGain(kind, why) {
+  const p = PW.POWERS[kind];
+  const card = $("#power-gain");
+  card.innerHTML = `<div class="gain-why">${why}</div>
+    <img alt="" src="${SCENE.powerIconUrl(kind, 192)}" />
+    <div class="gain-name">${p.name}</div>
+    <div class="gain-desc">${p.desc}</div>`;
+  card.hidden = false;
+  clearTimeout(gainTimer);
+  gainTimer = setTimeout(() => {
+    card.hidden = true;
+  }, FAST ? 300 : 3200);
+  card.onclick = () => {
+    card.hidden = true;
+  };
 }
 
 function consumePower(kind) {
@@ -777,14 +807,13 @@ function gainPower(playerIdx, kind, why) {
   const st = S.powers[playerIdx];
   if (!st) return;
   if (st.hand.length >= PW.HAND_MAX) {
-    if (playerIdx === me()) toast("Deine Zauber-Tasche ist voll! (max. 3)");
+    if (playerIdx === me()) toast(`Deine Zauber-Tasche ist voll! (max. ${PW.HAND_MAX})`);
     return;
   }
   st.hand.push(kind);
-  const p = PW.POWERS[kind];
   if (playerIdx === me()) {
     SND.sparkle();
-    toast(`${why} ${p.emoji} ${p.name}!`, 2600);
+    showPowerGain(kind, why);
   }
   renderPowers();
 }
@@ -855,23 +884,27 @@ function executePower(kind, target) {
 
   if (kind === "welle") {
     consumePower(kind);
+    SCENE.waveSweep(enemySlot, target.y);
+    SND.whoosh();
     resolveInfo(kind, { y: target.y }, ({ cells }) => {
       SND.sparkle();
-      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), i * 90));
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 300 + i * 90));
       status("🌊 Die große Welle verrät ihre Geheimnisse!");
     });
   } else if (kind === "radar") {
     consumePower(kind);
+    SCENE.radarPing(enemySlot, target.x, target.y);
     resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
       SND.sparkle();
-      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), i * 120));
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 400 + i * 140));
       status("🛰️ Der Satellit hat alles durchleuchtet!");
     });
   } else if (kind === "fernglas") {
     consumePower(kind);
+    SCENE.spotlight(enemySlot, target.x, target.y);
     resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
       SND.sparkle();
-      SCENE.peekMarker(enemySlot, cells[0].x, cells[0].y, cells[0].ship);
+      setTimeout(() => SCENE.peekMarker(enemySlot, cells[0].x, cells[0].y, cells[0].ship), 450);
       status(cells[0].ship ? "🔍 Da versteckt sich jemand!" : "🔍 Hier ist nur Wasser.");
     });
   } else if (kind === "trommel" || kind === "kompass") {
@@ -888,6 +921,7 @@ function executePower(kind, target) {
     });
   } else if (kind === "glocke") {
     consumePower(kind);
+    SCENE.bellToll(enemySlot);
     resolveInfo(kind, {}, ({ big }) => {
       SND.sparkle();
       status(
@@ -899,6 +933,7 @@ function executePower(kind, target) {
   } else if (kind === "klee") {
     consumePower(kind);
     st.clover = true;
+    SCENE.cloverRain(enemySlot);
     SND.fanfare();
     status("🍀 Glücksklee! Jedes Daneben zeigt jetzt die Entfernung.");
   } else if (kind === "doppel") {
@@ -909,6 +944,7 @@ function executePower(kind, target) {
     consumePower(kind);
     S.extraTurn = my;
     if (S.mode === "online") S.net.send({ t: "pw", kind: "zeit" });
+    SCENE.clockRipple(enemySlot);
     SND.sparkle();
     status("⏳ Zeitzauber! Nach deinem nächsten Daneben darfst du gleich weitersuchen.");
   } else if (kind === "schild") {
@@ -928,6 +964,9 @@ function executePower(kind, target) {
     }
     consumePower(kind);
     syncCreatureVisibility();
+    const mid = moved.dir === "h" ? moved.x + Math.floor(moved.size / 2) : moved.x;
+    const midY = moved.dir === "v" ? moved.y + Math.floor(moved.size / 2) : moved.y;
+    SCENE.tornadoAt(slotFor(my), mid, midY);
     if (S.mode === "online") S.net.send({ t: "pw", kind: "wirbel" });
     SND.whoosh();
     status("🌪️ Wusch! Ein Freund hat heimlich das Versteck gewechselt.");
@@ -978,7 +1017,9 @@ function runSalvo(target) {
 
 function applySalvoResults(targetIdx, results, done) {
   const slot = slotFor(targetIdx);
+  const step = FAST ? 70 : 520;
   results.forEach((r, i) => {
+    SCENE.starComet(slot, r.x, r.y, i * step);
     setTimeout(() => {
       SND.plop();
       SCENE.applyShot(slot, r.x, r.y, r.res.result === E.MISS ? "miss" : "hit");
@@ -988,11 +1029,11 @@ function applySalvoResults(targetIdx, results, done) {
         SCENE.revealWater(slot, r.res.revealed || []);
         renderChips(other(S.viewer));
       }
-    }, i * (FAST ? 60 : 420));
+    }, i * step + (FAST ? 30 : 420));
   });
   const hits = results.filter((r) => r.res.result !== E.MISS).length;
   status(`⭐ Sternschnuppen-Salve: ${hits} Treffer!`);
-  setTimeout(done, results.length * (FAST ? 60 : 420) + (FAST ? 80 : 600));
+  setTimeout(done, results.length * step + (FAST ? 120 : 900));
 }
 
 // ------------------------------------------------------------ pass/world
@@ -1036,14 +1077,20 @@ function startBattle(firstTurn) {
   SCENE.setCustomization("mine", customFor(0));
   SCENE.setCustomization("enemy", customFor(1));
 
-  // Zauber-Kräfte: hands, world powers, hidden treasures
+  // Zauber-Kräfte: hands, world powers, one visible treasure per board
   if (flag("powers") && S.powersOn && S.gameMode === "classic") {
     S.powers = [PW.newPowerState(S.worlds[0]), PW.newPowerState(S.worlds[1])];
-    for (const b of S.boards) if (b) PW.seedTreasures(b);
-    const wp = PW.POWERS[PW.worldPower(S.worlds[S.viewer])];
-    toast(`✨ Deine Welt-Kraft: ${wp.emoji} ${wp.name}!`, 3000);
+    for (const b of S.boards) if (b) ensureTreasures(b);
+    SCENE.renderTreasures("mine", S.boards[0]?.treasures ?? []);
+    SCENE.renderTreasures(
+      "enemy",
+      S.mode === "online" ? S.oppTreasures ?? [] : S.boards[1]?.treasures ?? []
+    );
+    showPowerGain(PW.worldPower(S.worlds[S.viewer]), "🌍 Deine Welt-Kraft");
   } else {
     S.powers = [null, null];
+    SCENE.renderTreasures("mine", []);
+    SCENE.renderTreasures("enemy", []);
   }
   syncCreatureVisibility();
   replayMarks(0);
@@ -1135,15 +1182,15 @@ function handleTap(x, y) {
   // the result of the first shot is still playing out
   S.inputLocked = true;
 
-  // dug up a treasure: gain a power and keep searching
+  // dug up the treasure: a power for a turn — the chest was worth it
   if (res.result === E.MISS && powersEnabled() && PW.treasureAt(board, x, y)) {
-    S.inputLocked = false;
     board.treasures = board.treasures.filter((t) => !(t.x === x && t.y === y));
     SCENE.applyShotQuiet(slotFor(targetIdx), x, y, "miss");
-    SCENE.treasureBurst(slotFor(targetIdx), x, y);
+    SCENE.openTreasure(slotFor(targetIdx), x, y);
     SND.fanfare();
-    gainPower(S.turn, PW.drawPower(Math.random, myPowers()?.hand ?? []), "💎 Schatz gefunden:");
-    status("💎 Ein Schatz! Such gleich weiter!");
+    gainPower(S.turn, PW.drawPower(Math.random, myPowers()?.hand ?? []), "💎 Schatz geborgen");
+    status("💎 Schatz geborgen! Das war deinen Zug wert.");
+    setTimeout(() => afterMyShot({ result: E.MISS, gameOver: false }), FAST ? 80 : 1800);
     return;
   }
 
@@ -1305,13 +1352,17 @@ function scheduleRoboTurn() {
 
     const res = E.fire(myBoard, shot.x, shot.y);
 
-    // robo digs up one of my treasures: gone, and robo keeps searching
+    // robo digs up my treasure: it is gone, and robo's turn ends
     if (res.result === E.MISS && powersEnabled() && PW.treasureAt(myBoard, shot.x, shot.y)) {
       myBoard.treasures = myBoard.treasures.filter((t) => !(t.x === shot.x && t.y === shot.y));
       SCENE.applyShotQuiet("mine", shot.x, shot.y, "miss");
-      SCENE.treasureBurst("mine", shot.x, shot.y);
-      status("💎 Oh nein, Robo hat einen Schatz stibitzt! Er sucht weiter …");
-      scheduleRoboTurn();
+      SCENE.openTreasure("mine", shot.x, shot.y);
+      status("💎 Oh nein, Robo hat deinen Schatz stibitzt!");
+      setTimeout(() => {
+        S.turn = 0;
+        S.inputLocked = false;
+        beginTurn();
+      }, FAST ? 80 : 1800);
       return;
     }
     noteResult(S.aiState, shot.x, shot.y, res.result, res.ship ? E.shipCells(res.ship) : null);
@@ -1698,6 +1749,11 @@ function handleNetMessage(msg) {
     case "ready": {
       S.oppReady = true;
       S.oppCustom = sanitizeCustomMap(msg.custom);
+      S.oppTreasures = Array.isArray(msg.treasures)
+        ? msg.treasures
+            .filter((t) => Number.isInteger(t?.x) && Number.isInteger(t?.y))
+            .slice(0, 3)
+        : [];
       maybeStartOnline();
       break;
     }
@@ -1727,15 +1783,22 @@ function handleNetMessage(msg) {
 
       const res = E.fire(S.boards[0], msg.x, msg.y);
 
-      // they dug up one of my treasures — they get a power and continue
+      // they dug up my treasure — they get a power, their turn ends
       if (res.result === E.MISS && powersEnabled() && PW.treasureAt(S.boards[0], msg.x, msg.y)) {
         S.boards[0].treasures = S.boards[0].treasures.filter(
           (t) => !(t.x === msg.x && t.y === msg.y)
         );
         S.net.send({ t: "result", x: msg.x, y: msg.y, result: E.MISS, treasure: true });
         SCENE.applyShotQuiet("mine", msg.x, msg.y, "miss");
-        SCENE.treasureBurst("mine", msg.x, msg.y);
-        status("💎 Dein Mitspieler hat einen Schatz gefunden und sucht weiter …");
+        SCENE.openTreasure("mine", msg.x, msg.y);
+        status("💎 Dein Mitspieler hat deinen Schatz geborgen!");
+        setTimeout(() => {
+          if (S.phase !== "battle") return;
+          S.turn = 0;
+          S.inputLocked = false;
+          beginTurn();
+          toast("Du bist dran!");
+        }, FAST ? 80 : 1800);
         break;
       }
 
@@ -1802,10 +1865,15 @@ function handleNetMessage(msg) {
       if (msg.treasure) {
         S.shadow.marks[E.key(msg.x, msg.y)] = E.MISS;
         SCENE.applyShotQuiet("enemy", msg.x, msg.y, "miss");
-        SCENE.treasureBurst("enemy", msg.x, msg.y);
+        SCENE.openTreasure("enemy", msg.x, msg.y);
         SND.fanfare();
-        gainPower(0, PW.drawPower(Math.random, S.powers[0]?.hand ?? []), "💎 Schatz gefunden:");
-        status("💎 Ein Schatz! Such gleich weiter!");
+        gainPower(0, PW.drawPower(Math.random, S.powers[0]?.hand ?? []), "💎 Schatz geborgen");
+        status("💎 Schatz geborgen! Das war deinen Zug wert.");
+        setTimeout(() => {
+          if (S.phase !== "battle") return;
+          S.turn = 1;
+          beginTurn();
+        }, FAST ? 80 : 1800);
         break;
       }
       const k = E.key(msg.x, msg.y);
@@ -3363,7 +3431,7 @@ function boot() {
       const row = document.createElement("div");
       row.className = "legend-row";
       const worldTag = p.world ? ` <span class="legend-world">(${getWorld(p.world).name})</span>` : "";
-      row.innerHTML = `<span class="legend-emoji">${p.emoji}</span><span class="legend-text"><b>${p.name}</b>${worldTag}<br />${p.desc}</span>`;
+      row.innerHTML = `<img class="legend-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="legend-text"><b>${p.name}</b>${worldTag}<br />${p.desc}</span>`;
       box.appendChild(row);
     }
     box.hidden = false;
