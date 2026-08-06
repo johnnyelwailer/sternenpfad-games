@@ -326,6 +326,7 @@ function startMode(mode) {
   S.gameMode = "classic";
   S.chase = null;
   S.boss = null;
+  S.journey = null;
   S.turn = 0;
   S.viewer = 0;
   S.rematchMine = false;
@@ -1156,6 +1157,7 @@ function startChase(kind) {
   S.mode = "chase";
   S.phase = "chase";
   S.gameMode = "chase";
+  S.journey = null;
   S.chase = { kind, st: CHASE.createChase(), role: "seeker", waiting: false, marks: {} };
   if (kind === "online") {
     show("screen-online");
@@ -1359,6 +1361,7 @@ function chaseEnd(caught) {
     stickerBox.hidden = false;
   }
   $("#btn-rematch").textContent = "Nochmal spielen";
+  journeyAdvance(iWon);
   show("screen-win");
   if (iWon) {
     SND.bigWin();
@@ -1531,6 +1534,7 @@ function startBoss(kind) {
   S.mode = "boss";
   S.phase = "boss";
   S.gameMode = "boss";
+  S.journey = null;
   S.boss = { kind, st: BOSS.createBoss(), role: "hunter", marks: {}, shotsLeft: BOSS.BOSS_SHOTS, wounds: 0 };
   if (kind === "online") {
     show("screen-online");
@@ -1715,6 +1719,7 @@ function bossEnd(hunterWon) {
     stickerBox.hidden = false;
   }
   $("#btn-rematch").textContent = "Nochmal spielen";
+  journeyAdvance(iWon);
   show("screen-win");
   if (iWon) {
     SND.bigWin();
@@ -1862,6 +1867,7 @@ function startPuzzle() {
   S.mode = "puzzle";
   S.phase = "puzzle";
   S.viewer = 0;
+  S.journey = null;
   const worldId = S.worlds[0];
   applyUiWorld(worldId);
 
@@ -1998,6 +2004,7 @@ function puzzleEnd(won) {
     SND.sad();
   }
   $("#btn-rematch").textContent = "Neues Rätsel";
+  journeyAdvance(won);
   show("screen-win");
 }
 
@@ -2049,12 +2056,113 @@ function finishGame(winner) {
     }
     stickerBox.hidden = false;
   }
+  journeyAdvance(iWon);
   show("screen-win");
   if (iWon) {
     SND.bigWin();
     SCENE.confettiRain(slotFor(loserIdx));
   } else {
     SND.sad();
+  }
+}
+
+// ------------------------------------------------------------ Weltreise
+
+// eight stops across the four worlds — each teaches one game or twist
+const JOURNEY = [
+  { world: "ozean", type: "classic", rules: {}, emoji: "🌊", label: "Die erste Suche" },
+  { world: "ozean", type: "classic", rules: { sonar: true }, emoji: "🐬", label: "Delfin-Sonar" },
+  { world: "teich", type: "puzzle", emoji: "🧩", label: "Knobel-Teich" },
+  { world: "teich", type: "classic", rules: { decoy: true }, emoji: "🎈", label: "Ballon-Trick" },
+  { world: "dino", type: "chase", emoji: "🙈", label: "Fang den Frechdachs" },
+  { world: "dino", type: "classic", rules: { ghost: true }, emoji: "👻", label: "Geisterstunde" },
+  { world: "weltraum", type: "puzzle", emoji: "✨", label: "Sternen-Rätsel" },
+  { world: "weltraum", type: "boss", emoji: "👑", label: "Das König-Monster" },
+];
+
+function loadJourney() {
+  const n = parseInt(localStorage.getItem("ff-weltreise") || "0", 10);
+  return Number.isFinite(n) ? Math.max(0, Math.min(JOURNEY.length, n)) : 0;
+}
+
+function saveJourney(n) {
+  try {
+    localStorage.setItem("ff-weltreise", String(n));
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+function openJourney() {
+  SND.tap();
+  const done = loadJourney();
+  const list = $("#journey-stops");
+  list.innerHTML = "";
+  JOURNEY.forEach((stop, i) => {
+    const row = document.createElement("div");
+    row.className = `journey-stop${i < done ? " done" : i === done ? " current" : " locked"}`;
+    const world = getWorld(stop.world);
+    row.innerHTML = `<span class="journey-emoji">${i < done ? "✅" : i === done ? stop.emoji : "🔒"}</span>
+      <span class="journey-label">${i + 1}. ${stop.label}</span>
+      <span class="journey-world">${world.name}</span>`;
+    list.appendChild(row);
+  });
+  const btn = $("#btn-journey-go");
+  if (done >= JOURNEY.length) {
+    $("#journey-title").textContent = "🎉 Weltreise geschafft!";
+    btn.textContent = "Nochmal von vorn";
+  } else {
+    $("#journey-title").textContent = "🗺️ Deine Weltreise";
+    btn.textContent = `Etappe ${done + 1} spielen!`;
+  }
+  show("screen-journey");
+}
+
+function startJourneyStop(i) {
+  if (i >= JOURNEY.length) {
+    saveJourney(0);
+    openJourney();
+    return;
+  }
+  const stop = JOURNEY[i];
+  S.worlds[0] = stop.world;
+  applyUiWorld(stop.world);
+  if (stop.type === "classic") {
+    S.rules = {
+      decoy: !!stop.rules.decoy,
+      sonar: !!stop.rules.sonar,
+      ghost: !!stop.rules.ghost,
+    };
+    syncRuleChips();
+    startMode("ai");
+  } else if (stop.type === "puzzle") {
+    startPuzzle();
+  } else if (stop.type === "chase") {
+    startChase("ai");
+  } else {
+    startBoss("ai");
+  }
+  // the starters clear any stale journey state — claim it afterwards
+  S.journey = { stop: i, nextStop: i };
+  toast(`${stop.emoji} Etappe ${i + 1}: ${stop.label}`, 2600);
+}
+
+// call from every win path — upgrades the win screen into a stage clear
+function journeyAdvance(won) {
+  if (!S.journey) return;
+  if (!won) {
+    $("#btn-rematch").textContent = "Nochmal versuchen!";
+    return;
+  }
+  const next = S.journey.stop + 1;
+  S.journey.nextStop = next;
+  if (next > loadJourney()) saveJourney(next);
+  if (next >= JOURNEY.length) {
+    $("#win-sub").textContent = "🎉 Die ganze Weltreise geschafft! Du bist ein Funkel-Held!";
+    $("#btn-rematch").textContent = "Zur Weltreise";
+  } else {
+    $("#win-sub").textContent = `Etappe ${next} von ${JOURNEY.length} geschafft — weiter geht's!`;
+    $("#btn-rematch").textContent = "Nächste Etappe!";
   }
 }
 
@@ -2161,6 +2269,16 @@ function openAlbum() {
 
 function rematch() {
   SND.tap();
+  if (S.journey) {
+    if (S.journey.nextStop >= JOURNEY.length) {
+      S.journey = null;
+      goHome();
+      openJourney();
+      return;
+    }
+    startJourneyStop(S.journey.nextStop);
+    return;
+  }
   if (S.mode === "puzzle") {
     startPuzzle();
     return;
@@ -2197,7 +2315,10 @@ function goHome() {
   S.chase = null;
   S.boss = null;
   S.aquarium = null;
+  S.journey = null;
   S.gameMode = "classic";
+  S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
+  syncRuleChips();
   S.customs = [{}, {}];
   S.oppCustom = null;
   $("#chase-move").hidden = true;
@@ -2234,6 +2355,16 @@ function boot() {
   });
   $("#btn-aquarium").hidden = !flag("aquarium");
   $("#btn-aquarium").addEventListener("click", openAquarium);
+  $("#btn-journey").hidden = !flag("weltreise");
+  $("#btn-journey").addEventListener("click", openJourney);
+  $("#btn-journey-go").addEventListener("click", () => {
+    SND.tap();
+    startJourneyStop(loadJourney());
+  });
+  $("#btn-journey-back").addEventListener("click", () => {
+    SND.tap();
+    show("screen-title");
+  });
   $("#btn-boss").hidden = !flag("boss");
   $("#btn-boss").addEventListener("click", () => {
     SND.tap();

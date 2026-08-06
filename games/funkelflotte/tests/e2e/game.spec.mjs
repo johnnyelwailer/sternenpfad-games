@@ -400,6 +400,46 @@ test("Fang mich online: hide, sneak-move, and get caught across devices", async 
   await ctxB.close();
 });
 
+test("Weltreise: winning a stop unlocks the next one", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.addInitScript(() => localStorage.setItem("ff-weltreise", "2"));
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await page.evaluate(() => window.__FF.setFast());
+
+  await page.locator("#btn-journey").click();
+  await expect(page.locator(".journey-stop.done")).toHaveCount(2);
+  await expect(page.locator(".journey-stop.current")).toHaveCount(1);
+  await expect(page.locator("#btn-journey-go")).toContainText("Etappe 3");
+
+  // stop 3 is the Knobel-Teich puzzle
+  await page.locator("#btn-journey-go").click();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("puzzle");
+  expect(await page.evaluate(() => window.__FF.state.worlds[0])).toBe("teich");
+
+  const cells = await page.evaluate(() => {
+    const { board } = window.__FF.state.puzzle;
+    const E = window.__FF.engine;
+    return board.ships.flatMap((s) => E.shipCells(s));
+  });
+  for (const c of cells) {
+    await page.evaluate(([x, y]) => {
+      if (window.__FF.state.phase === "puzzle") window.__FF.puzzleTap(x, y);
+    }, [c.x, c.y]);
+    await page.waitForTimeout(60);
+  }
+  await expect(page.locator("#screen-win")).toHaveClass(/active/, { timeout: 15000 });
+  await expect(page.locator("#win-sub")).toContainText("Etappe 3");
+  await expect(page.locator("#btn-rematch")).toContainText("Nächste Etappe");
+  expect(await page.evaluate(() => localStorage.getItem("ff-weltreise"))).toBe("3");
+
+  // next stop: classic with the balloon rule, still in teich
+  await page.locator("#btn-rematch").click();
+  await expect(page.locator("#btn-place-done")).toBeVisible({ timeout: 15000 });
+  expect(await page.evaluate(() => window.__FF.state.rules.decoy)).toBe(true);
+  expect(await page.evaluate(() => !!window.__FF.placementBoard().decoy)).toBe(true);
+});
+
 test("Aquarium: collected creatures live together and hop on tap", async ({ page }) => {
   await page.addInitScript(() =>
     localStorage.setItem(
