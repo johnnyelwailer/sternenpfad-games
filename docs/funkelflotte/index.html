@@ -29,6 +29,7 @@
     <div id="hud" hidden>
       <div class="status-pill" id="status"></div>
       <div class="chips" id="chips"></div>
+      <div id="powers" hidden></div>
       <div class="hud-actions">
         <button class="btn ghost" id="btn-shuffle" hidden>Mischen</button>
         <button class="btn ghost" id="btn-style" hidden>Stil ✨</button>
@@ -67,11 +68,7 @@
       <p class="subtitle">Wer findet alle Versteckten zuerst?</p>
       <p class="label">Deine Welt:</p>
       <div class="world-grid" id="world-grid"></div>
-      <div class="rules-row" aria-label="Extra-Regeln">
-        <label class="rule-chip"><input type="checkbox" id="rule-decoy" /><span>🎈 Schwindel-Ballon</span></label>
-        <label class="rule-chip"><input type="checkbox" id="rule-sonar" /><span>🐬 Sonar</span></label>
-        <label class="rule-chip"><input type="checkbox" id="rule-ghost" /><span>👻 Geisterstunde</span></label>
-      </div>
+      <button class="btn ghost options-btn" id="btn-options">⚙️ Spiel-Optionen</button>
       <div class="stack">
         <button class="btn big" data-mode="ai">Alleine gegen Robo</button>
         <button class="btn big" data-mode="hotseat">Zu zweit an einem Gerät</button>
@@ -112,6 +109,49 @@
         <button class="btn big" data-boss="hotseat">Zu zweit an einem Gerät</button>
         <button class="btn big" data-boss="online">Mit zwei Geräten</button>
       </div>
+    </section>
+
+    <!-- Game options: powers + extra rules, each with an explanation -->
+    <section id="screen-options" class="screen opaque">
+      <div class="stars" aria-hidden="true"></div>
+      <h2 class="h2">⚙️ Spiel-Optionen</h2>
+      <div class="opt-list">
+        <label class="opt-row">
+          <input type="checkbox" id="opt-powers" />
+          <span class="opt-box"></span>
+          <span class="opt-text">
+            <span class="opt-name">✨ Zauber-Kräfte</span>
+            <span class="opt-desc">Grabe 💎 Schätze aus, lade alle 4 Züge eine Kraft auf und starte mit der Spezial-Kraft deiner Welt. Gilt im klassischen Suchspiel.</span>
+          </span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" id="rule-decoy" />
+          <span class="opt-box"></span>
+          <span class="opt-text">
+            <span class="opt-name">🎈 Schwindel-Ballon</span>
+            <span class="opt-desc">Jeder versteckt einen Schwindel-Ballon. Wer ihn trifft: PENG! Und der Ballon-Besitzer bekommt einen Extra-Zug.</span>
+          </span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" id="rule-sonar" />
+          <span class="opt-box"></span>
+          <span class="opt-text">
+            <span class="opt-name">🐬 Sonar</span>
+            <span class="opt-desc">Jedes Daneben zeigt eine Zahl: So viele Felder sind es bis zum nächsten Versteck.</span>
+          </span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" id="rule-ghost" />
+          <span class="opt-box"></span>
+          <span class="opt-text">
+            <span class="opt-name">👻 Geisterstunde</span>
+            <span class="opt-desc">Daneben-Markierungen verschwinden nach 5 Schüssen wieder. Gut merken!</span>
+          </span>
+        </label>
+      </div>
+      <button class="btn ghost" id="btn-powers-legend">Alle Zauber ansehen 📜</button>
+      <div id="powers-legend" hidden></div>
+      <button class="btn big" id="btn-options-back">Fertig</button>
     </section>
 
     <!-- Chase mode picker -->

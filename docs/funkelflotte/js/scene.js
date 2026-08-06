@@ -758,6 +758,129 @@ export function dimEdgeCount(slot, axis, index) {
   spr.material.opacity = 0.55;
 }
 
+// ------------------------------------------------------ power effects
+
+// secret peek info: "!" over a creature cell, a soft dot over water.
+// The tile itself stays untouched (and shootable).
+export function peekMarker(slot, x, y, isShip) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const key = `${x},${y}`;
+  const tile = d.tiles.get(key);
+  if (!tile) return;
+  // replace an older peek on the same cell
+  for (const m of [...d.marksGroup.children]) {
+    if (m.userData.peek && m.userData.cellKey === key) d.marksGroup.remove(m);
+  }
+  const spr = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: textTexture(isShip ? "!" : "~", isShip ? cssHex(d.world.colors.accent) : "#cfe3f2"),
+      transparent: true,
+      depthWrite: false,
+      opacity: isShip ? 1 : 0.7,
+    })
+  );
+  spr.position.set(tile.position.x, 0.5, tile.position.z);
+  spr.scale.setScalar(isShip ? 0.6 : 0.45);
+  spr.userData.cellKey = key;
+  spr.userData.peek = true;
+  spr.userData.bob = Math.random() * 7;
+  spr.userData.bobBase = 0.5;
+  d.marksGroup.add(spr);
+  ringWave(d, tile.position, d.world.colors.accent);
+  spr.scale.setScalar(0.01);
+  tween((v) => spr.scale.setScalar((isShip ? 0.6 : 0.45) * v), { dur: 0.4, ease: Ease.outBack });
+}
+
+// magic arrow pointing from a cell toward the nearest hidden creature;
+// pulses a few times, then fades away
+export function arrowMarker(slot, x, y, angle) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  const holder = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffd447,
+    emissive: 0xffd447,
+    emissiveIntensity: 1.2,
+    flatShading: true,
+    transparent: true,
+  });
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.5, 6), mat);
+  head.rotation.z = -Math.PI / 2; // point along +X
+  head.position.x = 0.45;
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.45, 6), mat);
+  tail.rotation.z = Math.PI / 2;
+  holder.add(head, tail);
+  holder.position.set(tile.position.x, 0.55, tile.position.z);
+  holder.rotation.y = -angle; // board +y runs along world +z
+  d.root.add(holder);
+  flash(d, tile.position, 0xffd447);
+  tween(
+    (v) => {
+      holder.position.y = 0.55 + Math.sin(v * Math.PI * 5) * 0.12;
+      mat.opacity = v < 0.75 ? 1 : 1 - (v - 0.75) / 0.25;
+    },
+    {
+      dur: 4.5,
+      ease: Ease.linear,
+      onDone: () => {
+        d.root.remove(holder);
+        head.geometry.dispose();
+        tail.geometry.dispose();
+        mat.dispose();
+      },
+    }
+  );
+}
+
+// golden treasure pop
+export function treasureBurst(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  const pos = tile.getWorldPosition(new THREE.Vector3());
+  flash(d, tile.position, 0xffd447);
+  starburst(d, tile.position);
+  ringWave(d, tile.position, 0xffd447);
+  ringWave(d, tile.position, 0xffffff);
+  burst(d, pos, 0xffd447, { count: 55, up: true });
+  burst(d, pos, 0xfff3c2, { count: 25, up: true });
+  camKick = 0.4;
+}
+
+// the lily-pad shield eats a hit: big soft dome flash over the board
+export function shieldFlash(slot) {
+  const d = dioramas[slot];
+  if (!d) return;
+  flash(d, { x: 0, z: 0 }, 0x7de8ff);
+  ringWave(d, { x: 0, z: 0 }, 0x7de8ff);
+  ringWave(d, { x: 0, z: 0 }, 0xffffff);
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(SPAN * 0.55, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x7de8ff, transparent: true, opacity: 0.3, depthWrite: false })
+  );
+  d.root.add(dome);
+  tween(
+    (v) => {
+      dome.material.opacity = 0.3 * (1 - v);
+      dome.scale.setScalar(1 + v * 0.15);
+    },
+    {
+      dur: 0.9,
+      ease: Ease.outQuad,
+      onDone: () => {
+        d.root.remove(dome);
+        dome.geometry.dispose();
+        dome.material.dispose();
+      },
+    }
+  );
+  camKick = 0.35;
+}
+
 // ghost rule: a faded miss becomes unknown again
 export function clearMark(slot, x, y) {
   const d = dioramas[slot];
@@ -835,6 +958,11 @@ export function applyShot(slot, x, y, result, { sonarDist = null } = {}) {
   if (!tile) return;
   const world = d.world;
   const pos = tile.getWorldPosition(new THREE.Vector3());
+
+  // a real shot replaces any peek hint on this cell
+  for (const m of [...d.marksGroup.children]) {
+    if (m.userData.peek && m.userData.cellKey === key) d.marksGroup.remove(m);
+  }
 
   camKick = result === "miss" ? 0.12 : 0.3;
   flash(d, tile.position, result === "miss" ? world.colors.sky : world.colors.accent);
