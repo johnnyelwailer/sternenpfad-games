@@ -131,6 +131,17 @@ function customFor(index) {
 
 // world picker cards with live 3D thumbnails
 const thumbCache = new Map();
+
+function worldThumb(worldId) {
+  const map = loadCustom(worldId);
+  const key = `world-${worldId}-${map[0] ? `${map[0].tint}.${map[0].hat}` : "0"}-${
+    map[4] ? `${map[4].tint}.${map[4].hat}` : "0"
+  }`;
+  if (!thumbCache.has(key)) {
+    thumbCache.set(key, SCENE.worldCardThumb(worldId, map));
+  }
+  return thumbCache.get(key);
+}
 function creatureThumb(worldId, idx, custom = null) {
   const key = `${worldId}-${idx}-${custom ? `${custom.tint || 0}.${custom.hat || 0}` : "0.0"}`;
   if (!thumbCache.has(key)) {
@@ -155,12 +166,12 @@ function buildWorldPicker(gridEl, onPick, selected) {
     });
     gridEl.appendChild(card);
   }
-  // fill in 3D thumbnails lazily so the first paint is instant
+  // fill in themed 3D vignettes lazily so the first paint is instant
   setTimeout(() => {
     gridEl.querySelectorAll(".world-card").forEach((card) => {
       const img = document.createElement("img");
       img.alt = "";
-      img.src = creatureThumb(card.dataset.world, 0, loadCustom(card.dataset.world)[0]);
+      img.src = worldThumb(card.dataset.world);
       card.querySelector(".ph")?.replaceWith(img);
     });
   }, 30);
