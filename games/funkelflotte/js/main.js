@@ -189,28 +189,9 @@ function buildWorldPicker(gridEl, onPick, selected) {
   }, 30);
 }
 
-function renderChips(targetIndex) {
-  const box = $("#chips");
-  box.innerHTML = "";
-  if (S.phase !== "battle" && S.phase !== "puzzle") return;
-  const worldId = S.worlds[targetIndex];
-  const found = foundIdsOn(targetIndex);
-  const custom = customFor(targetIndex);
-  const creatures = getWorld(worldId).creatures;
-  const ids =
-    S.phase === "puzzle"
-      ? S.puzzle.board.ships.map((s) => s.id)
-      : creatures.map((_, i) => i);
-  for (const id of ids) {
-    const chip = document.createElement("div");
-    chip.className = `chip${found.has(id) ? " done" : ""}`;
-    const img = document.createElement("img");
-    img.alt = creatures[id]?.name ?? "";
-    img.src = creatureThumb(worldId, id, custom[id]);
-    chip.appendChild(img);
-    box.appendChild(chip);
-  }
-}
+// the found/missing chip row was UI clutter — the golden rings on the
+// board already tell the story. Kept as a no-op so call sites stay.
+function renderChips() {}
 
 function foundIdsOn(index) {
   if (S.mode === "online" && index === 1) {
@@ -509,9 +490,7 @@ function startPlacement(player) {
   status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
   show(null);
   $("#btn-shuffle").hidden = false;
-  $("#btn-world").hidden = false;
   $("#btn-opts").hidden = false;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = false;
   $("#btn-place-done").disabled = false;
   $("#btn-place-done").textContent = "Fertig!";
@@ -688,9 +667,7 @@ function placementDone() {
   SCENE.clearInteraction();
   closeStylePanel();
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
   if (S.mode === "hotseat") {
@@ -1134,9 +1111,7 @@ function startBattle(firstTurn) {
   closeStylePanel();
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
   // make sure both dioramas exist (enemy diorama may not yet)
@@ -2238,9 +2213,7 @@ function setupChaseBoard() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
@@ -2623,9 +2596,7 @@ function setupBossBoard() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
@@ -3039,9 +3010,7 @@ function startPuzzle() {
   SND.startAmbient(worldId);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   puzzleStatus();
   renderChips(0);
@@ -3364,6 +3333,12 @@ function openAquarium() {
       if (i >= 0) {
         S.aquariumIdx = i;
         toast(`${list[i].name} freut sich! 💛`, 1400);
+        // a tapped friend hops straight into the dressing room
+        if (flag("styles") && $("#customizer").hidden) {
+          setTimeout(() => {
+            if (S.mode === "aquarium") openCustomizer(i);
+          }, FAST ? 60 : 500);
+        }
       }
       return;
     }
@@ -3381,9 +3356,7 @@ function openAquarium() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = !flag("styles") || list.length === 0;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
@@ -3505,9 +3478,7 @@ function goHome() {
   $("#btn-rematch").textContent = "Nochmal spielen";
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   applyUiWorld(S.worlds[0]);
   renderPowers();
@@ -3537,6 +3508,7 @@ function boot() {
     SND.tap();
     optionsReturn = null;
     $("#options-note").hidden = true;
+    $("#opt-world").hidden = true;
     show("screen-options");
   });
   $("#btn-options-back").addEventListener("click", () => {
@@ -3683,17 +3655,17 @@ function boot() {
   });
 
   $("#btn-shuffle").addEventListener("click", shuffleFleet);
-  $("#btn-world").addEventListener("click", changeMyWorld);
   let optionsReturn = null;
   $("#btn-opts").addEventListener("click", () => {
     SND.tap();
     optionsReturn = "game";
     $("#options-note").hidden = false;
+    // world switching lives inside the menu now — placement only
+    $("#opt-world").hidden = S.phase !== "place";
     show("screen-options");
   });
-  $("#btn-style").addEventListener("click", () => {
-    if ($("#customizer").hidden) openCustomizer(S.aquariumIdx ?? 0);
-    else closeStylePanel();
+  $("#opt-world").addEventListener("click", () => {
+    changeMyWorld();
   });
   $("#btn-cust-done").addEventListener("click", () => {
     SND.tap();

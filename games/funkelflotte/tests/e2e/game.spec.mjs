@@ -73,22 +73,30 @@ test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async
   expect(stillValid).toBe(true);
 });
 
-test("customizer lives in the aquarium; styles carry into battles", async ({ page }) => {
+test("customizer opens by tapping a friend in the aquarium", async ({ page }) => {
   await page.addInitScript(() =>
     localStorage.setItem(
       "ff-progress",
-      JSON.stringify({ stickers: { "ozean-0": 1, "dino-2": 1 }, wins: 2 })
+      JSON.stringify({ stickers: { "ozean-0": 1 }, wins: 1 })
     )
   );
   await page.reload();
   await page.waitForFunction(() => !!window.__FF);
+  await page.evaluate(() => window.__FF.setFast());
   await page.locator("#btn-aquarium").click();
-  await expect(page.locator("#btn-style")).toBeVisible();
-  await page.locator("#btn-style").click();
-  await expect(page.locator("#customizer")).toBeVisible();
-  await expect(page.locator("#cust-count")).toContainText("1 / 2");
 
-  // pick the 2nd tint and the next hat for the first friend (ozean-0)
+  // tap around until we hit the (wandering) friend — that opens styling
+  for (let y = 0; y < 8; y += 1) {
+    for (let x = 0; x < 8; x += 1) {
+      if (!(await page.locator("#customizer").isHidden())) break;
+      await page.evaluate(([tx, ty]) => window.__FF.aquariumTap(tx, ty), [x, y]);
+      await page.waitForTimeout(90);
+    }
+  }
+  await expect(page.locator("#customizer")).toBeVisible();
+  await expect(page.locator("#cust-count")).toContainText("1 / 1");
+
+  // pick the 2nd tint and the next hat
   await page.locator("#cust-tints .tint-dot").nth(1).click();
   await page.locator("#cust-hat-next").click();
   await expect(page.locator("#cust-tints .tint-dot").nth(1)).toHaveClass(/selected/);
@@ -106,9 +114,6 @@ test("customizer lives in the aquarium; styles carry into battles", async ({ pag
   );
   expect(still[0].tint).toBe(1);
 
-  // switcher moves through the collection
-  await page.locator("#cust-next").click();
-  await expect(page.locator("#cust-count")).toContainText("2 / 2");
   await page.locator("#btn-cust-done").click();
   await expect(page.locator("#customizer")).toBeHidden();
 
@@ -119,21 +124,26 @@ test("customizer lives in the aquarium; styles carry into battles", async ({ pag
   expect(applied[0]).toEqual({ tint: 1, hat: 1 });
 });
 
-test("placement: world can be swapped where Stil used to be", async ({ page }) => {
+test("placement: the menu button swaps worlds and shows options", async ({ page }) => {
   await startRobo(page);
-  await expect(page.locator("#btn-world")).toBeVisible();
   await expect(page.locator("#btn-opts")).toBeVisible();
-  await page.locator("#btn-world").click();
+  await page.locator("#btn-opts").click();
+  await expect(page.locator("#screen-options")).toHaveClass(/active/);
+  await expect(page.locator("#opt-world")).toBeVisible();
+  await page.locator("#opt-world").click();
   await expect(page.locator("#screen-worldpick")).toHaveClass(/active/);
   await page.locator('#world-grid-2 [data-world="dino"]').click();
   await page.locator("#btn-worldpick-go").click();
   await expect(page.locator("#btn-place-done")).toBeVisible();
   expect(await page.evaluate(() => window.__FF.state.worlds[0])).toBe("dino");
-  // the options screen opens from placement and returns to the game
+  // options back returns into the running game
   await page.locator("#btn-opts").click();
-  await expect(page.locator("#screen-options")).toHaveClass(/active/);
   await page.locator("#btn-options-back").click();
   await expect(page.locator("#btn-place-done")).toBeVisible();
+  // from the title, the world entry is hidden
+  await page.locator("#btn-home").click();
+  await page.locator("#btn-options").click();
+  await expect(page.locator("#opt-world")).toBeHidden();
 });
 
 test("robo game: my shots mark the enemy board, robo answers on mine", async ({ page }) => {
@@ -228,7 +238,6 @@ test("feature flags: new features can be switched off via URL", async ({ page })
   await page.locator("#btn-options-back").click();
   await startRobo(page);
   await expect(page.locator("#btn-place-done")).toBeVisible();
-  await expect(page.locator("#btn-style")).toBeHidden();
   // defaults stay on without the override
   await page.goto(GAME);
   await page.waitForFunction(() => !!window.__FF);
