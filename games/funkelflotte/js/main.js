@@ -2058,6 +2058,60 @@ function finishGame(winner) {
   }
 }
 
+// ------------------------------------------------------------ aquarium
+
+function openAquarium() {
+  SND.unlock();
+  SND.whoosh();
+  goFullscreen();
+  S.mode = "aquarium";
+  S.phase = "aquarium";
+  S.viewer = 0;
+  applyUiWorld(S.worlds[0]);
+  SCENE.setupBoard("mine", S.worlds[0]);
+
+  const p = PROG.loadProgress();
+  const list = [];
+  for (const world of Object.values(WORLDS)) {
+    world.creatures.forEach((c, i) => {
+      if (PROG.stickerCount(world.id, i, p) > 0) {
+        list.push({
+          key: `${world.id}-${i}`,
+          worldId: world.id,
+          idx: i,
+          custom: loadCustom(world.id)[i] ?? null,
+          name: c.name,
+        });
+      }
+    });
+  }
+  S.aquarium = list;
+  SCENE.populateAquarium("mine", list);
+  SCENE.focusBoard("mine");
+  SCENE.clearInteraction();
+  S.aquariumTap = (x, y) => {
+    const key = SCENE.nearestAquariumKey("mine", x, y);
+    if (!key) return;
+    SND.sparkle();
+    SCENE.hopCreature("mine", key);
+    const item = list.find((e) => e.key === key);
+    if (item) toast(`${item.name} freut sich! 💛`, 1400);
+  };
+  SCENE.setTapMode("mine", S.aquariumTap);
+  SND.startAmbient(S.worlds[0]);
+  show(null);
+  $("#btn-shuffle").hidden = true;
+  $("#btn-style").hidden = true;
+  $("#btn-endturn").hidden = true;
+  $("#btn-place-done").hidden = true;
+  renderChips(0);
+  status(
+    list.length
+      ? `Dein Aquarium: ${list.length} ${list.length === 1 ? "Freund" : "Freunde"} — tipp sie an!`
+      : "Noch ganz leer! Gewinne Spiele und sammle Sticker-Freunde."
+  );
+}
+
 // -------------------------------------------------------------- album
 
 function openAlbum() {
@@ -2142,6 +2196,7 @@ function goHome() {
   S.puzzle = null;
   S.chase = null;
   S.boss = null;
+  S.aquarium = null;
   S.gameMode = "classic";
   S.customs = [{}, {}];
   S.oppCustom = null;
@@ -2177,6 +2232,8 @@ function boot() {
   document.querySelectorAll("[data-chase]").forEach((btn) => {
     btn.addEventListener("click", () => startChase(btn.dataset.chase));
   });
+  $("#btn-aquarium").hidden = !flag("aquarium");
+  $("#btn-aquarium").addEventListener("click", openAquarium);
   $("#btn-boss").hidden = !flag("boss");
   $("#btn-boss").addEventListener("click", () => {
     SND.tap();
@@ -2339,6 +2396,7 @@ function boot() {
     chaseNetTap: (x, y) => chaseOnlineSeekTap(x, y),
     bossTap: (x, y) => bossSeekTap(x, y),
     bossNetTap: (x, y) => bossOnlineSeekTap(x, y),
+    aquariumTap: (x, y) => S.aquariumTap?.(x, y),
     setStyle: (id, tint, hat) => setShipCustom(id, { tint, hat }),
     setRules: (r) => {
       Object.assign(S.rules, r);

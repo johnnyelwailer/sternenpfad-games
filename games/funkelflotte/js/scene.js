@@ -394,6 +394,87 @@ export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   return entry;
 }
 
+// ------------------------------------------------------------ aquarium
+// The collection diorama: creatures from ANY world live together here.
+// Entries share the creatures map (float/blink animations come free).
+
+export function populateAquarium(slot, list) {
+  const d = dioramas[slot];
+  if (!d) return;
+  d.creaturesGroup.clear();
+  d.creatures.clear();
+  const perRow = 5;
+  list.forEach((item, i) => {
+    const model = buildCreature(item.worldId, item.idx, 1.6, item.custom ?? null);
+    model.rotation.y = 0.16;
+    const holder = new THREE.Group();
+    holder.add(model);
+    const col = i % perRow;
+    const row = Math.floor(i / perRow);
+    holder.position.set(col * 1.7 - 3.4, 0.1, row * 1.9 - 2.6);
+    holder.rotation.y = ((i % 3) - 1) * 0.35;
+    const blob = new THREE.Mesh(
+      new THREE.CircleGeometry(0.4, 16),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.16, depthWrite: false })
+    );
+    blob.rotation.x = -Math.PI / 2;
+    blob.position.y = -0.04;
+    blob.scale.set(1.4, 0.9, 1);
+    holder.add(blob);
+    holder.scale.setScalar(0.01);
+    tween((v) => holder.scale.setScalar(v), { dur: 0.6, delay: i * 0.05, ease: Ease.outBack });
+    d.creaturesGroup.add(holder);
+    d.creatures.set(item.key, { model, holder, baseY: 0.1, phase: Math.random() * 7, ship: null });
+  });
+}
+
+// which aquarium resident is closest to the tapped cell?
+export function nearestAquariumKey(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return null;
+  const px = x - GRID / 2 + 0.5;
+  const pz = y - GRID / 2 + 0.5;
+  let best = null;
+  let bestDist = 1.4;
+  for (const [key, c] of d.creatures) {
+    const dist = Math.hypot(c.holder.position.x - px, c.holder.position.z - pz);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = key;
+    }
+  }
+  return best;
+}
+
+// a joyful little hop (animates baseY so the idle bob can't fight it)
+export function hopCreature(slot, key) {
+  const d = dioramas[slot];
+  const c = d?.creatures.get(key);
+  if (!c) return;
+  const home = 0.1;
+  tween(
+    (v) => {
+      c.baseY = home + Math.sin(Math.PI * v) * 0.85;
+      c.holder.rotation.y += 0.14 * Math.sin(Math.PI * v);
+    },
+    {
+      dur: 0.55,
+      ease: Ease.linear,
+      onDone: () => {
+        c.baseY = home;
+        tween(
+          (u) => {
+            const sq = Math.sin(Math.PI * u);
+            c.holder.scale.set(1 + 0.14 * sq, 1 - 0.18 * sq, 1 + 0.14 * sq);
+          },
+          { dur: 0.25, ease: Ease.outQuad }
+        );
+      },
+    }
+  );
+  ringWave(d, { x: c.holder.position.x, z: c.holder.position.z }, d.world.colors.accent);
+}
+
 // glowing wound orb pinned to a body segment (boss mode) — it lives on
 // the creature's holder, so it travels along when the monster moves
 export function markWound(slot, shipId, segIdx, size) {

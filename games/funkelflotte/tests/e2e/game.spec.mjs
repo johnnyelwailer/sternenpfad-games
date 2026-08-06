@@ -400,6 +400,24 @@ test("Fang mich online: hide, sneak-move, and get caught across devices", async 
   await ctxB.close();
 });
 
+test("Aquarium: collected creatures live together and hop on tap", async ({ page }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      "ff-progress",
+      JSON.stringify({ stickers: { "ozean-0": 1, "dino-2": 3 }, wins: 4 })
+    )
+  );
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await page.locator("#btn-aquarium").click();
+  await expect(page.locator("#status")).toContainText("2 Freunde");
+  const count = await page.evaluate(() => window.__FF.state.aquarium.length);
+  expect(count).toBe(2);
+  // tapping the first resident makes it hop and greets by name
+  await page.evaluate(() => window.__FF.aquariumTap(0, 1));
+  await expect(page.locator("#toast")).toContainText("freut sich");
+});
+
 test("Monster-Jagd: five wounds defeat the prowling boss", async ({ page }) => {
   test.setTimeout(120000);
   await page.evaluate(() => window.__FF.setFast());
