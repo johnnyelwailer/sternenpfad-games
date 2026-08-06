@@ -133,9 +133,12 @@ export function drawPower(rng = Math.random, hand = [], { instant = false } = {}
   return pool[Math.floor(rng() * pool.length)];
 }
 
-export function newPowerState(worldId) {
+// `cards: true` starts the hand with the world's signature card — the
+// on-demand card system is an opt-in extra; by default powers only
+// come out of treasures and cast themselves
+export function newPowerState(worldId, { cards = false } = {}) {
   return {
-    hand: [worldPower(worldId)],
+    hand: cards ? [worldPower(worldId)] : [],
     shield: false, // set when "schild" is activated, eaten by next hit
     clover: false, // permanent personal sonar
     doubleShot: false, // this-turn miss forgiveness

@@ -268,14 +268,28 @@ function loadPowersOpt() {
 function savePowersOpt() {
   try {
     localStorage.setItem("ff-powers", S.powersOn ? "1" : "0");
+    localStorage.setItem("ff-cards", S.cardsOn ? "1" : "0");
   } catch {
     /* private mode etc. */
+  }
+}
+
+function loadCardsOpt() {
+  try {
+    return localStorage.getItem("ff-cards") === "1"; // OFF by default
+  } catch {
+    return false;
   }
 }
 
 // powers only exist in the classic battle modes
 function powersEnabled() {
   return flag("powers") && S.powersOn && S.gameMode === "classic" && S.phase === "battle";
+}
+
+// the on-demand card hand (world powers + recharges) is an extra layer
+function cardsEnabled() {
+  return powersEnabled() && S.cardsOn;
 }
 
 // whose hand is acting right now (hotseat swaps seats)
@@ -728,7 +742,10 @@ function renderPowers() {
   }
   box.innerHTML = "";
   const counts = new Map();
-  for (const k of st.hand) counts.set(k, (counts.get(k) || 0) + 1);
+  // hand chips exist only in card mode; passive badges always show
+  if (cardsEnabled()) {
+    for (const k of st.hand) counts.set(k, (counts.get(k) || 0) + 1);
+  }
   for (const [kind, n] of counts) {
     const p = PW.POWERS[kind];
     const chip = document.createElement("button");
@@ -1121,16 +1138,21 @@ function startBattle(firstTurn) {
   SCENE.setCustomization("mine", customFor(0));
   SCENE.setCustomization("enemy", customFor(1));
 
-  // Zauber-Kräfte: hands, world powers, one visible treasure per board
+  // Zauber-Kräfte: one visible treasure per board (spells cast on dig);
+  // the on-demand card hand only with the extra option enabled
   if (flag("powers") && S.powersOn && S.gameMode === "classic") {
-    S.powers = [PW.newPowerState(S.worlds[0]), PW.newPowerState(S.worlds[1])];
+    const cards = S.cardsOn;
+    S.powers = [
+      PW.newPowerState(S.worlds[0], { cards }),
+      PW.newPowerState(S.worlds[1], { cards }),
+    ];
     for (const b of S.boards) if (b) ensureTreasures(b);
     SCENE.renderTreasures("mine", S.boards[0]?.treasures ?? []);
     SCENE.renderTreasures(
       "enemy",
       S.mode === "online" ? S.oppTreasures ?? [] : S.boards[1]?.treasures ?? []
     );
-    showPowerGain(PW.worldPower(S.worlds[S.viewer]), "🌍 Deine Welt-Kraft");
+    if (cards) showPowerGain(PW.worldPower(S.worlds[S.viewer]), "🌍 Deine Welt-Karte");
   } else {
     S.powers = [null, null];
     SCENE.renderTreasures("mine", []);
@@ -1158,14 +1180,14 @@ function beginTurn() {
     SCENE.clearInteraction();
     SCENE.setTapMode(slotFor(target), (x, y) => handleTap(x, y));
     beginTurnStatus();
-    // power recharge: every RECHARGE_EVERY own turns brings a new one
+    // card recharge: only with the card option, every RECHARGE_EVERY turns
     if (powersEnabled()) {
       const st = myPowers();
       if (st) {
         st.turns += 1;
         st.doubleShot = false;
-        if (st.turns % PW.RECHARGE_EVERY === 0) {
-          gainPower(S.turn, PW.drawPower(Math.random, st.hand), "⚡ Aufladung:");
+        if (cardsEnabled() && st.turns % PW.RECHARGE_EVERY === 0) {
+          gainPower(S.turn, PW.drawPower(Math.random, st.hand), "⚡ Neue Karte");
         }
       }
     }
@@ -1386,8 +1408,8 @@ function scheduleRoboTurn() {
     const schlau = S.aiState.difficulty === "schlau";
     const st1 = powersEnabled() ? S.powers[1] : null;
 
-    // the clever robo actually casts its spells
-    if (schlau && st1) {
+    // the clever robo actually casts its spells (card mode only)
+    if (schlau && st1 && cardsEnabled()) {
       const shieldIdx = st1.hand.indexOf("schild");
       const zeitIdx = st1.hand.indexOf("zeit");
       const doppelIdx = st1.hand.indexOf("doppel");
@@ -1441,9 +1463,9 @@ function scheduleRoboTurn() {
       SCENE.applyShotQuiet("mine", shot.x, shot.y, "miss");
       SCENE.openTreasure("mine", shot.x, shot.y);
       SND.treasure();
-      if (schlau && st1 && st1.hand.length < PW.HAND_MAX) {
+      if (schlau && st1 && cardsEnabled() && st1.hand.length < PW.HAND_MAX) {
         st1.hand.push(PW.drawPower(Math.random, st1.hand, { instant: true }));
-        status("💎 Robo hat deinen Schatz geborgen und einen Zauber eingesteckt!");
+        status("💎 Robo hat deinen Schatz geborgen und eine Karte eingesteckt!");
       } else {
         status("💎 Oh nein, Robo hat deinen Schatz stibitzt!");
       }
@@ -1821,8 +1843,13 @@ function handleNetMessage(msg) {
         ghost: !!msg.rules?.ghost,
       };
       S.powersOn = flag("powers") && msg.powers !== false;
+      S.cardsOn = flag("powers") && !!msg.cards;
       syncRuleChips();
-      const parts = [rulesSummary(S.rules), S.powersOn ? "✨ Zauber-Kräfte" : ""].filter(Boolean);
+      const parts = [
+        rulesSummary(S.rules),
+        S.powersOn ? "💎 Schatz-Zauber" : "",
+        S.cardsOn ? "🃏 Zauber-Karten" : "",
+      ].filter(Boolean);
       if (parts.length) toast(`Gemeinsame Optionen: ${parts.join(" · ")}`, 3200);
       if (S.phase === "over") {
         // rematch: the guest also picks a fresh world every match
@@ -2146,6 +2173,7 @@ function sendHello() {
     rules: S.rules,
     mode: S.gameMode,
     powers: flag("powers") && S.powersOn,
+    cards: flag("powers") && S.powersOn && S.cardsOn,
     pid: PID,
   });
 }
@@ -3468,6 +3496,8 @@ function goHome() {
   S.journey = null;
   S.gameMode = "classic";
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
+  S.powersOn = flag("powers") ? loadPowersOpt() : false;
+  S.cardsOn = flag("powers") ? loadCardsOpt() : false;
   syncRuleChips();
   S.customs = [{}, {}];
   S.oppCustom = null;
@@ -3492,7 +3522,16 @@ function boot() {
   applyUiWorld("ozean");
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
   S.powersOn = flag("powers") ? loadPowersOpt() : false;
+  S.cardsOn = flag("powers") ? loadCardsOpt() : false;
   syncRuleChips();
+  $("#opt-cards").checked = S.cardsOn;
+  $("#opt-cards").closest(".opt-row").hidden = !flag("powers");
+  $("#opt-cards").addEventListener("change", (e) => {
+    SND.unlock();
+    SND.tap();
+    S.cardsOn = e.target.checked;
+    savePowersOpt();
+  });
   for (const id of ["#rule-decoy", "#rule-sonar", "#rule-ghost"]) {
     $(id).closest(".opt-row").hidden = !flag("rules");
   }

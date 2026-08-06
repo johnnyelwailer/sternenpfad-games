@@ -115,9 +115,25 @@ test("extra balloon respects live balloons and unshot cells", () => {
   assert.equal(b.shots[E.key(b.decoy.x, b.decoy.y)], undefined);
 });
 
-test("new power state starts with the world signature", () => {
-  const st = P.newPowerState("dino");
-  assert.deepEqual(st.hand, ["trommel"]);
-  assert.equal(st.shield, false);
-  assert.equal(st.clover, false);
+test("hand starts empty by default; card mode adds the world signature", () => {
+  const plain = P.newPowerState("dino");
+  assert.deepEqual(plain.hand, []);
+  const carded = P.newPowerState("dino", { cards: true });
+  assert.deepEqual(carded.hand, ["trommel"]);
+  assert.equal(carded.shield, false);
+  assert.equal(carded.clover, false);
+});
+
+test("treasure draws never contain world signature cards or the salvo", () => {
+  const rng = (() => {
+    let s = 11;
+    return () => {
+      s = (s * 16807) % 2147483647;
+      return s / 2147483647;
+    };
+  })();
+  for (let i = 0; i < 300; i += 1) {
+    const kind = P.drawPower(rng, [], { instant: true });
+    assert.ok(!["welle", "radar", "trommel", "salve"].includes(kind), `too strong for a treasure: ${kind}`);
+  }
 });

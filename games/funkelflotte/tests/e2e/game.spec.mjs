@@ -214,7 +214,7 @@ async function missCells(page, count) {
   return page.evaluate((n) => {
     const b = window.__FF.state.boards[1];
     const E = window.__FF.engine;
-    const occupied = new Set();
+    const occupied = new Set(Object.keys(b.shots || {}));
     for (const s of b.ships) for (const c of E.shipCells(s)) occupied.add(`${c.x},${c.y}`);
     if (b.decoy) occupied.add(`${b.decoy.x},${b.decoy.y}`);
     for (const t of b.treasures ?? []) occupied.add(`${t.x},${t.y}`);
@@ -257,12 +257,17 @@ test("Zauber-Kräfte: legend explains, world power + treasure + powers work", as
   expect(await page.locator(".legend-row").count()).toBeGreaterThanOrEqual(13);
   await page.locator("#btn-options-back").click();
 
+  // enable the opt-in card hand for this test
+  await page.locator("#btn-options").click();
+  await page.locator("#opt-cards").click({ force: true });
+  await page.locator("#btn-options-back").click();
+
   await page.evaluate(() => window.__FF.setFast());
   await startRobo(page);
   await page.locator("#btn-place-done").click();
   await waitMyTurn(page);
 
-  // ozean's world power is in hand, ONE visible treasure per board
+  // ozean's world card is in hand, ONE visible treasure per board
   expect(await page.evaluate(() => window.__FF.state.powers[0].hand)).toEqual(["welle"]);
   expect(await page.evaluate(() => window.__FF.state.boards[1].treasures.length)).toBe(1);
   await expect(page.locator('.power-chip[data-power="welle"]')).toBeVisible();
@@ -320,6 +325,16 @@ test("Zauber-Kräfte: legend explains, world power + treasure + powers work", as
     .poll(() => page.evaluate(() => window.__FF.state.powers[0].doubleShot))
     .toBe(false);
   expect(await page.evaluate(() => window.__FF.state.turn)).toBe(0);
+});
+
+test("cards are off by default: empty hand, treasures still work", async ({ page }) => {
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+  expect(await page.evaluate(() => window.__FF.state.powers[0].hand)).toEqual([]);
+  await expect(page.locator(".power-chip")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__FF.state.boards[1].treasures.length)).toBe(1);
 });
 
 test("Zauber-Kräfte: the option really disables powers", async ({ page }) => {
