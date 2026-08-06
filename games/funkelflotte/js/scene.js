@@ -601,6 +601,61 @@ function decoyMarker(d, tile, key) {
   d.marksGroup.add(scrap);
 }
 
+// --------------------------------------------------- puzzle edge counts
+
+function textTexture(str, color = "#ffffff") {
+  const c = document.createElement("canvas");
+  c.width = 96;
+  c.height = 96;
+  const ctx = c.getContext("2d");
+  ctx.font = "900 60px Nunito, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = "rgba(10,20,40,0.9)";
+  ctx.strokeText(String(str), 48, 52);
+  ctx.fillStyle = color;
+  ctx.fillText(String(str), 48, 52);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// row counts along the left edge, column counts along the far edge
+export function setEdgeCounts(slot, rows, cols) {
+  const d = dioramas[slot];
+  if (!d) return;
+  if (d.edgeGroup) d.root.remove(d.edgeGroup);
+  const group = new THREE.Group();
+  d.edgeSprites = { rows: [], cols: [] };
+  const make = (n, x, z) => {
+    const spr = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: textTexture(n), transparent: true, depthWrite: false })
+    );
+    spr.position.set(x, 0.5, z);
+    spr.scale.setScalar(0.72);
+    group.add(spr);
+    return spr;
+  };
+  rows.forEach((n, y) => {
+    d.edgeSprites.rows.push(make(n, -GRID / 2 - 0.6, y - GRID / 2 + 0.5));
+  });
+  cols.forEach((n, x) => {
+    d.edgeSprites.cols.push(make(n, x - GRID / 2 + 0.5, -GRID / 2 - 0.6));
+  });
+  d.edgeGroup = group;
+  d.root.add(group);
+}
+
+// dim a satisfied row/column so kids see which clues are done
+export function dimEdgeCount(slot, axis, index) {
+  const d = dioramas[slot];
+  const spr = d?.edgeSprites?.[axis]?.[index];
+  if (!spr) return;
+  spr.material.color.setHex(0x6f8296);
+  spr.material.opacity = 0.55;
+}
+
 // ghost rule: a faded miss becomes unknown again
 export function clearMark(slot, x, y) {
   const d = dioramas[slot];

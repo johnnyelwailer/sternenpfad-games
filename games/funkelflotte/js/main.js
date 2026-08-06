@@ -8,6 +8,7 @@ import { WORLDS, getWorld, randomOtherWorld } from "./worlds.js";
 import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
 import * as PROG from "./progress.js";
 import { flag, setFlag, allFlags } from "./flags.js";
+import { generatePuzzle, PUZZLE_SPADES } from "./puzzle.js";
 import * as SND from "./sound.js";
 import * as SCENE from "./scene.js";
 import { Net, makeCode, normalizeCode, joinUrl } from "./net.js";
@@ -163,19 +164,24 @@ function buildWorldPicker(gridEl, onPick, selected) {
 function renderChips(targetIndex) {
   const box = $("#chips");
   box.innerHTML = "";
-  if (S.phase !== "battle") return;
+  if (S.phase !== "battle" && S.phase !== "puzzle") return;
   const worldId = S.worlds[targetIndex];
   const found = foundIdsOn(targetIndex);
   const custom = customFor(targetIndex);
-  getWorld(worldId).creatures.forEach((c, id) => {
+  const creatures = getWorld(worldId).creatures;
+  const ids =
+    S.phase === "puzzle"
+      ? S.puzzle.board.ships.map((s) => s.id)
+      : creatures.map((_, i) => i);
+  for (const id of ids) {
     const chip = document.createElement("div");
     chip.className = `chip${found.has(id) ? " done" : ""}`;
     const img = document.createElement("img");
-    img.alt = c.name;
+    img.alt = creatures[id]?.name ?? "";
     img.src = creatureThumb(worldId, id, custom[id]);
     chip.appendChild(img);
     box.appendChild(chip);
-  });
+  }
 }
 
 function foundIdsOn(index) {
@@ -1066,11 +1072,160 @@ function maybeRematch() {
   }
 }
 
+// -------------------------------------------------------------- puzzle
+
+function startPuzzle() {
+  SND.unlock();
+  SND.whoosh();
+  goFullscreen();
+  S.mode = "puzzle";
+  S.phase = "puzzle";
+  S.viewer = 0;
+  const worldId = S.worlds[0];
+  applyUiWorld(worldId);
+
+  const { board, rows, cols, hints } = generatePuzzle();
+  S.puzzle = { board, rows, cols, spades: PUZZLE_SPADES };
+  S.boards = [board, null];
+
+  SCENE.setupBoard("mine", worldId);
+  SCENE.placeCreatures("mine", []); // everything stays hidden
+  SCENE.setEdgeCounts("mine", rows, cols);
+  // truthful pre-revealed hint cells
+  for (const h of hints) {
+    const res = E.fire(board, h.x, h.y);
+    SCENE.applyShotQuiet("mine", h.x, h.y, res.result === E.MISS ? "miss" : "hit");
+    if (res.result === E.SUNK) {
+      SCENE.addCreature("mine", res.ship, { found: true });
+      for (const c of res.revealed) SCENE.applyShotQuiet("mine", c.x, c.y, "miss");
+    }
+  }
+  if (board.ships.every(E.isSunk)) {
+    // hints solved the whole thing (vanishingly rare) — deal a new one
+    startPuzzle();
+    return;
+  }
+  updatePuzzleClues();
+  SCENE.focusBoard("mine", { immediate: S.phase === "title" });
+  SCENE.clearInteraction();
+  SCENE.setTapMode("mine", puzzleTap);
+  SND.startAmbient(worldId);
+  show(null);
+  $("#btn-shuffle").hidden = true;
+  $("#btn-style").hidden = true;
+  $("#btn-place-done").hidden = true;
+  puzzleStatus();
+  renderChips(0);
+}
+
+function puzzleStatus(prefix = "") {
+  const lead = prefix ? `${prefix} ` : "";
+  status(`${lead}Die Zahlen verraten die Verstecke! ${"⛏️".repeat(S.puzzle.spades)}`);
+}
+
+// dim row/col clues that are fully found
+function updatePuzzleClues() {
+  const { board, rows, cols } = S.puzzle;
+  const foundRows = Array(board.size).fill(0);
+  const foundCols = Array(board.size).fill(0);
+  for (const s of board.ships) {
+    for (const h of s.hits) {
+      foundRows[h.y] += 1;
+      foundCols[h.x] += 1;
+    }
+  }
+  rows.forEach((n, y) => {
+    if (foundRows[y] >= n) SCENE.dimEdgeCount("mine", "rows", y);
+  });
+  cols.forEach((n, x) => {
+    if (foundCols[x] >= n) SCENE.dimEdgeCount("mine", "cols", x);
+  });
+}
+
+function puzzleTap(x, y) {
+  if (S.phase !== "puzzle" || S.inputLocked) return;
+  const { board } = S.puzzle;
+  const res = E.fire(board, x, y);
+  if (res.result === E.REPEAT) {
+    SND.tap();
+    return;
+  }
+  const world = getWorld(S.worlds[0]);
+  SCENE.applyShot("mine", x, y, res.result === E.MISS ? "miss" : "hit");
+  if (navigator.vibrate) navigator.vibrate(res.result === E.MISS ? 15 : 40);
+
+  if (res.result === E.MISS) {
+    SND.plop();
+    S.puzzle.spades -= 1;
+    if (S.puzzle.spades <= 0) {
+      puzzleEnd(false);
+      return;
+    }
+    puzzleStatus("Hier ist nichts …");
+  } else if (res.result === E.HIT) {
+    SND.sparkle();
+    updatePuzzleClues();
+    puzzleStatus(world.words.hit);
+  } else if (res.result === E.SUNK) {
+    SND.fanfare();
+    SCENE.revealShip("mine", res.ship);
+    SCENE.revealWater("mine", res.revealed);
+    updatePuzzleClues();
+    renderChips(0);
+    if (res.gameOver) {
+      S.inputLocked = true;
+      setTimeout(() => puzzleEnd(true), FAST ? 60 : 1400);
+      return;
+    }
+    puzzleStatus(`${creatureName(0, res.ship.id)} ${world.words.sunk}`);
+  }
+}
+
+function puzzleEnd(won) {
+  S.phase = "over";
+  S.inputLocked = false;
+  SCENE.clearInteraction();
+  const world = getWorld(S.worlds[0]);
+  const stickerBox = $("#win-sticker");
+  stickerBox.hidden = true;
+  if (won) {
+    $("#win-title").textContent = "Rätsel gelöst!";
+    $("#win-sub").textContent = world.words.win;
+    if (flag("stickers")) {
+      const r = PROG.awardSticker(S.worlds[0]);
+      const creature = getWorld(r.worldId).creatures[r.idx];
+      stickerBox.innerHTML = "";
+      const img = document.createElement("img");
+      img.alt = creature?.name ?? "";
+      img.src = creatureThumb(r.worldId, r.idx);
+      const label = document.createElement("div");
+      label.className = "sticker-label";
+      label.textContent = r.isNew
+        ? `Neuer Sticker: ${creature?.name}!`
+        : `Sticker: ${creature?.name} (schon im Album)`;
+      stickerBox.appendChild(img);
+      stickerBox.appendChild(label);
+      stickerBox.hidden = false;
+    }
+    SND.bigWin();
+    SCENE.confettiRain("mine");
+  } else {
+    // reveal the hiding spots so the kid learns the layout
+    SCENE.placeCreatures("mine", S.puzzle.board.ships, { popIn: true });
+    $("#win-title").textContent = "Die Schaufeln sind alle!";
+    $("#win-sub").textContent = "Schau, hier waren die Verstecke. Gleich nochmal?";
+    SND.sad();
+  }
+  $("#btn-rematch").textContent = "Neues Rätsel";
+  show("screen-win");
+}
+
 // -------------------------------------------------------------- game over
 
 function finishGame(winner) {
   S.phase = "over";
   SCENE.clearInteraction();
+  $("#btn-rematch").textContent = "Nochmal spielen";
   const loserIdx = other(winner);
   const world = getWorld(S.worlds[loserIdx]);
   const iWon = S.mode === "hotseat" || winner === S.viewer;
@@ -1171,6 +1326,10 @@ function openAlbum() {
 
 function rematch() {
   SND.tap();
+  if (S.mode === "puzzle") {
+    startPuzzle();
+    return;
+  }
   if (S.mode === "online") {
     S.rematchMine = true;
     S.net.send({ t: "rematch" });
@@ -1191,6 +1350,7 @@ function goHome() {
   }
   S.boards = [null, null];
   S.shadow = null;
+  S.puzzle = null;
   S.customs = [{}, {}];
   S.oppCustom = null;
   SCENE.resetScene();
@@ -1214,6 +1374,8 @@ function boot() {
   syncRuleChips();
   document.querySelector(".rules-row").hidden = !flag("rules");
   $("#btn-album").hidden = !flag("stickers");
+  $("#btn-puzzle").hidden = !flag("puzzle");
+  $("#btn-puzzle").addEventListener("click", startPuzzle);
   for (const [id, k] of [
     ["#rule-decoy", "decoy"],
     ["#rule-sonar", "sonar"],
@@ -1340,6 +1502,7 @@ function boot() {
       FAST = true;
     },
     tap: (x, y) => handleTap(x, y),
+    puzzleTap: (x, y) => puzzleTap(x, y),
     setStyle: (id, tint, hat) => setShipCustom(id, { tint, hat }),
     setRules: (r) => {
       Object.assign(S.rules, r);

@@ -489,6 +489,22 @@ h1.logo {
   }
 }
 
+/* --------------------------------------------------------- extras row */
+
+.extras-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.extras-row .btn {
+  font-size: 0.95rem;
+  padding: 10px 18px;
+  min-height: 44px;
+}
+
 /* ------------------------------------------------------- extra rules */
 
 .rules-row {

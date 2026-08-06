@@ -238,6 +238,67 @@ test("extra rules: ghost mode fades old miss marks", async ({ page }) => {
   expect(await page.evaluate((k) => window.__FF.marksOn(1)[k], `${last.x},${last.y}`)).toBe("miss");
 });
 
+test("Knobel-Insel: solve the puzzle by digging all creature cells", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator("#btn-puzzle").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.phase))
+    .toBe("puzzle");
+
+  // dig every creature cell straight from the hidden layout
+  const cells = await page.evaluate(() => {
+    const { board } = window.__FF.state.puzzle;
+    const E = window.__FF.engine;
+    return board.ships.flatMap((s) => E.shipCells(s));
+  });
+  for (const c of cells) {
+    await page.evaluate(([x, y]) => {
+      const st = window.__FF.state;
+      if (st.phase === "puzzle") window.__FF.puzzleTap(x, y);
+    }, [c.x, c.y]);
+    await page.waitForTimeout(60);
+  }
+  await expect(page.locator("#screen-win")).toHaveClass(/active/, { timeout: 15000 });
+  await expect(page.locator("#win-title")).toContainText("gelöst");
+  // a fresh puzzle starts from the win screen
+  await page.locator("#btn-rematch").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.phase))
+    .toBe("puzzle");
+  expect(await page.evaluate(() => window.__FF.state.puzzle.spades)).toBeGreaterThan(0);
+});
+
+test("Knobel-Insel: running out of spades reveals the layout", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator("#btn-puzzle").click();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("puzzle");
+
+  // dig water cells until the spades run out
+  const water = await page.evaluate(() => {
+    const { board } = window.__FF.state.puzzle;
+    const E = window.__FF.engine;
+    const occupied = new Set();
+    for (const s of board.ships) for (const c of E.shipCells(s)) occupied.add(`${c.x},${c.y}`);
+    const out = [];
+    for (let y = 0; y < 8; y += 1) {
+      for (let x = 0; x < 8; x += 1) {
+        if (!occupied.has(`${x},${y}`) && !board.shots[`${x},${y}`]) out.push({ x, y });
+      }
+    }
+    return out;
+  });
+  for (const c of water.slice(0, 10)) {
+    const over = await page.evaluate(() => window.__FF.state.phase !== "puzzle");
+    if (over) break;
+    await page.evaluate(([x, y]) => window.__FF.puzzleTap(x, y), [c.x, c.y]);
+    await page.waitForTimeout(60);
+  }
+  await expect(page.locator("#screen-win")).toHaveClass(/active/, { timeout: 15000 });
+  await expect(page.locator("#win-title")).toContainText("Schaufeln");
+});
+
 test("hot-seat: two worlds, pass screens, full game to the win screen", async ({ page }) => {
   test.setTimeout(420000);
   await page.evaluate(() => window.__FF.setFast());
