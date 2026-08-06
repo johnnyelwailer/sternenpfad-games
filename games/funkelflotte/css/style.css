@@ -256,6 +256,15 @@ h1.logo .spark {
   background: linear-gradient(160deg, #14421f, #2e7d3f);
 }
 
+.world-card[data-world="teich"] {
+  background: linear-gradient(160deg, #0e4a3e, #1f7d63);
+}
+
+/* an odd last world card spans the full row so nothing dangles */
+.world-card:last-child:nth-child(odd) {
+  grid-column: span 2;
+}
+
 /* ---- boards ---- */
 
 .board-wrap {

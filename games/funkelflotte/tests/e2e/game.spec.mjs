@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
 
 test("title screen shows worlds and modes", async ({ page }) => {
   await expect(page.locator("h1.logo")).toContainText("Funkel-Flotte");
-  await expect(page.locator(".world-card")).toHaveCount(4);
+  await expect(page.locator(".world-card")).toHaveCount(5);
   await expect(page.locator('[data-mode="ai"]')).toBeVisible();
   await expect(page.locator('[data-mode="hotseat"]')).toBeVisible();
   await expect(page.locator('[data-mode="online"]')).toBeVisible();
