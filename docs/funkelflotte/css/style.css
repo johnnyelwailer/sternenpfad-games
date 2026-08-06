@@ -489,6 +489,60 @@ h1.logo {
   }
 }
 
+/* --------------------------------------------------------- extras row */
+
+.extras-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.extras-row .btn {
+  font-size: 0.95rem;
+  padding: 10px 18px;
+  min-height: 44px;
+}
+
+/* ------------------------------------------------------- extra rules */
+
+.rules-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: min(92vw, 420px);
+  margin-bottom: 1.5vh;
+}
+
+.rule-chip {
+  cursor: pointer;
+}
+
+.rule-chip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.rule-chip span {
+  display: inline-block;
+  font-size: 0.85rem;
+  font-weight: 800;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.rule-chip input:checked + span {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: var(--accent);
+  transform: scale(1.04);
+}
+
 /* ----------------------------------------------------- sticker album */
 
 .album-total {
