@@ -144,6 +144,152 @@ export function bossRoars(st) {
   return st.moves > 0 && st.moves % 3 === 0;
 }
 
+// ------------------------------------------------------------- hunt mode
+// Solo Monsterjagd 2.0: YOUR OWN fleet stands on the same board — it is
+// your lives. The monster stalks the nearest living creature (so its
+// path is finally predictable!), and every step onto a creature takes a
+// bite. Visible chests hold power-ups. No shot budget: the fleet is
+// the clock.
+
+export const HUNT_FLEET = [3, 2, 2]; // creature sizes = your lives
+export const HUNT_TREASURES = 2;
+export const FREEZE_MOVES = 3; // an ice chest roots the monster this long
+
+export function fleetCells(ship) {
+  const out = [];
+  for (let i = 0; i < ship.size; i += 1) {
+    out.push(ship.dir === "h" ? { x: ship.x + i, y: ship.y } : { x: ship.x, y: ship.y + i });
+  }
+  return out;
+}
+
+export function fleetAlive(st) {
+  return st.fleet.filter((s) => s.hits.length < s.size).length;
+}
+
+export function fleetHealthyCells(st) {
+  const out = [];
+  for (const ship of st.fleet) {
+    if (ship.hits.length >= ship.size) continue;
+    for (const c of fleetCells(ship)) {
+      if (!ship.hits.some((h) => h.x === c.x && h.y === c.y)) out.push(c);
+    }
+  }
+  return out;
+}
+
+export function fleetShipAt(st, x, y) {
+  for (const ship of st.fleet ?? []) {
+    if (fleetCells(ship).some((c) => c.x === x && c.y === y)) return ship;
+  }
+  return null;
+}
+
+export function treasureIdxAt(st, x, y) {
+  return (st.treasures ?? []).findIndex((t) => t.x === x && t.y === y);
+}
+
+export function createHunt(rng = Math.random, { size = 8 } = {}) {
+  const st = createBoss(rng, { size, shots: 9999 });
+  st.hunt = true;
+  st.freeze = 0; // moves the monster stays frozen
+  st.extraShots = 0; // banked bonus shots (chest power)
+  st.fleet = [];
+  st.treasures = [];
+
+  // cells blocked for placement: monster body + fleet + one-cell halo
+  const blocked = new Set(bossCells(st).map((c) => key(c.x, c.y)));
+  const blockWithHalo = (cells) => {
+    for (const c of cells) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) blocked.add(key(c.x + dx, c.y + dy));
+      }
+    }
+  };
+  HUNT_FLEET.forEach((len, i) => {
+    for (let tries = 0; tries < 500; tries += 1) {
+      const dir = rng() < 0.5 ? "h" : "v";
+      const maxX = dir === "h" ? size - len : size - 1;
+      const maxY = dir === "v" ? size - len : size - 1;
+      const ship = {
+        id: 10 + i, // clear of the monster's id (the king look keys on it)
+        size: len,
+        x: Math.floor(rng() * (maxX + 1)),
+        y: Math.floor(rng() * (maxY + 1)),
+        dir,
+        hits: [],
+      };
+      if (fleetCells(ship).some((c) => blocked.has(key(c.x, c.y)))) continue;
+      st.fleet.push(ship);
+      blockWithHalo(fleetCells(ship));
+      break;
+    }
+  });
+  for (let placed = 0, tries = 0; placed < HUNT_TREASURES && tries < 500; tries += 1) {
+    const x = Math.floor(rng() * size);
+    const y = Math.floor(rng() * size);
+    if (blocked.has(key(x, y))) continue;
+    blocked.add(key(x, y));
+    st.treasures.push({ x, y });
+    placed += 1;
+  }
+  return st;
+}
+
+// chest power-ups, equally likely: two shots / freeze / shadow hint
+export function drawHuntPower(rng = Math.random) {
+  return ["doppel", "frost", "glocke"][Math.floor(rng() * 3)];
+}
+
+// The monster's turn in hunt mode: frozen and resting turns keep the
+// kid-fair pace; otherwise it takes the step that brings it closest to
+// the nearest still-healthy creature — and BITES one overlapped cell.
+export function huntBossMove(st, rng = Math.random) {
+  if (st.freeze > 0) {
+    st.freeze -= 1;
+    return { frozen: true, freezeLeft: st.freeze };
+  }
+  if (bossRests(st)) return { rested: true };
+  const targets = fleetHealthyCells(st);
+  if (!targets.length) return { allGone: true };
+  const moves = legalBossMoves(st);
+  if (!moves.length) return { stuck: true };
+  let pick = moves[0];
+  let bestD = Infinity;
+  for (const m of moves) {
+    const body = bossCells({ ...st, boss: { ...st.boss, x: st.boss.x + m.dx, y: st.boss.y + m.dy } });
+    let d = Infinity;
+    for (const c of body) {
+      for (const t of targets) d = Math.min(d, Math.max(Math.abs(c.x - t.x), Math.abs(c.y - t.y)));
+    }
+    const scored = d + rng() * 0.4; // a little wobble, never a teleport
+    if (scored < bestD) {
+      bestD = scored;
+      pick = m;
+    }
+  }
+  moveBoss(st, pick.dx, pick.dy);
+  const roar = bossRoars(st);
+  // bite exactly ONE healthy fleet cell under the new body
+  const body = new Set(bossCells(st).map((c) => key(c.x, c.y)));
+  for (const ship of st.fleet) {
+    if (ship.hits.length >= ship.size) continue;
+    for (const c of fleetCells(ship)) {
+      if (!body.has(key(c.x, c.y))) continue;
+      if (ship.hits.some((h) => h.x === c.x && h.y === c.y)) continue;
+      ship.hits.push({ x: c.x, y: c.y });
+      return {
+        moved: pick,
+        roar,
+        bite: { ship, x: c.x, y: c.y, seg: fleetCells(ship).findIndex((fc) => fc.x === c.x && fc.y === c.y) },
+        destroyed: ship.hits.length >= ship.size,
+        allGone: fleetAlive(st) === 0,
+      };
+    }
+  }
+  return { moved: pick, roar };
+}
+
 // robo monster: shuffles away from the last shot, with some wobble
 export function roboBossMove(st, lastShot, rng = Math.random) {
   const moves = legalBossMoves(st);
