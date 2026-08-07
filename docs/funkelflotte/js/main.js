@@ -999,7 +999,8 @@ function onPowerTap(kind) {
   if (S.phase !== "battle" || S.turn !== S.viewer || S.inputLocked) return;
   if (S.pendingPower === kind) {
     S.pendingPower = null;
-    beginTurnStatus();
+    if (PW.POWERS[kind].target === "own") resumeBattleView();
+    else beginTurnStatus();
     renderPowers();
     return;
   }
@@ -1017,6 +1018,14 @@ function onPowerTap(kind) {
   SND.tap();
   if (p.target === "none") {
     executePower(kind, null);
+  } else if (p.target === "own") {
+    // pick one of YOUR friends: fly home so you see who you're choosing
+    S.pendingPower = kind;
+    const mySlot = slotFor(me());
+    SCENE.focusBoard(mySlot);
+    SCENE.setTapMode(mySlot, (x, y) => ownPowerTap(x, y));
+    status(`${p.emoji} ${p.name}: Tipp den Freund an, der umziehen soll!`);
+    renderPowers();
   } else {
     S.pendingPower = kind;
     status(
@@ -1026,6 +1035,36 @@ function onPowerTap(kind) {
     );
     renderPowers();
   }
+}
+
+// point the camera and taps back at the enemy board after an own-board
+// interlude (choosing a friend, watching a move)
+function resumeBattleView() {
+  if (S.phase !== "battle" || S.turn !== S.viewer) return;
+  const target = other(S.turn);
+  SCENE.focusBoard(slotFor(target));
+  SCENE.setTapMode(slotFor(target), (x, y) => handleTap(x, y));
+  beginTurnStatus();
+}
+
+// a tap on the OWN board while an own-target power is armed
+function ownPowerTap(x, y) {
+  if (S.phase !== "battle" || S.inputLocked || S.turn !== S.viewer) return;
+  const kind = S.pendingPower;
+  if (!kind || PW.POWERS[kind].target !== "own") return;
+  const board = S.boards[me()];
+  const ship = E.shipAt(board, x, y);
+  if (!ship) {
+    SND.tap();
+    return;
+  }
+  if (ship.hits.length > 0) {
+    SND.sad();
+    toast("Der wurde schon entdeckt — wähl einen ganz versteckten Freund!");
+    return;
+  }
+  S.pendingPower = null;
+  executePower(kind, { shipId: ship.id });
 }
 
 function beginTurnStatus() {
@@ -1132,23 +1171,35 @@ function executePower(kind, target) {
     SND.sparkle();
     status("🪷 Seerosen-Schild aktiv: Der nächste Treffer prallt ab!");
   } else if (kind === "wirbel") {
-    const moved = PW.whirlwindMove(S.boards[my]);
+    const board = S.boards[my];
+    const chosen = board.ships.find((s) => s.id === target?.shipId) ?? null;
+    const fromCells = chosen ? E.shipCells(chosen) : null;
+    const moved = PW.whirlwindMove(board, Math.random, target?.shipId ?? null);
     if (!moved) {
       SND.sad();
-      toast("Kein Platz zum Wirbeln!");
+      toast("Kein Platz zum Wirbeln — probier einen anderen Freund!");
       S.pendingPower = null;
       renderPowers();
-      dispatchTreasureFollowup();
+      resumeBattleView();
       return;
     }
     consumePower(kind);
-    syncCreatureVisibility();
-    const movedCells = E.shipCells(moved);
-    const mid = movedCells[Math.floor(movedCells.length / 2)];
-    SCENE.tornadoAt(slotFor(my), mid.x, mid.y);
+    // show the whole journey: tornado at the old hiding spot, then the
+    // friend visibly hops over to the new one while you watch
+    const mySlot = slotFor(my);
+    SCENE.focusBoard(mySlot);
+    const fromMid = fromCells?.[Math.floor(fromCells.length / 2)];
+    if (fromMid) SCENE.tornadoAt(mySlot, fromMid.x, fromMid.y);
+    SCENE.moveCreature(mySlot, moved);
     if (S.mode === "online") S.net.send({ t: "pw", kind: "wirbel" });
     SND.whoosh();
-    status("🌪️ Wusch! Ein Freund hat heimlich das Versteck gewechselt.");
+    status("🌪️ Wusch! Dein Freund ist umgezogen — pssst, neues Versteck!");
+    // a beat to take it in, then back to the hunt
+    S.inputLocked = true;
+    setTimeout(() => {
+      S.inputLocked = false;
+      resumeBattleView();
+    }, FAST ? 120 : 2200);
   } else if (kind === "ballon") {
     if (!PW.extraBalloon(S.boards[my])) {
       SND.sad();
@@ -4155,9 +4206,29 @@ function enterReconnectWait() {
 // ------------------------------------------------------------- updates
 // Poll the deployment stamp; when a new version ships, offer a one-tap
 // refresh on the title screen (never interrupting a running game).
+// The known version is PERSISTED: the usual flow is close app → new
+// deploy → reopen, and a baseline that only lives for one session
+// would adopt the new stamp silently and never show the banner.
 
-let appVersion = null;
+let appVersion = null; // the version this device believes it is running
+let latestVersion = null; // the newest stamp seen on the server
 let updatePending = false;
+
+function loadKnownVersion() {
+  try {
+    return localStorage.getItem("ff-version");
+  } catch {
+    return null;
+  }
+}
+
+function storeKnownVersion(v) {
+  try {
+    localStorage.setItem("ff-version", v);
+  } catch {
+    /* private mode etc. */
+  }
+}
 
 async function fetchVersion() {
   try {
@@ -4173,9 +4244,16 @@ async function fetchVersion() {
 async function checkForUpdate() {
   const v = await fetchVersion();
   if (!v) return false;
+  latestVersion = v;
   if (appVersion === null) {
-    appVersion = v;
-    return false;
+    const stored = loadKnownVersion();
+    if (!stored) {
+      // first ever run: whatever is live is what we just loaded
+      appVersion = v;
+      storeKnownVersion(v);
+      return false;
+    }
+    appVersion = stored;
   }
   if (v !== appVersion) {
     updatePending = true;
@@ -4192,15 +4270,22 @@ function maybeShowUpdate() {
 async function applyUpdate() {
   SND.tap();
   $("#update-banner").textContent = "✨ Wird aktualisiert …";
-  try {
-    // drop the offline cache so the reload really fetches the new build
+  // remember the version we are about to become, so the fresh boot
+  // doesn't offer the same update again
+  if (latestVersion) storeKnownVersion(latestVersion);
+  // drop the offline cache so the reload really fetches the new build —
+  // but NEVER let service-worker plumbing hold the reload hostage
+  // (reg.update() can stall indefinitely): race it against a deadline
+  const cleanup = (async () => {
     const keys = await caches.keys();
     await Promise.all(keys.filter((k) => k.startsWith("funkelflotte")).map((k) => caches.delete(k)));
-    const reg = await navigator.serviceWorker?.getRegistration?.();
-    await reg?.update?.();
-  } catch {
-    /* best effort — the reload still helps */
-  }
+    // fire and forget — the navigation triggers an SW update check anyway
+    navigator.serviceWorker
+      ?.getRegistration?.()
+      .then((reg) => reg?.update?.())
+      .catch(() => {});
+  })().catch(() => {});
+  await Promise.race([cleanup, new Promise((r) => setTimeout(r, 2500))]);
   window.location.reload();
 }
 
@@ -4553,6 +4638,7 @@ function boot() {
       FAST = true;
     },
     tap: (x, y) => handleTap(x, y),
+    ownTap: (x, y) => ownPowerTap(x, y),
     puzzleTap: (x, y) => puzzleTap(x, y),
     chaseTap: (x, y) => chaseSeekTap(x, y),
     chaseNetTap: (x, y) => chaseOnlineSeekTap(x, y),

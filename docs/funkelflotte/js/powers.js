@@ -61,8 +61,9 @@ export const POWERS = {
   wirbel: {
     emoji: "🌪️",
     name: "Wirbelwind",
-    target: "none",
-    desc: "Einer deiner unentdeckten Freunde wirbelt heimlich an einen neuen Platz.",
+    target: "own",
+    cardsOnly: true,
+    desc: "Tipp einen deiner ganz versteckten Freunde an — der Wirbelwind trägt ihn vor deinen Augen an ein neues Versteck.",
   },
   ballon: {
     emoji: "🎈",
@@ -253,11 +254,12 @@ export function biggestHiddenDir(board) {
   return best ? best.dir : null;
 }
 
-// Wirbelwind: move a random unharmed creature to a fresh legal spot
-// whose cells were never shot at (marks must stay truthful). Returns
-// the moved ship or null.
-export function whirlwindMove(board, rng = Math.random) {
-  const candidates = board.ships.filter((s) => s.hits.length === 0);
+// Wirbelwind: move an unharmed creature (the chosen one, or a random
+// one) to a fresh legal spot whose cells were never shot at (marks must
+// stay truthful). Returns the moved ship or null.
+export function whirlwindMove(board, rng = Math.random, shipId = null) {
+  let candidates = board.ships.filter((s) => s.hits.length === 0);
+  if (shipId !== null) candidates = candidates.filter((s) => s.id === shipId);
   if (!candidates.length) return null;
   const ship = candidates[Math.floor(rng() * candidates.length)];
   for (let tries = 0; tries < 300; tries += 1) {
