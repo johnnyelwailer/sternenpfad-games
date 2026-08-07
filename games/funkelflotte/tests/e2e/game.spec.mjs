@@ -92,9 +92,20 @@ test("new worlds: Eisberg-Bucht plays a battle, Frost-Stern scans its cross", as
     return document.getElementById("status").textContent;
   }, [shipCell.x, shipCell.y]);
   expect(statusText).toContain("Eisstern");
-  // an info scan is not a shot — the cell carries no mark and the turn passes
+  // an info scan is not a shot — the cell carries no mark, and a chest
+  // spell always keeps the turn so you can use what you just learned
   expect(await page.evaluate((k) => window.__FF.marksOn(1)[k], `${shipCell.x},${shipCell.y}`)).toBeFalsy();
-  await expect.poll(() => page.evaluate(() => window.__FF.state.turn), { timeout: 15000 }).toBe(1);
+  await expect
+    .poll(
+      () => page.evaluate(() => window.__FF.state.turn === 0 && !window.__FF.state.inputLocked),
+      { timeout: 15000 }
+    )
+    .toBe(true);
+  // …and the informed follow-up shot lands
+  await tapWhenMyTurn(page, shipCell.x, shipCell.y);
+  await expect
+    .poll(() => page.evaluate((k) => window.__FF.marksOn(1)[k], `${shipCell.x},${shipCell.y}`))
+    .toBe("hit");
 });
 
 test("power-gain card: the dismissing tap never doubles as a board shot", async ({ page }) => {
@@ -1294,13 +1305,62 @@ test("Monster-Jagd: wounding every segment defeats the prowling boss", async ({ 
             : { x: st.boss.x, y: st.boss.y + s, s }
         );
       }
-      const fresh = cells.find((c) => !st.wounds.includes(c.s));
+      // never aim at your own fleet — those taps are friendly-fire-blocked
+      const fleetCells = new Set();
+      for (const s of st.fleet ?? []) {
+        for (let i = 0; i < s.size; i += 1) {
+          fleetCells.add(s.dir === "h" ? `${s.x + i},${s.y}` : `${s.x},${s.y + i}`);
+        }
+      }
+      const fresh = cells.find((c) => !st.wounds.includes(c.s) && !fleetCells.has(`${c.x},${c.y}`));
       if (fresh) window.__FF.bossTap(fresh.x, fresh.y);
     });
     await page.waitForTimeout(120);
   }
   await expect(page.locator("#screen-win")).toHaveClass(/active/, { timeout: 10000 });
   await expect(page.locator("#win-title")).toContainText("besiegt");
+});
+
+test("Monster-Jagd: fleet stands on the board and chests grant power-ups", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator("#btn-boss").click();
+  await page.locator('[data-boss="ai"]').click();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("boss");
+  await expect
+    .poll(() => page.evaluate(() => !window.__FF.state.inputLocked), { timeout: 15000 })
+    .toBe(true);
+
+  // hunt setup: your fleet is on the board, chests glitter, no shot clock
+  const setup = await page.evaluate(() => {
+    const st = window.__FF.state.boss.st;
+    return { hunt: st.hunt, fleet: st.fleet.length, chests: st.treasures.length };
+  });
+  expect(setup).toEqual({ hunt: true, fleet: 3, chests: 2 });
+
+  // tapping your own creature never fires a shot
+  const ownCell = await page.evaluate(() => {
+    const s = window.__FF.state.boss.st.fleet[0];
+    return { x: s.x, y: s.y };
+  });
+  const shotsBefore = await page.evaluate(() => window.__FF.state.boss.st.shotCount);
+  await page.evaluate(([x, y]) => window.__FF.bossTap(x, y), [ownCell.x, ownCell.y]);
+  expect(await page.evaluate(() => window.__FF.state.boss.st.shotCount)).toBe(shotsBefore);
+
+  // digging a chest applies a power-up and the monster holds still
+  const chest = await page.evaluate(() => window.__FF.state.boss.st.treasures[0]);
+  const bossBefore = await page.evaluate(() => ({ ...window.__FF.state.boss.st.boss }));
+  await page.evaluate(([x, y]) => window.__FF.bossTap(x, y), [chest.x, chest.y]);
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.boss.st.treasures.length), { timeout: 15000 })
+    .toBe(1);
+  await expect
+    .poll(() => page.evaluate(() => {
+      const st = window.__FF.state.boss.st;
+      return st.extraShots > 0 || st.freeze > 0 || /Schatten/.test(document.getElementById("status").textContent);
+    }), { timeout: 15000 })
+    .toBe(true);
+  expect(await page.evaluate(() => ({ ...window.__FF.state.boss.st.boss }))).toEqual(bossBefore);
 });
 
 test("Monster-Jagd online: monster places, moves, and is defeated", async ({ browser }) => {

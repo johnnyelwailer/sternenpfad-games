@@ -1094,32 +1094,30 @@ function autoUsePower(kind) {
 
 function dispatchTreasureFollowup() {
   if (!S.treasureFollowup) return;
-  const f = S.treasureFollowup;
   S.treasureFollowup = null;
   const kind = S.treasureKind;
   S.treasureKind = null;
-  // some chest spells mean action NOW — the turn does not pass:
-  //   doppel: search twice right away (the forgiven miss covers #2)
-  //   fernglas: peek, then immediately use what you learned
-  //   trommel/kompass: follow the fresh arrow while it points
-  const keepTurn = {
-    doppel: "🎯 Doppelschuss! Du darfst gleich ZWEIMAL suchen!",
-    fernglas: "🔍 Du weißt jetzt mehr — such gleich weiter!",
-    trommel: "🥁 Folg dem Pfeil — such gleich weiter!",
-    kompass: "🧭 Folg dem Pfeil — such gleich weiter!",
-  }[kind];
-  if (keepTurn) {
-    setTimeout(() => {
-      if (S.phase !== "battle") return;
-      if (S.mode === "online" && kind === "doppel") S.net.send({ t: "pw", kind: "doppel" });
-      S.inputLocked = false;
-      status(keepTurn);
-      renderPowers();
-      saveGame();
-    }, FAST ? 140 : 1400);
-    return;
-  }
-  setTimeout(f, FAST ? 140 : 1700);
+  // digging a chest is a GIFT, not your shot: every chest spell keeps
+  // the turn, so you always get to play with what you just learned
+  const keepTurn =
+    {
+      doppel: "🎯 Doppelschuss! Du darfst gleich ZWEIMAL suchen!",
+      fernglas: "🔍 Du weißt jetzt mehr — such gleich weiter!",
+      trommel: "🥁 Folg dem Pfeil — such gleich weiter!",
+      kompass: "🧭 Folg dem Pfeil — such gleich weiter!",
+      glocke: "🔔 Such unter dem Schatten — du bist noch dran!",
+      klee: "🍀 Jedes Daneben zeigt jetzt die Entfernung — such gleich weiter!",
+      zeit: "⏳ Extra-Zug gespeichert — und du bist gleich nochmal dran!",
+      schild: "🪷 Schild aktiv — und du darfst gleich weitersuchen!",
+    }[kind] ?? "✨ Schatz-Zauber gewirkt — du bist immer noch dran!";
+  setTimeout(() => {
+    if (S.phase !== "battle") return;
+    if (S.mode === "online" && kind === "doppel") S.net.send({ t: "pw", kind: "doppel" });
+    S.inputLocked = false;
+    status(keepTurn);
+    renderPowers();
+    saveGame();
+  }, FAST ? 140 : 1400);
 }
 
 function consumePower(kind) {
@@ -1691,7 +1689,8 @@ function handleTap(x, y) {
   // the result of the first shot is still playing out
   S.inputLocked = true;
 
-  // dug up the treasure: it casts its power on the spot, then the turn passes
+  // dug up the treasure: it casts its power on the spot — and the turn
+  // stays with the digger, so the spell can be used right away
   if (res.result === E.MISS && powersEnabled() && PW.treasureAt(board, x, y)) {
     board.treasures = board.treasures.filter((t) => !(t.x === x && t.y === y));
     SCENE.applyShotQuiet(slotFor(targetIdx), x, y, "miss");
@@ -3300,7 +3299,8 @@ function handleChaseMessage(msg) {
 
 // ---------------------------------------------------------------- boss
 
-const BOSS_IDX = { ozean: 1, weltraum: 2, dino: 1, teich: 3 }; // Oktopus, UFO, Rexi, Frosch
+// Oktopus, UFO, Rexi, Frosch, Eisbär, Drache
+const BOSS_IDX = { ozean: 1, weltraum: 2, dino: 1, teich: 3, eis: 2, vulkan: 0 };
 
 function bossIdx() {
   return BOSS_IDX[S.worlds[0]] ?? 1;
@@ -3328,6 +3328,13 @@ function centeredBossShip(st) {
 
 function bossHunterStatus(wounds, shotsLeft, prefix = "") {
   const lead = prefix ? `${prefix} ` : "";
+  const st = S.boss?.st;
+  if (st?.hunt) {
+    // hunt mode: the monster's hearts vs. your fleet's healthy cells
+    const fleet = BOSS.fleetHealthyCells(st).length;
+    status(`${lead}${bossName()}: ${"💜".repeat(BOSS.BOSS_SIZE - wounds)} · Flotte: ${"❤️".repeat(fleet)}`);
+    return;
+  }
   status(`${lead}${bossName()}: ${"❤️".repeat(BOSS.BOSS_SIZE - wounds)} · 🔦 ${shotsLeft}`);
 }
 
@@ -3358,7 +3365,15 @@ function startBoss(kind) {
   S.gameMode = "boss";
   S.journey = null;
   S.inputLocked = false; // a won battle may have left the lock on
-  S.boss = { kind, st: BOSS.createBoss(), role: "hunter", marks: {}, shotsLeft: BOSS.BOSS_SHOTS, wounds: 0 };
+  // solo = hunt mode: your fleet on the same board is your lives
+  S.boss = {
+    kind,
+    st: kind === "ai" ? BOSS.createHunt() : BOSS.createBoss(),
+    role: "hunter",
+    marks: {},
+    shotsLeft: BOSS.BOSS_SHOTS,
+    wounds: 0,
+  };
   if (kind === "online") {
     show("screen-online");
     return;
@@ -3366,12 +3381,15 @@ function startBoss(kind) {
   setupBossBoard();
   if (kind === "ai") {
     const st = S.boss.st;
+    // chests glitter through the parade; the fleet marches on after it
+    SCENE.renderTreasures("mine", st.treasures);
     quarryIntro(
       centeredBossShip(st),
-      `So RIESIG ist ${bossName()}: ${BOSS.BOSS_SIZE} Felder lang! Und es stapft nach jedem Schuss …`,
+      `So RIESIG ist ${bossName()}: ${BOSS.BOSS_SIZE} Felder lang! Es jagt DEINE Freunde — finde es zuerst!`,
       true,
       () => {
-        bossHunterStatus(0, st.shotsLeft, `${bossName()} stapft irgendwo herum!`);
+        SCENE.placeCreatures("mine", st.fleet, { popIn: true });
+        bossHunterStatus(0, 0, `${bossName()} schleicht zu deinen Freunden!`);
         SCENE.setTapMode("mine", (x, y) => bossSeekTap(x, y));
       }
     );
@@ -3440,6 +3458,47 @@ function bossPlacingDone() {
 function bossSeekTap(x, y) {
   if (S.phase !== "boss" || S.inputLocked) return;
   const st = S.boss.st;
+
+  if (st.hunt) {
+    // no friendly fire — your own creature stands here
+    if (BOSS.fleetShipAt(st, x, y)) {
+      SND.tap();
+      toast("Da steht doch dein eigener Freund!");
+      return;
+    }
+    // a chest! Digging is a gift, not a shot — the monster waits
+    const ti = BOSS.treasureIdxAt(st, x, y);
+    if (ti >= 0) {
+      st.treasures.splice(ti, 1);
+      SCENE.openTreasure("mine", x, y);
+      SND.treasure();
+      S.inputLocked = true;
+      const kind = BOSS.drawHuntPower();
+      powerFlyOut(kind, "mine", x, y, () => {
+        S.inputLocked = false;
+        if (kind === "doppel") {
+          st.extraShots += 1;
+          SND.fanfare();
+          status("🎯 Doppelschuss! Dein nächster Zug hat ZWEI Schüsse — das Monster wartet.");
+        } else if (kind === "frost") {
+          st.freeze = BOSS.FREEZE_MOVES;
+          SND.sparkle();
+          status(`❄️ Eiszauber! ${bossName()} ist ${BOSS.FREEZE_MOVES} Züge lang festgefroren!`);
+        } else {
+          // glocke: a rough, honest shadow over the monster's region
+          const big = PW.biggestHiddenRegion({
+            size: st.size,
+            ships: [{ size: BOSS.BOSS_SIZE, x: st.boss.x, y: st.boss.y, dir: st.boss.dir, hits: [] }],
+          });
+          if (big) SCENE.regionShadow("mine", big);
+          SND.sparkle();
+          status("🔔 Ein Schatten zeigt UNGEFÄHR, wo es gerade lauert!");
+        }
+      });
+      return;
+    }
+  }
+
   const res = BOSS.bossShoot(st, x, y);
   if (res.result === "over") return;
   if (navigator.vibrate) navigator.vibrate(res.result === "hit" ? [50, 30, 70] : 15);
@@ -3477,13 +3536,13 @@ function bossSeekTap(x, y) {
   }
 
   if (S.boss.kind === "ai") {
-    if (BOSS.bossRests(st)) {
-      status(`${bossName()} humpelt und bleibt stehen! Jetzt hast du es!`);
-    } else {
-      BOSS.roboBossMove(st, { x, y });
-      SND.whoosh();
-      if (BOSS.bossRoars(st)) bossRoar();
+    // a banked Doppelschuss: the monster holds still for one more shot
+    if (st.extraShots > 0) {
+      st.extraShots -= 1;
+      status("🎯 Gleich nochmal — das Monster wartet!");
+      return;
     }
+    huntMonsterTurn(st);
   } else {
     if (BOSS.bossRests(st)) {
       toast(`${bossName()} humpelt und bleibt stehen! 🩹`);
@@ -3494,6 +3553,48 @@ function bossSeekTap(x, y) {
     S.inputLocked = true;
     setTimeout(() => openMoveOverlay("boss"), FAST ? 50 : 900);
   }
+}
+
+// the hunt monster's turn: it stalks your fleet — and bites what it
+// steps on. Every outcome is narrated so the danger stays readable.
+function huntMonsterTurn(st) {
+  const mv = BOSS.huntBossMove(st);
+  if (!mv) return;
+  if (mv.frozen) {
+    status(`❄️ ${bossName()} ist festgefroren — es kann sich nicht rühren!`);
+    return;
+  }
+  if (mv.rested) {
+    status(`${bossName()} ruht sich aus — jetzt hast du es!`);
+    return;
+  }
+  if (mv.stuck) {
+    status(`${bossName()} ist eingeklemmt und bleibt stehen!`);
+    return;
+  }
+  SND.whoosh();
+  if (mv.bite) {
+    const { ship, seg } = mv.bite;
+    const name = getWorld(S.worlds[0]).creatures[ship.id % 5]?.name ?? "dein Freund";
+    SND.growl();
+    SCENE.kick(0.7);
+    if (navigator.vibrate) navigator.vibrate([90, 40, 90]);
+    SCENE.markWound("mine", ship.id, seg, ship.size);
+    if (mv.allGone) {
+      toast(`💔 ${name} ist verjagt — die Flotte ist weg!`, 2600);
+      bossEnd(false);
+      return;
+    }
+    if (mv.destroyed) {
+      toast(`💥 ${name} wurde verjagt! Beschütze den Rest!`, 2600);
+    } else {
+      toast(`💔 Es hat ${name} gebissen! Finde es SCHNELL!`, 2400);
+    }
+    bossHunterStatus(st.wounds.length, 0);
+    return;
+  }
+  if (mv.roar) bossRoar();
+  bossHunterStatus(st.wounds.length, 0, "Es schleicht näher an deine Freunde …");
 }
 
 // ROAAAR! screen shake + growl — pure drama, the monster is furious
@@ -3556,10 +3657,17 @@ function bossEndNow(hunterWon) {
   let iWon = true;
   if (kind === "ai") {
     iWon = hunterWon;
-    $("#win-title").textContent = hunterWon ? `${bossName()} besiegt!` : `${bossName()} ist entkommen!`;
+    const fleetGone = S.boss.st.hunt && BOSS.fleetAlive(S.boss.st) === 0;
+    $("#win-title").textContent = hunterWon
+      ? `${bossName()} besiegt!`
+      : fleetGone
+        ? `${bossName()} hat deine Flotte verjagt!`
+        : `${bossName()} ist entkommen!`;
     $("#win-sub").textContent = hunterWon
-      ? "Was für eine Jagd! Stark."
-      : "Es stapft davon … Gleich nochmal?";
+      ? "Deine Freunde sind sicher — was für eine Jagd!"
+      : fleetGone
+        ? "Gleich nochmal — und diesmal beschützt du sie!"
+        : "Es stapft davon … Gleich nochmal?";
   } else if (kind === "hotseat") {
     $("#win-title").textContent = hunterWon
       ? `Spieler 2 hat ${bossName()} besiegt!`
