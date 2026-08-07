@@ -1092,7 +1092,12 @@ test("resume: a refresh mid-battle restores the robo game", async ({ page }) => 
 
   await page.reload();
   await page.waitForFunction(() => !!window.__FF);
-  // straight back into the battle, marks intact
+  await page.evaluate(() => window.__FF.setFast());
+  // no auto-resume: the title greets us with a visible resume offer
+  await expect(page.locator("#resume-banner")).toBeVisible();
+  await expect(page.locator("#resume-text")).toContainText("Robo");
+  await page.locator("#btn-resume").click();
+  // back into the battle, marks intact
   await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("battle");
   expect(
     await page.evaluate((k) => window.__FF.marksOn(1)[k], `${cell.x},${cell.y}`)
@@ -1101,6 +1106,25 @@ test("resume: a refresh mid-battle restores the robo game", async ({ page }) => 
   await waitMyTurn(page);
   const [next] = await missCells(page, 1);
   await tapWhenMyTurn(page, next.x, next.y);
+});
+
+test("resume: dismissing the banner discards the saved game", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await expect(page.locator("#resume-banner")).toBeVisible();
+  await page.locator("#btn-resume-discard").click();
+  await expect(page.locator("#resume-banner")).toBeHidden();
+  // the save is really gone — another reload offers nothing
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await expect(page.locator("#resume-banner")).toBeHidden();
+  expect(await page.evaluate(() => localStorage.getItem("ff-resume"))).toBeNull();
 });
 
 test("resume: an online game survives a guest refresh", async ({ browser }) => {
@@ -1137,7 +1161,10 @@ test("resume: an online game survives a guest refresh", async ({ browser }) => {
   // the guest's browser dies mid-battle …
   await guest.reload();
   await guest.waitForFunction(() => !!window.__FF);
-  // … and finds its way back into the same game
+  await guest.evaluate(() => window.__FF.setFast());
+  // … and is offered the way back via the resume banner
+  await expect(guest.locator("#resume-banner")).toBeVisible();
+  await guest.locator("#btn-resume").click();
   await expect.poll(() => guest.evaluate(() => window.__FF.state.phase)).toBe("battle");
   await expect
     .poll(() => guest.evaluate(() => window.__FF.state.resumeOk === true), { timeout: 30000 })

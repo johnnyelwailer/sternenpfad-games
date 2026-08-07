@@ -68,6 +68,7 @@ export const POWERS = {
     emoji: "🎈",
     name: "Extra-Ballon",
     target: "none",
+    cardsOnly: true,
     desc: "Versteck einen neuen Schwindel-Ballon auf deinem Brett. Peng!",
   },
   kompass: {
@@ -93,6 +94,7 @@ export const POWERS = {
     emoji: "⭐",
     name: "Sternschnuppen-Salve",
     target: "cell3",
+    cardsOnly: true,
     desc: "Drei Sternschnuppen sausen auf drei Felder nebeneinander! Danach ist der andere dran.",
   },
 };
@@ -127,9 +129,11 @@ export function worldPower(worldId) {
 
 export function drawPower(rng = Math.random, hand = [], { instant = false } = {}) {
   let pool = hand.includes("klee") ? POOL.filter((k) => k !== "klee") : POOL;
-  // treasures auto-fire their power on the spot — the salvo would grant
-  // extra shots there, so it only ever comes from recharges
-  if (instant) pool = pool.filter((k) => k !== "salve");
+  // treasures auto-fire their power on the spot — spells marked
+  // cardsOnly can't show themselves off there (the salvo grants extra
+  // shots, the balloon hides itself immediately) and only ever come
+  // from card recharges
+  if (instant) pool = pool.filter((k) => !POWERS[k].cardsOnly);
   return pool[Math.floor(rng() * pool.length)];
 }
 

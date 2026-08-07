@@ -134,6 +134,12 @@ test("treasure draws never contain world signature cards or the salvo", () => {
   })();
   for (let i = 0; i < 300; i += 1) {
     const kind = P.drawPower(rng, [], { instant: true });
-    assert.ok(!["welle", "radar", "trommel", "salve"].includes(kind), `too strong for a treasure: ${kind}`);
+    // world signatures never drop, and cardsOnly spells (salvo grants
+    // shots, the balloon hides itself) would just confuse on auto-cast
+    assert.ok(
+      !["welle", "radar", "trommel", "salve", "ballon"].includes(kind),
+      `not for a treasure: ${kind}`
+    );
+    assert.ok(!P.POWERS[kind].cardsOnly, `cardsOnly leaked into instant draw: ${kind}`);
   }
 });

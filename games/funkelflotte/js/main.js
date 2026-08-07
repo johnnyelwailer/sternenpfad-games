@@ -306,6 +306,16 @@ function rulesSummary(rules) {
   return parts.join(" · ");
 }
 
+// everything non-default about this round, for a quick recap toast
+function setupSummary() {
+  const parts = [];
+  if (S.boardPreset !== "klassisch") parts.push(boardPreset().name);
+  if (S.allowTouch) parts.push("🤗 Kuschel-Regel");
+  const r = rulesSummary(S.rules);
+  if (r) parts.push(r);
+  return parts.join(" · ");
+}
+
 // the decoy rendered like a 1-cell creature for the 3D scene
 function decoyShipOf(board) {
   return { id: "decoy", size: 1, x: board.decoy.x, y: board.decoy.y, dir: "h", decoy: true, hits: [] };
@@ -480,6 +490,7 @@ function startMode(mode) {
     S.allowTouch = false;
     S.forceClassicBoard = false;
   }
+  S.setupToastShown = false;
   clearSave();
   S.turn = 0;
   S.viewer = 0;
@@ -612,6 +623,13 @@ function startPlacement(player) {
   SND.startAmbient(S.worlds[idx]);
   const who = S.mode === "hotseat" ? `Spieler ${player + 1}` : "Du";
   status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
+  // recap what's special about this round (online guests get the
+  // host's shared-options toast instead)
+  if (S.mode !== "online" && player === 0 && !S.setupToastShown) {
+    S.setupToastShown = true;
+    const summary = setupSummary();
+    if (summary) toast(`Diese Runde: ${summary}`, 3000);
+  }
   show(null);
   $("#btn-shuffle").hidden = false;
   $("#btn-opts").hidden = false;
@@ -871,6 +889,7 @@ function renderPowers() {
   if (st.shield) box.appendChild(passiveBadge("schild", "Schild aktiv"));
   if (st.clover) box.appendChild(passiveBadge("klee", "Glücksklee"));
   if (st.doubleShot) box.appendChild(passiveBadge("doppel", "Doppelschuss"));
+  if (S.extraTurn === me()) box.appendChild(passiveBadge("zeit", "Extra-Zug bereit"));
   box.hidden = box.children.length === 0;
 }
 
@@ -3684,6 +3703,7 @@ function goHome() {
   $("#btn-place-done").hidden = true;
   applyUiWorld(S.worlds[0]);
   renderPowers();
+  maybeShowResume();
   show("screen-title");
 }
 
@@ -3801,6 +3821,36 @@ function restoreSavedGame(saved) {
   $("#btn-place-done").hidden = true;
   $("#btn-endturn").hidden = true;
   renderPowers();
+}
+
+// the title-screen banner: an interrupted game is offered, not forced
+function maybeShowResume() {
+  const saved = loadSave();
+  const box = $("#resume-banner");
+  if (!saved) {
+    box.hidden = true;
+    return;
+  }
+  const label =
+    saved.mode === "online"
+      ? "Euer Zwei-Geräte-Spiel wartet noch!"
+      : saved.mode === "hotseat"
+        ? "Euer Spiel zu zweit wartet noch!"
+        : "Dein Spiel gegen Robo wartet noch!";
+  $("#resume-text").textContent = label;
+  box.hidden = false;
+}
+
+function resumeSavedGame(saved) {
+  restoreSavedGame(saved);
+  if (S.mode === "online") {
+    reconnectAfterRefresh();
+  } else {
+    S.inputLocked = false;
+    beginTurn();
+    if (S.mode === "ai" && S.turn === 1) scheduleRoboTurn();
+    toast("▶️ Spiel fortgesetzt!", 2400);
+  }
 }
 
 // refresher side: knock on the opponent's stable id and ask to resume
@@ -3993,8 +4043,13 @@ function boot() {
     for (const [kind, p] of Object.entries(PW.POWERS)) {
       const row = document.createElement("div");
       row.className = "legend-row";
-      const worldTag = p.world ? ` <span class="legend-world">(${getWorld(p.world).name})</span>` : "";
-      row.innerHTML = `<img class="legend-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="legend-text"><b>${p.name}</b>${worldTag}<br />${p.desc}</span>`;
+      const tags = [
+        p.world ? `<span class="legend-world">(${getWorld(p.world).name})</span>` : "",
+        p.cardsOnly ? '<span class="legend-world">(nur als 🃏 Karte)</span>' : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      row.innerHTML = `<img class="legend-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="legend-text"><b>${p.name}</b>${tags ? ` ${tags}` : ""}<br />${p.desc}</span>`;
       box.appendChild(row);
     }
     box.hidden = false;
@@ -4210,20 +4265,27 @@ function boot() {
     if (document.hidden) saveGame();
   });
 
-  // resume a battle that a refresh (or crash) interrupted — this wins
-  // over a stale ?join= deep link still sitting in the URL
-  const savedGame = loadSave();
-  if (savedGame) {
-    restoreSavedGame(savedGame);
-    if (S.mode === "online") {
-      reconnectAfterRefresh();
-    } else {
-      S.inputLocked = false;
-      beginTurn();
-      if (S.mode === "ai" && S.turn === 1) scheduleRoboTurn();
-      toast("▶️ Spiel fortgesetzt!", 2400);
+  $("#btn-resume").addEventListener("click", () => {
+    SND.unlock();
+    SND.whoosh();
+    $("#resume-banner").hidden = true;
+    const saved = loadSave();
+    if (!saved) {
+      toast("Das Spiel ist leider nicht mehr da.", 2400);
+      return;
     }
-  }
+    resumeSavedGame(saved);
+  });
+  $("#btn-resume-discard").addEventListener("click", () => {
+    SND.tap();
+    clearSave();
+    $("#resume-banner").hidden = true;
+  });
+
+  // an interrupted battle is offered back, never forced — the banner
+  // wins over a stale ?join= deep link still sitting in the URL
+  const savedGame = loadSave();
+  maybeShowResume();
 
   // deep link: ?join=CODE — let the guest pick their world first
   const params = new URLSearchParams(window.location.search);
