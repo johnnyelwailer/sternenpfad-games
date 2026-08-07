@@ -193,10 +193,25 @@ test("update poller: new deployment shows the reload banner on the title", async
   await page.locator("#btn-home").click();
   await expect(page.locator("#update-banner")).toBeVisible();
 
-  // tapping it reloads the app
+  // tapping it reloads the app — and adopts v2 as the known version.
+  // The reload clears the SW caches first, so wait for the FRESH page
+  // (its banner carries the static HTML text again).
   await page.locator("#update-banner").click();
-  await page.waitForFunction(() => !!window.__FF);
+  await page.waitForFunction(
+    () => !!window.__FF && document.getElementById("update-banner").textContent.includes("Neue Version"),
+    null,
+    { timeout: 30000 }
+  );
   await expect(page.locator("h1.logo")).toContainText("Funkel-Flotte");
+  expect(await page.evaluate(() => localStorage.getItem("ff-version"))).toBe("v2");
+  await expect(page.locator("#update-banner")).toBeHidden();
+
+  // the crucial everyday case: app closed, v3 deployed, app reopened —
+  // the persisted baseline makes the banner appear right at boot
+  version = "v3";
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await expect(page.locator("#update-banner")).toBeVisible({ timeout: 10000 });
 });
 
 test("robo difficulty picker: schlau robo is selectable", async ({ page }) => {
@@ -375,6 +390,44 @@ test("cards are off by default: empty hand, treasures still work", async ({ page
   expect(await page.evaluate(() => window.__FF.state.powers[0].hand)).toEqual([]);
   await expect(page.locator(".power-chip")).toHaveCount(0);
   expect(await page.evaluate(() => window.__FF.state.boards[1].treasures.length)).toBe(1);
+});
+
+test("Wirbelwind: choose your own friend and watch it move", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.locator("#btn-options").click();
+  await page.evaluate(() => (document.querySelector("#sect-zauber").open = true));
+  await page.locator("#opt-cards").click({ force: true });
+  await page.locator("#btn-options-back").click();
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  await page.evaluate(() => window.__FF.power("wirbel"));
+  await page.locator('.power-chip[data-power="wirbel"]').click();
+  await expect(page.locator('.power-chip[data-power="wirbel"]')).toHaveClass(/armed/);
+  await expect(page.locator("#status")).toContainText("umziehen");
+
+  // pick an unharmed friend on MY board and watch it relocate
+  const pick = await page.evaluate(() => {
+    const b = window.__FF.state.boards[0];
+    const s = b.ships.find((x) => x.hits.length === 0);
+    return { id: s.id, x: s.x, y: s.y, dir: s.dir, cell: window.__FF.engine.shipCells(s)[0] };
+  });
+  await page.evaluate(([x, y]) => window.__FF.ownTap(x, y), [pick.cell.x, pick.cell.y]);
+  await expect
+    .poll(() =>
+      page.evaluate((id) => {
+        const s = window.__FF.state.boards[0].ships.find((x) => x.id === id);
+        return { x: s.x, y: s.y, dir: s.dir };
+      }, pick.id)
+    )
+    .not.toEqual({ x: pick.x, y: pick.y, dir: pick.dir });
+  // the card is spent, and the game flows on
+  expect(await page.evaluate(() => window.__FF.state.powers[0].hand.includes("wirbel"))).toBe(false);
+  await waitMyTurn(page);
+  const [cell] = await missCells(page, 1);
+  await tapWhenMyTurn(page, cell.x, cell.y);
 });
 
 test("Zauber-Kräfte: the option really disables powers", async ({ page }) => {

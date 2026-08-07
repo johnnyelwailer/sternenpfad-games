@@ -22,7 +22,7 @@ test("every power has complete metadata and a sane target", () => {
   assert.ok(kinds.length >= 13, `expected >= 13 powers, got ${kinds.length}`);
   for (const [kind, p] of Object.entries(P.POWERS)) {
     assert.ok(p.emoji && p.name && p.desc, `${kind} needs emoji/name/desc`);
-    assert.ok(["none", "cell", "row", "cell3"].includes(p.target), `${kind} target`);
+    assert.ok(["none", "cell", "row", "cell3", "own"].includes(p.target), `${kind} target`);
   }
   // each world has a signature power
   for (const w of ["ozean", "weltraum", "dino", "teich"]) {
@@ -142,4 +142,28 @@ test("treasure draws never contain world signature cards or the salvo", () => {
     );
     assert.ok(!P.POWERS[kind].cardsOnly, `cardsOnly leaked into instant draw: ${kind}`);
   }
+});
+
+test("whirlwindMove honors the chosen creature and refuses hit ones", () => {
+  const rng = (() => {
+    let s = 5;
+    return () => {
+      s = (s * 16807) % 2147483647;
+      return s / 2147483647;
+    };
+  })();
+  const b = E.createBoard(8);
+  E.placeShip(b, { id: 0, size: 2, x: 0, y: 0, dir: "h" });
+  E.placeShip(b, { id: 1, size: 2, x: 5, y: 5, dir: "h" });
+  // choosing ship 1 moves exactly ship 1
+  const before = { x: b.ships[1].x, y: b.ships[1].y, dir: b.ships[1].dir };
+  const moved = P.whirlwindMove(b, rng, 1);
+  assert.equal(moved.id, 1);
+  assert.ok(moved.x !== before.x || moved.y !== before.y || moved.dir !== before.dir);
+  // ship 0 stayed put
+  assert.equal(b.ships[0].x, 0);
+  assert.equal(b.ships[0].y, 0);
+  // a creature that was already hit cannot whirl
+  E.fire(b, b.ships[0].x, b.ships[0].y);
+  assert.equal(P.whirlwindMove(b, rng, 0), null);
 });
