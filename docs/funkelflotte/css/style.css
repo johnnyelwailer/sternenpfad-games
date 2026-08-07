@@ -1566,7 +1566,11 @@ h1.logo {
   position: fixed;
   left: 50%;
   bottom: max(86px, env(safe-area-inset-bottom));
+  /* sliding down by percent isn't enough for a short (empty) pill —
+     it must also truly disappear, or a sliver floats at the bottom */
   transform: translateX(-50%) translateY(300%);
+  opacity: 0;
+  visibility: hidden;
   background: rgba(10, 20, 40, 0.85);
   border: 1.5px solid rgba(255, 255, 255, 0.2);
   color: #fff;
@@ -1574,7 +1578,10 @@ h1.logo {
   padding: 12px 22px;
   border-radius: 999px;
   z-index: 70;
-  transition: transform 0.3s cubic-bezier(0.2, 1.4, 0.4, 1);
+  transition:
+    transform 0.3s cubic-bezier(0.2, 1.4, 0.4, 1),
+    opacity 0.25s ease,
+    visibility 0s 0.3s;
   max-width: 86vw;
   text-align: center;
   pointer-events: none;
@@ -1582,4 +1589,10 @@ h1.logo {
 
 #toast.show {
   transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    transform 0.3s cubic-bezier(0.2, 1.4, 0.4, 1),
+    opacity 0.25s ease,
+    visibility 0s;
 }
