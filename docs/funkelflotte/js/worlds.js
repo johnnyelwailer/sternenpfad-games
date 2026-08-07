@@ -151,15 +151,97 @@ export const WORLDS = {
       win: "Alle Teichfreunde geangelt!",
     },
   },
+  eis: {
+    id: "eis",
+    name: "Eisberg-Bucht",
+    tagline: "Stapf durch den Schnee und find die Frostfreunde!",
+    extra: true, // shipped later — gated by the "welten" flag
+    colors: {
+      sky: 0xa8d8f0,
+      horizon: 0xf0faff,
+      splash: 0xd6f2ff,
+      fog: 0xd8ecf7,
+      ground: 0xbcdfef,
+      water: 0x7db8d8,
+      tile: 0x9fd0e8,
+      tileDark: 0x5b8fae,
+      tileHit: 0xffd447,
+      accent: 0x4dd2ff,
+      gridLine: 0x2a5d7a,
+      light: 0xeaf6ff,
+      ui: "#0d3550",
+      ui2: "#3d7ea6",
+      text: "#f0faff",
+    },
+    creatures: [
+      { size: 4, name: "Willi Walross" },
+      { size: 3, name: "Paula Pinguin" },
+      { size: 3, name: "Bruno Eisbär" },
+      { size: 2, name: "Hoppel Schneehase" },
+      { size: 2, name: "Rollo Schneemann" },
+    ],
+    words: {
+      board: "Eismeer",
+      boardIn: "im Eismeer",
+      miss: "Knirsch! Nur Schnee.",
+      hit: "Brrr! Da bibbert was!",
+      sunk: "aufgetaut!",
+      win: "Alle Frostfreunde gefunden!",
+    },
+  },
+  vulkan: {
+    id: "vulkan",
+    name: "Glut-Insel",
+    tagline: "Schleich um die Lava und find die Glutfreunde!",
+    extra: true, // shipped later — gated by the "welten" flag
+    colors: {
+      sky: 0x2b1226,
+      horizon: 0xff9d55,
+      splash: 0xffb347,
+      fog: 0x4a2430,
+      ground: 0x5a3040,
+      water: 0x87301f,
+      tile: 0xa64b33,
+      tileDark: 0x5e2a1e,
+      tileHit: 0xffe066,
+      accent: 0xff8c42,
+      gridLine: 0xffd0a0,
+      light: 0xffd9b0,
+      ui: "#4a1420",
+      ui2: "#a64b33",
+      text: "#fff2e8",
+    },
+    creatures: [
+      { size: 4, name: "Dario Drache" },
+      { size: 3, name: "Fenja Phönix" },
+      { size: 3, name: "Sala Salamander" },
+      { size: 2, name: "Lotte Lavaschnecke" },
+      { size: 2, name: "Funki Feuerkäfer" },
+    ],
+    words: {
+      board: "Glutfeld",
+      boardIn: "auf der Glut-Insel",
+      miss: "Zisch! Nur warme Asche.",
+      hit: "Fauch! Da glüht was!",
+      sunk: "gefunden!",
+      win: "Alle Glutfreunde gefunden!",
+    },
+  },
 };
 
 export const WORLD_IDS = Object.keys(WORLDS);
+
+// worlds a player may PICK (the extra worlds hide behind their flag —
+// pass the flag state in, worlds.js stays dependency-free)
+export function pickableWorldIds(extraOn = true) {
+  return WORLD_IDS.filter((id) => extraOn || !WORLDS[id].extra);
+}
 
 export function getWorld(id) {
   return WORLDS[id] || WORLDS.ozean;
 }
 
-export function randomOtherWorld(notId) {
-  const pool = WORLD_IDS.filter((w) => w !== notId);
+export function randomOtherWorld(notId, extraOn = true) {
+  const pool = pickableWorldIds(extraOn).filter((w) => w !== notId);
   return pool[Math.floor(Math.random() * pool.length)];
 }

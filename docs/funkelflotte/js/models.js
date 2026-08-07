@@ -1043,11 +1043,413 @@ function krabbe(size) {
 
 // -------------------------------------------------------------- registry
 
+
+// ---------------------------------------------------------- Eisberg-Bucht
+
+function walross(size) {
+  const g = new THREE.Group();
+  const skinM = mat(0xb08268, { roughness: 0.7 });
+  const bellyM = mat(0xd9b393, { roughness: 0.72 });
+  const len = size * 0.92;
+
+  const body = add(g, new THREE.SphereGeometry(0.5, 16, 12), skinM, 0.1, 0.42, 0);
+  body.scale.set(len * 0.95, 0.82, 0.95);
+  add(g, new THREE.SphereGeometry(0.42, 14, 10), bellyM, 0, 0.32, 0).scale.set(len * 0.8, 0.62, 0.82);
+  // head with jowly cheeks
+  const head = new THREE.Group();
+  head.position.set(-len * 0.42, 0.56, 0);
+  add(head, new THREE.SphereGeometry(0.3, 14, 10), skinM, 0, 0, 0);
+  for (const s of [-1, 1]) add(head, new THREE.SphereGeometry(0.13, 10, 8), bellyM, -0.16, -0.08, s * 0.12);
+  // proud tusks
+  const tuskM = mat(0xf7f2e2, { roughness: 0.35 });
+  for (const s of [-1, 1]) {
+    const tusk = add(head, new THREE.CylinderGeometry(0.035, 0.02, 0.3, 6), tuskM, -0.18, -0.24, s * 0.09);
+    tusk.rotation.x = s * 0.12;
+    tusk.rotation.z = 0.25;
+  }
+  const eyes = makeEyes(head, -0.2, 0.12, 0, 0.14, 0.07);
+  // whisker dots
+  for (const s of [-1, 1]) for (let i = 0; i < 2; i += 1) add(head, new THREE.SphereGeometry(0.02, 6, 5), mat(0x6b4a34), -0.26, -0.1 + i * 0.05, s * 0.1);
+  g.add(head);
+  // flippers + tail
+  for (const s of [-1, 1]) {
+    const fl = add(g, new THREE.SphereGeometry(0.16, 8, 6), skinM, -len * 0.1, 0.16, s * 0.42);
+    fl.scale.set(1.6, 0.4, 0.8);
+  }
+  const tail = add(g, new THREE.SphereGeometry(0.18, 8, 6), skinM, len * 0.48, 0.3, 0);
+  tail.scale.set(1.2, 0.5, 1.3);
+
+  g.userData.animate = (t) => {
+    body.scale.y = 0.82 + Math.sin(t * 1.1) * 0.03; // sleepy breathing
+    head.rotation.z = Math.sin(t * 0.7) * 0.08;
+    tail.rotation.z = Math.sin(t * 1.3) * 0.25;
+    eyes(t);
+  };
+  return g;
+}
+
+function pinguin(size) {
+  const g = new THREE.Group();
+  const bodyM = mat(0x2b3a4d, { roughness: 0.6 });
+  const bellyM = mat(0xf4f8fb, { roughness: 0.5 });
+  const beakM = mat(0xffb347, { roughness: 0.5 });
+  const len = size * 0.9;
+  // a little marching column of penguins — one per tile-ish
+  const count = Math.max(2, Math.round(size));
+  const birds = [];
+  for (let i = 0; i < count; i += 1) {
+    const p = new THREE.Group();
+    p.position.x = (i - (count - 1) / 2) * (len / count);
+    const body = add(p, new THREE.SphereGeometry(0.26, 12, 10), bodyM, 0, 0.34, 0);
+    body.scale.set(0.9, 1.25, 0.9);
+    add(p, new THREE.SphereGeometry(0.2, 10, 8), bellyM, -0.08, 0.3, 0).scale.set(0.72, 1.05, 0.8);
+    add(p, new THREE.ConeGeometry(0.06, 0.14, 6), beakM, -0.24, 0.52, 0).rotation.z = Math.PI / 2;
+    const eyes = makeEyes(p, -0.16, 0.58, 0, 0.09, 0.05, i);
+    for (const s of [-1, 1]) {
+      const wing = add(p, new THREE.SphereGeometry(0.1, 8, 6), bodyM, 0.02, 0.34, s * 0.22);
+      wing.scale.set(0.5, 1.1, 0.3);
+    }
+    for (const s of [-1, 1]) add(p, new THREE.SphereGeometry(0.07, 6, 5), beakM, 0.02, 0.04, s * 0.09).scale.set(1.5, 0.4, 1);
+    g.add(p);
+    birds.push({ p, eyes, ph: i * 1.4 });
+  }
+  g.userData.animate = (t) => {
+    for (const b of birds) {
+      b.p.rotation.x = Math.sin(t * 3 + b.ph) * 0.12; // waddle
+      b.p.position.y = Math.max(0, Math.sin(t * 3 + b.ph)) * 0.045;
+      b.eyes(t);
+    }
+  };
+  return g;
+}
+
+function eisbaer(size) {
+  const g = new THREE.Group();
+  // icy grey-blue rather than pure white, so style tints can grab it
+  const furM = mat(0xc6d1d9, { roughness: 0.85 });
+  const len = size * 0.9;
+
+  const body = add(g, new THREE.SphereGeometry(0.42, 14, 10), furM, 0.08, 0.4, 0);
+  body.scale.set(len * 0.85, 0.78, 0.92);
+  const head = new THREE.Group();
+  head.position.set(-len * 0.42, 0.52, 0);
+  add(head, new THREE.SphereGeometry(0.26, 14, 10), furM, 0, 0, 0);
+  add(head, new THREE.SphereGeometry(0.12, 8, 6), mat(0xe6ebef), -0.18, -0.06, 0).scale.set(1.2, 0.8, 1);
+  add(head, new THREE.SphereGeometry(0.05, 6, 5), mat(0x27303d), -0.29, -0.02, 0);
+  for (const s of [-1, 1]) add(head, new THREE.SphereGeometry(0.08, 8, 6), furM, 0.06, 0.22, s * 0.14);
+  const eyes = makeEyes(head, -0.14, 0.1, 0, 0.12, 0.05);
+  g.add(head);
+  for (const s of [-1, 1]) {
+    add(g, new THREE.SphereGeometry(0.13, 8, 6), furM, -len * 0.18, 0.12, s * 0.3).scale.set(1.2, 0.6, 0.8);
+    add(g, new THREE.SphereGeometry(0.14, 8, 6), furM, len * 0.3, 0.12, s * 0.28).scale.set(1.2, 0.6, 0.8);
+  }
+  add(g, new THREE.SphereGeometry(0.09, 8, 6), furM, len * 0.48, 0.36, 0);
+
+  g.userData.animate = (t) => {
+    body.scale.y = 0.78 + Math.sin(t * 0.9) * 0.035;
+    head.rotation.y = Math.sin(t * 0.5) * 0.25; // looking around for fish
+    head.rotation.z = Math.sin(t * 0.8 + 1) * 0.05;
+    eyes(t);
+  };
+  return g;
+}
+
+function schneehase(size) {
+  const g = new THREE.Group();
+  const furM = mat(0xffffff, { roughness: 0.8 });
+  const innerM = mat(0xf5c6d0, { roughness: 0.6 });
+  const width = size * 0.4 + 0.3;
+
+  const body = add(g, new THREE.SphereGeometry(0.3, 12, 10), furM, 0.06, 0.3, 0);
+  body.scale.set(width * 1.1, 0.95, 0.9);
+  const head = new THREE.Group();
+  head.position.set(-0.28, 0.52, 0);
+  add(head, new THREE.SphereGeometry(0.18, 12, 9), furM, 0, 0, 0);
+  add(head, new THREE.SphereGeometry(0.045, 6, 5), innerM, -0.17, -0.02, 0);
+  const eyes = makeEyes(head, -0.1, 0.06, 0, 0.11, 0.05);
+  const ears = [];
+  for (const s of [-1, 1]) {
+    const ear = new THREE.Group();
+    ear.position.set(0.02, 0.14, s * 0.07);
+    add(ear, new THREE.SphereGeometry(0.07, 8, 6), furM, 0, 0.16, 0).scale.set(0.5, 2.2, 0.7);
+    add(ear, new THREE.SphereGeometry(0.045, 6, 5), innerM, -0.02, 0.16, 0).scale.set(0.4, 1.8, 0.5);
+    ear.rotation.z = -0.15 + s * 0.05;
+    head.add(ear);
+    ears.push(ear);
+  }
+  g.add(head);
+  add(g, new THREE.SphereGeometry(0.12, 8, 6), furM, 0.34, 0.32, 0); // puff tail
+  for (const s of [-1, 1]) add(g, new THREE.SphereGeometry(0.1, 8, 6), furM, 0.12, 0.08, s * 0.16).scale.set(1.6, 0.5, 0.7);
+
+  g.userData.animate = (t) => {
+    const hop = Math.max(0, Math.sin(t * 1.6)) ** 10;
+    g.position.y = hop * 0.18;
+    for (const [i, ear] of ears.entries()) ear.rotation.x = Math.sin(t * 2.2 + i) * 0.12;
+    head.rotation.z = Math.sin(t * 1.1) * 0.06; // nose twitch vibe
+    eyes(t);
+  };
+  return g;
+}
+
+function schneemann(size) {
+  const g = new THREE.Group();
+  const snowM = mat(0xf7fafc, { roughness: 0.85 });
+  const width = size * 0.36 + 0.3;
+
+  const base = add(g, new THREE.SphereGeometry(0.3, 12, 10), snowM, 0, 0.26, 0);
+  base.scale.setScalar(width * 1.05);
+  const mid = add(g, new THREE.SphereGeometry(0.22, 12, 10), snowM, 0, 0.62, 0);
+  const head = new THREE.Group();
+  head.position.set(0, 0.92, 0);
+  add(head, new THREE.SphereGeometry(0.16, 12, 9), snowM, 0, 0, 0);
+  const carrot = add(head, new THREE.ConeGeometry(0.05, 0.22, 7), mat(0xff8c42, { roughness: 0.5 }), -0.2, 0, 0);
+  carrot.rotation.z = Math.PI / 2;
+  const eyes = makeEyes(head, -0.1, 0.06, 0, 0.08, 0.04);
+  // bucket hat
+  const hat = add(head, new THREE.CylinderGeometry(0.12, 0.15, 0.14, 10), mat(0x3d6ea6, { roughness: 0.5 }), 0.02, 0.17, 0);
+  hat.rotation.z = -0.15;
+  g.add(head);
+  // coal buttons + twig arms
+  for (let i = 0; i < 3; i += 1) add(g, new THREE.SphereGeometry(0.03, 6, 5), mat(0x27303d), -0.2 - i * 0.004, 0.52 + i * 0.14, 0);
+  const twigM = mat(0x6b4a2f, { roughness: 0.9 });
+  const arms = [];
+  for (const s of [-1, 1]) {
+    const arm = add(g, new THREE.CylinderGeometry(0.02, 0.03, 0.4, 5), twigM, 0, 0.66, s * 0.3);
+    arm.rotation.x = s * (Math.PI / 2.5);
+    arms.push(arm);
+  }
+
+  g.userData.animate = (t) => {
+    g.rotation.y = Math.sin(t * 0.6) * 0.08; // gentle sway
+    head.rotation.z = Math.sin(t * 0.9 + 1) * 0.07;
+    for (const [i, arm] of arms.entries()) arm.rotation.z = Math.sin(t * 1.4 + i * 2) * 0.15;
+    mid.scale.setScalar(1 + Math.sin(t * 1.1) * 0.02);
+    eyes(t);
+  };
+  return g;
+}
+
+// ------------------------------------------------------------ Glut-Insel
+
+function drache(size) {
+  const g = new THREE.Group();
+  const scaleM = mat(0xc0392b, { roughness: 0.55 });
+  const bellyM = mat(0xf2b26a, { roughness: 0.6 });
+  const wingM = mat(0xe67e22, { roughness: 0.5, side: THREE.DoubleSide });
+  const len = size * 0.92;
+
+  const segs = [];
+  const n = 4;
+  for (let i = 0; i < n; i += 1) {
+    const s = add(g, new THREE.SphereGeometry(0.3 - i * 0.035, 12, 9), scaleM, -len / 2 + 0.35 + (i * (len - 0.7)) / (n - 1), 0.4, 0);
+    segs.push(s);
+  }
+  add(g, new THREE.SphereGeometry(0.22, 10, 8), bellyM, -len / 2 + 0.35, 0.28, 0).scale.set(1.4, 0.7, 0.9);
+  // head with tiny horns + snout
+  const head = new THREE.Group();
+  head.position.set(-len / 2 + 0.05, 0.56, 0);
+  add(head, new THREE.SphereGeometry(0.24, 12, 9), scaleM, 0, 0, 0);
+  add(head, new THREE.SphereGeometry(0.13, 8, 6), bellyM, -0.18, -0.06, 0).scale.set(1.3, 0.7, 1);
+  for (const s of [-1, 1]) add(head, new THREE.ConeGeometry(0.05, 0.16, 6), mat(0xf7f2e2), 0.05, 0.22, s * 0.1);
+  const eyes = makeEyes(head, -0.12, 0.1, 0, 0.13, 0.055);
+  // nostril smoke puffs
+  const smokeM = mat(0xcccccc, { transparent: true, opacity: 0.5 });
+  const puffs = [];
+  for (const s of [-1, 1]) puffs.push(add(head, new THREE.SphereGeometry(0.05, 6, 5), smokeM, -0.3, 0, s * 0.06));
+  g.add(head);
+  // wings
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const wing = add(g, new THREE.ConeGeometry(0.34, 0.7, 4), wingM, 0, 0.62, s * 0.24);
+    wing.rotation.x = s * (Math.PI / 3);
+    wing.rotation.z = 0.3;
+    wings.push(wing);
+  }
+  // tail spike
+  add(g, new THREE.ConeGeometry(0.08, 0.24, 5), scaleM, len / 2 + 0.08, 0.4, 0).rotation.z = -Math.PI / 2;
+
+  g.userData.animate = (t) => {
+    for (const [i, wseg] of segs.entries()) wseg.position.y = 0.4 + Math.sin(t * 1.6 + i * 0.9) * 0.05;
+    for (const [i, wing] of wings.entries()) wing.rotation.z = 0.3 + Math.sin(t * 2.2 + i) * 0.35;
+    for (const [i, p] of puffs.entries()) {
+      const c = (t * 0.7 + i * 0.5) % 1;
+      p.position.y = c * 0.2;
+      p.material.opacity = 0.5 * (1 - c);
+      p.scale.setScalar(0.7 + c);
+    }
+    head.rotation.z = Math.sin(t * 0.9) * 0.06;
+    eyes(t);
+  };
+  return g;
+}
+
+function phoenix(size) {
+  const g = new THREE.Group();
+  const bodyM = mat(0xe67e22, { roughness: 0.5 });
+  const flameM = mat(0xffd447, { emissive: 0xff8c1a, emissiveIntensity: 0.8, roughness: 0.4 });
+  const len = size * 0.88;
+
+  const body = add(g, new THREE.SphereGeometry(0.3, 12, 10), bodyM, 0, 0.42, 0);
+  body.scale.set(len * 0.7, 0.9, 0.8);
+  const head = new THREE.Group();
+  head.position.set(-len * 0.34, 0.62, 0);
+  add(head, new THREE.SphereGeometry(0.16, 12, 9), bodyM, 0, 0, 0);
+  add(head, new THREE.ConeGeometry(0.05, 0.14, 6), mat(0xffc94d), -0.17, -0.02, 0).rotation.z = Math.PI / 2;
+  const eyes = makeEyes(head, -0.09, 0.05, 0, 0.1, 0.045);
+  // flame crest
+  const crest = [];
+  for (let i = 0; i < 3; i += 1) {
+    const f = add(head, new THREE.ConeGeometry(0.05 - i * 0.01, 0.18, 5), flameM, 0.03 + i * 0.05, 0.16 + i * 0.02, 0);
+    f.rotation.z = -0.4 - i * 0.25;
+    crest.push(f);
+  }
+  g.add(head);
+  // fiery tail feathers
+  const tail = [];
+  for (let i = -1; i <= 1; i += 1) {
+    const f = add(g, new THREE.ConeGeometry(0.07, 0.5, 5), flameM, len * 0.42, 0.42 + i * 0.06, i * 0.12);
+    f.rotation.z = -Math.PI / 2 + i * 0.15;
+    tail.push(f);
+  }
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const wing = add(g, new THREE.SphereGeometry(0.2, 8, 6), bodyM, 0.02, 0.46, s * 0.28);
+    wing.scale.set(1.4, 0.35, 0.7);
+    wings.push(wing);
+  }
+
+  g.userData.animate = (t) => {
+    for (const [i, f] of crest.entries()) f.scale.y = 1 + Math.sin(t * 5 + i) * 0.25;
+    for (const [i, f] of tail.entries()) {
+      f.scale.y = 1 + Math.sin(t * 4 + i * 1.3) * 0.18;
+      f.material.emissiveIntensity = 0.8 + Math.sin(t * 6 + i) * 0.3;
+    }
+    for (const [i, w] of wings.entries()) w.rotation.x = Math.sin(t * 2.4 + i * Math.PI) * 0.25;
+    body.position.y = 0.42 + Math.sin(t * 1.3) * 0.05;
+    head.position.y = 0.62 + Math.sin(t * 1.3) * 0.05;
+    eyes(t);
+  };
+  return g;
+}
+
+function salamander(size) {
+  const g = new THREE.Group();
+  const skinM = mat(0x2f2438, { roughness: 0.6 });
+  const spotM = mat(0xffb347, { emissive: 0xff8c1a, emissiveIntensity: 0.45, roughness: 0.5 });
+  const len = size * 0.92;
+
+  const body = add(g, new THREE.SphereGeometry(0.24, 12, 9), skinM, 0, 0.24, 0);
+  body.scale.set(len * 1.05, 0.6, 0.85);
+  // glowing spots along the back
+  const spots = [];
+  for (let i = 0; i < 4; i += 1) {
+    spots.push(add(g, new THREE.SphereGeometry(0.06, 8, 6), spotM, -len * 0.32 + i * (len * 0.21), 0.4, (i % 2 ? 1 : -1) * 0.06));
+  }
+  const head = new THREE.Group();
+  head.position.set(-len * 0.5, 0.26, 0);
+  add(head, new THREE.SphereGeometry(0.17, 12, 9), skinM, 0, 0, 0).scale.set(1.2, 0.8, 1);
+  const eyes = makeEyes(head, -0.1, 0.1, 0, 0.11, 0.05);
+  smile(head, -0.19, -0.02, 0, 0.09);
+  g.add(head);
+  const tail = add(g, new THREE.ConeGeometry(0.1, 0.5, 6), skinM, len * 0.52, 0.2, 0);
+  tail.rotation.z = -Math.PI / 2;
+  for (const s of [-1, 1]) for (const fx of [-0.3, 0.3]) {
+    add(g, new THREE.SphereGeometry(0.07, 6, 5), skinM, len * fx, 0.08, s * 0.24).scale.set(1.3, 0.5, 0.7);
+  }
+
+  g.userData.animate = (t) => {
+    tail.rotation.y = Math.sin(t * 2.1) * 0.4; // curvy tail wag
+    for (const [i, sp] of spots.entries()) sp.material.emissiveIntensity = 0.45 + Math.sin(t * 3 + i * 1.4) * 0.3;
+    head.rotation.y = Math.sin(t * 1.2) * 0.15;
+    body.scale.y = 0.6 + Math.sin(t * 1.5) * 0.03;
+    eyes(t);
+  };
+  return g;
+}
+
+function lavaschnecke(size) {
+  const g = new THREE.Group();
+  const bodyM = mat(0xd35400, { roughness: 0.6 });
+  const shellM = mat(0x8c2f1a, { emissive: 0xff5f2a, emissiveIntensity: 0.5, roughness: 0.45 });
+  const width = size * 0.42 + 0.3;
+
+  const foot = add(g, new THREE.SphereGeometry(0.24, 12, 9), bodyM, -0.08, 0.18, 0);
+  foot.scale.set(width * 1.5, 0.5, 0.8);
+  // glowing spiral shell
+  const shell = new THREE.Group();
+  shell.position.set(0.12, 0.44, 0);
+  const spiral = add(shell, new THREE.TorusGeometry(0.2, 0.11, 8, 18), shellM, 0, 0, 0);
+  add(shell, new THREE.TorusGeometry(0.09, 0.06, 6, 12), shellM, 0.04, 0.07, 0);
+  g.add(shell);
+  // eye stalks
+  const stalks = [];
+  for (const s of [-1, 1]) {
+    const stalk = new THREE.Group();
+    stalk.position.set(-width * 0.55, 0.3, s * 0.08);
+    add(stalk, new THREE.CylinderGeometry(0.025, 0.035, 0.22, 5), bodyM, 0, 0.1, 0);
+    const eye = add(stalk, new THREE.SphereGeometry(0.06, 8, 6), mat(0xffffff, { roughness: 0.35 }), 0, 0.24, 0);
+    add(stalk, new THREE.SphereGeometry(0.03, 6, 5), mat(0x27303d), -0.03, 0.26, 0);
+    stalk.rotation.z = -0.3;
+    g.add(stalk);
+    stalks.push(stalk);
+  }
+
+  g.userData.animate = (t) => {
+    for (const [i, st] of stalks.entries()) st.rotation.z = -0.3 + Math.sin(t * 1.8 + i * 2) * 0.2;
+    spiral.material.emissiveIntensity = 0.5 + Math.sin(t * 2.4) * 0.25;
+    foot.scale.x = width * 1.5 + Math.sin(t * 1.2) * 0.06; // inchworm scoot
+    shell.rotation.z = Math.sin(t * 1.2 + 1) * 0.06;
+  };
+  return g;
+}
+
+function feuerkaefer(size) {
+  const g = new THREE.Group();
+  const shellM = mat(0x8c2f1a, { roughness: 0.5 });
+  const emberM = mat(0xffd447, { emissive: 0xff8c1a, emissiveIntensity: 0.9, roughness: 0.4 });
+  const width = size * 0.4 + 0.3;
+
+  // glowing body under split wing shells
+  const belly = add(g, new THREE.SphereGeometry(0.26, 12, 9), emberM, 0, 0.26, 0);
+  belly.scale.set(width, 0.7, 0.9);
+  const shells = [];
+  for (const s of [-1, 1]) {
+    const wing = add(g, new THREE.SphereGeometry(0.28, 12, 9, 0, Math.PI), shellM, 0.02, 0.3, 0);
+    wing.rotation.x = s > 0 ? 0 : Math.PI;
+    wing.rotation.y = -0.15;
+    wing.scale.set(width * 0.95, 0.75, 0.85);
+    shells.push(wing);
+  }
+  const head = new THREE.Group();
+  head.position.set(-width * 0.62, 0.26, 0);
+  add(head, new THREE.SphereGeometry(0.14, 10, 8), shellM, 0, 0, 0);
+  const eyes = makeEyes(head, -0.07, 0.05, 0, 0.1, 0.045);
+  for (const s of [-1, 1]) {
+    const feeler = add(head, new THREE.CylinderGeometry(0.015, 0.015, 0.2, 4), shellM, -0.08, 0.14, s * 0.06);
+    feeler.rotation.z = 0.5;
+  }
+  g.add(head);
+  for (const s of [-1, 1]) for (const fx of [-0.2, 0.15]) {
+    add(g, new THREE.CylinderGeometry(0.02, 0.02, 0.16, 4), shellM, fx, 0.1, s * (0.22 + Math.abs(fx) * 0.3)).rotation.x = s * 0.7;
+  }
+
+  g.userData.animate = (t) => {
+    const flick = Math.max(0, Math.sin(t * 1.1)) ** 6;
+    for (const [i, sh] of shells.entries()) sh.rotation.z = flick * 0.35 * (i ? 1 : -1);
+    belly.material.emissiveIntensity = 0.9 + Math.sin(t * 4) * 0.35 + flick * 0.6;
+    head.rotation.z = Math.sin(t * 1.6) * 0.08;
+    eyes(t);
+  };
+  return g;
+}
+
 const BUILDERS = {
   ozean: [wal, oktopus, robbe, schildkroete, qualle],
   weltraum: [station, rakete, ufo, satellit, funkelstern],
   dino: [langhals, rexi, triceratops, flugsaurier, babyBibo],
   teich: [karpfen, ente, flossi, frosch, krabbe],
+  eis: [walross, pinguin, eisbaer, schneehase, schneemann],
+  vulkan: [drache, phoenix, salamander, lavaschnecke, feuerkaefer],
 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -1247,6 +1649,36 @@ export function buildTreasureChest(worldId = "ozean") {
     const pad = add(lid, new THREE.CylinderGeometry(0.26, 0.24, 0.05, 12), mat(0x4da06a, { roughness: 0.6 }), 0, 0, 0.12);
     pad.scale.z = 0.9;
     add(lid, new THREE.SphereGeometry(0.07, 8, 6), mat(0xff8ac2, { roughness: 0.5 }), 0, 0.07, 0.12);
+  } else if (worldId === "eis") {
+    // frosted ice block with a snow cap that tips open
+    const iceM = mat(0x9fe0f7, { roughness: 0.15, metalness: 0.1, emissive: 0x2a7a9a, emissiveIntensity: 0.25 });
+    const block = add(g, new THREE.BoxGeometry(0.46, 0.3, 0.36), iceM, 0, 0.18, 0);
+    block.rotation.y = 0.1;
+    for (const [dx, dz, s] of [[-0.18, 0.12, 0.1], [0.2, -0.1, 0.08]]) {
+      add(g, new THREE.OctahedronGeometry(s, 0), mat(0xdff6ff, { emissive: 0x7db8d8, emissiveIntensity: 0.6 }), dx, 0.36, dz);
+    }
+    lid.position.set(0, 0.36, -0.16);
+    const cap = add(lid, new THREE.SphereGeometry(0.24, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xffffff, { roughness: 0.9 }), 0, 0, 0.16);
+    cap.scale.set(1.05, 0.6, 0.85);
+    wobble = (t) => {
+      block.rotation.y = 0.1 + Math.sin(t * 1.4) * 0.04;
+    };
+  } else if (worldId === "vulkan") {
+    // dark lava rock with glowing cracks and an ember-lit slab lid
+    const rockM = mat(0x3a2228, { roughness: 0.95 });
+    const rock = add(g, new THREE.DodecahedronGeometry(0.3, 0), rockM, 0, 0.22, 0);
+    rock.scale.set(1.15, 0.9, 1);
+    for (const [dx, dz, a] of [[-0.12, 0.16, 0.4], [0.16, 0.1, -0.5], [0, -0.18, 1.1]]) {
+      const crack = add(g, new THREE.BoxGeometry(0.2, 0.03, 0.05), mat(0xff8c42, { emissive: 0xff5a2a, emissiveIntensity: 1 }), dx, 0.26, dz);
+      crack.rotation.y = a;
+    }
+    lid.position.set(0, 0.42, -0.12);
+    const slab = add(lid, new THREE.CylinderGeometry(0.22, 0.26, 0.08, 7), rockM, 0, 0, 0.12);
+    const emberEye = add(lid, new THREE.SphereGeometry(0.06, 8, 6), mat(0xffe066, { emissive: 0xffaa00, emissiveIntensity: 1 }), 0, 0.06, 0.12);
+    wobble = (t) => {
+      emberEye.scale.setScalar(1 + Math.max(0, Math.sin(t * 2.6)) * 0.35);
+      slab.rotation.y = Math.sin(t * 0.9) * 0.05;
+    };
   } else {
     // ozean: the classic golden-banded wooden chest
     const woodM = mat(0x8a5a2b, { roughness: 0.8 });
@@ -1355,6 +1787,24 @@ export function buildPowerIcon(kind) {
   } else if (kind === "salve") {
     for (const [dx, dy, s] of [[-0.25, 0.4, 0.16], [0.05, 0.65, 0.22], [0.3, 0.35, 0.13]]) {
       add(g, new THREE.OctahedronGeometry(s, 0), mat(0xffe066, { emissive: 0xffaa00, emissiveIntensity: 0.7 }), dx, dy, 0);
+    }
+  } else if (kind === "frost") {
+    // six-armed ice crystal star
+    const iceM = mat(0xbdefff, { roughness: 0.2, emissive: 0x4dd2ff, emissiveIntensity: 0.5 });
+    for (let i = 0; i < 6; i += 1) {
+      const arm = add(g, new THREE.ConeGeometry(0.09, 0.44, 4), iceM, 0, 0.55, 0);
+      arm.position.x = Math.cos((i / 6) * Math.PI * 2) * 0.22;
+      arm.position.y = 0.55 + Math.sin((i / 6) * Math.PI * 2) * 0.22;
+      arm.rotation.z = (i / 6) * Math.PI * 2 - Math.PI / 2;
+    }
+    add(g, new THREE.SphereGeometry(0.12, 8, 6), mat(0xffffff, { roughness: 0.15 }), 0, 0.55, 0);
+  } else if (kind === "funke") {
+    // a bright spark with four ember rays
+    add(g, new THREE.OctahedronGeometry(0.2, 0), mat(0xffe066, { emissive: 0xffaa00, emissiveIntensity: 1 }), 0, 0.55, 0);
+    const emberM = mat(0xff8c42, { emissive: 0xff5a2a, emissiveIntensity: 0.8 });
+    for (const [dx, dy] of [[0, 0.34], [0, -0.34], [-0.34, 0], [0.34, 0]]) {
+      const ray = add(g, new THREE.ConeGeometry(0.07, 0.24, 4), emberM, dx, 0.55 + dy, 0);
+      ray.rotation.z = Math.atan2(-dx, dy);
     }
   } else {
     add(g, new THREE.OctahedronGeometry(0.3, 0), gold(), 0, 0.5, 0);
