@@ -240,6 +240,9 @@ export function fire(board, x, y) {
         // never auto-reveal the balloon's cell — it isn't water, and the
         // conspicuous gap in the ring makes a delicious trap
         if (board.decoy && board.decoy.x === c.x && board.decoy.y === c.y) continue;
+        // never auto-reveal a treasure cell either: digging IS a shot at
+        // that cell, so a MISS mark would lock the chest forever
+        if ((board.treasures ?? []).some((t) => t.x === c.x && t.y === c.y)) continue;
         const ck = key(c.x, c.y);
         if (!board.shots[ck]) {
           board.shots[ck] = MISS;

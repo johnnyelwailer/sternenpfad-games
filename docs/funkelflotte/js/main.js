@@ -1031,10 +1031,21 @@ function showPowerGain(kind, why) {
   if (FAST) {
     gainTimer = setTimeout(hidePowerGain, 300);
   }
-  // a tap ANYWHERE dismisses (without swallowing that tap) — the card
-  // itself must not be the only target, it just looks tappable
+  // a tap ANYWHERE dismisses — and does ONLY that: the tap is swallowed
+  // (pointerdown and its paired click), so it can never double as a
+  // board shot or a button press hiding under the card
   if (gainDismiss) document.removeEventListener("pointerdown", gainDismiss, true);
-  gainDismiss = () => hidePowerGain();
+  gainDismiss = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const squelch = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    };
+    document.addEventListener("click", squelch, { capture: true, once: true });
+    setTimeout(() => document.removeEventListener("click", squelch, true), 350);
+    hidePowerGain();
+  };
   setTimeout(() => {
     if (!card.hidden) document.addEventListener("pointerdown", gainDismiss, true);
   }, 50);
@@ -5216,6 +5227,7 @@ function boot() {
       FAST = true;
     },
     tap: (x, y) => handleTap(x, y),
+    cellPos: (slot, x, y) => SCENE.cellScreenPos(slot, x, y, 0),
     ownTap: (x, y) => ownPowerTap(x, y),
     forceTreasure: (kind) => {
       S.forceTreasureKind = kind;
