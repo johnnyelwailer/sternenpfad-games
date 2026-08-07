@@ -1327,12 +1327,17 @@ test("Funkel-Park: every friend lives in its own world's pond", async ({ page })
   await page.reload();
   await page.waitForFunction(() => !!window.__FF);
   await page.locator("#btn-aquarium").click();
+
+  // one pond per pickable world — and we ARRIVE inside a pond, close
+  // up, instead of on the foggy far-away overview
+  expect(await page.evaluate(() => window.__FF.parkPonds())).toBe(8);
+  expect(await page.evaluate(() => window.__FF.parkFocused())).not.toBe(null);
+
+  // the meadow tap steps out to the overview with the park summary
+  await page.evaluate(() => window.__FF.aquariumTap({ pond: null, px: 0, pz: 0 }));
+  await expect.poll(() => page.evaluate(() => window.__FF.parkFocused())).toBe(null);
   await expect(page.locator("#status")).toContainText("Funkel-Park");
   await expect(page.locator("#status")).toContainText("2 Freunde");
-
-  // one pond per pickable world, overview first
-  expect(await page.evaluate(() => window.__FF.parkPonds())).toBe(8);
-  expect(await page.evaluate(() => window.__FF.parkFocused())).toBe(null);
 
   // the two friends sit in DIFFERENT ponds — each in its own world's
   const ozean = await page.evaluate(() => window.__FF.parkPos("ozean-0"));

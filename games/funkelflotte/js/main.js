@@ -4512,12 +4512,18 @@ function openAquarium() {
   S.aquariumIdx = 0;
   refreshAquarium();
   SCENE.clearInteraction();
-  SCENE.parkOverview({ immediate: true });
   // pond flights (taps AND pinch gestures) drive sound + status
   SCENE.onParkViewChange((pondIdx) => {
     parkStatus(pondIdx);
     SND.startAmbient(pondIdx == null ? "dino" : worldIds[pondIdx]);
   });
+  // arrive INSIDE a pond, not on the far-away overview: the home
+  // world's pond — or the fullest one, if another has more friends
+  const counts = worldIds.map((wid) => list.filter((e) => e.worldId === wid).length);
+  let startPond = Math.max(0, worldIds.indexOf(S.worlds[0]));
+  const fullest = counts.indexOf(Math.max(...counts));
+  if (counts[fullest] > counts[startPond]) startPond = fullest;
+  SCENE.focusPond(startPond, { immediate: true });
 
   S.aquariumTap = (hit) => {
     const focusedPond = SCENE.parkFocusedPond();
@@ -4563,14 +4569,13 @@ function openAquarium() {
     if (item) status(`🍪 ${item.name} hat den Snack entdeckt!`);
   };
   SCENE.setParkTap((hit) => S.aquariumTap(hit));
-  SND.startAmbient("dino"); // meadow breeze + birds for the overview
   show(null);
   $("#btn-shuffle").hidden = true;
   $("#btn-opts").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
-  parkStatus(null);
+  parkStatus(SCENE.parkFocusedPond());
 }
 
 // -------------------------------------------------------------- album

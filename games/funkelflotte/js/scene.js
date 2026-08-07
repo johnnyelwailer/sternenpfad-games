@@ -334,7 +334,11 @@ export function setupBoard(slot, worldId, { bare = false, grid: gridSize = GRID 
 function disposeDiorama(slot) {
   const d = dioramas[slot];
   if (!d) return;
-  if (d.park) park = null;
+  if (d.park) {
+    park = null;
+    scene.fog.near = 48; // back to the boards' cozy haze
+    scene.fog.far = 150;
+  }
   scene.remove(d.root);
   d.root.traverse((o) => {
     if (o.isMesh || o.isPoints || o.isLine || o.isSprite) {
@@ -508,19 +512,21 @@ export function setupPark(worldIds) {
   const flat = (color, extra = {}) =>
     new THREE.MeshStandardMaterial({ color, roughness: 0.95, flatShading: true, ...extra });
 
-  // the meadow — one big soft lawn, also the "tap outside" pick target
-  const meadow = new THREE.Mesh(new THREE.CircleGeometry(42, 48), flat(0x67b96b));
+  // pond layout: two columns, rows grow with the world count
+  const rows = Math.ceil(worldIds.length / 2);
+
+  // the meadow — sized to hug the pond field, also the "tap outside"
+  // pick target (an oversized lawn made the overview look empty)
+  const parkR = rows * 5.1 + 8.5;
+  const meadow = new THREE.Mesh(new THREE.CircleGeometry(parkR, 48), flat(0x67b96b));
   meadow.rotation.x = -Math.PI / 2;
   meadow.position.y = -0.02;
   meadow.userData = { pond: null };
   root.add(meadow);
-  const lawnRim = new THREE.Mesh(new THREE.RingGeometry(42, 52, 48), flat(0x4f9e58));
+  const lawnRim = new THREE.Mesh(new THREE.RingGeometry(parkR, parkR + 9, 48), flat(0x4f9e58));
   lawnRim.rotation.x = -Math.PI / 2;
   lawnRim.position.y = -0.06;
   root.add(lawnRim);
-
-  // pond layout: two columns, rows grow with the world count
-  const rows = Math.ceil(worldIds.length / 2);
   const pondPos = (i) => {
     const col = i % 2 === 0 ? -1 : 1;
     const row = Math.floor(i / 2);
@@ -632,6 +638,10 @@ export function setupPark(worldIds) {
   });
 
   scene.add(root);
+  // the park overview sits much farther out than a board — push the fog
+  // back so the far ponds stay visible instead of drowning in haze
+  scene.fog.near = 90;
+  scene.fog.far = 260;
   const creaturesGroup = new THREE.Group();
   root.add(creaturesGroup);
   dioramas.mine = {
@@ -657,7 +667,9 @@ export function setupPark(worldIds) {
       },
     },
     grid: GRID,
-    span: Math.max(30, rows * 10.2 + 10), // overview framing grows with the park
+    // overview framing: park depth foreshortened by the high camera —
+    // tight enough that the ponds fill the frame, not the lawn
+    span: Math.max(26, rows * 8.4),
     tiles: new Map(),
     tilesGroup: new THREE.Group(),
     creaturesGroup,
