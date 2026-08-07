@@ -63,8 +63,8 @@ export const POWERS = {
     emoji: "⏳",
     name: "Zeitzauber",
     target: "none",
-    desc: "Schenkt dir einen Extra-Zug: Nach deinem nächsten Daneben suchst du einfach weiter.",
-    use: "Nach deinem nächsten Daneben suchst du einfach weiter.",
+    desc: "Die Zeit läuft rückwärts: Die frischeste Wunde deines am meisten verletzten Freundes heilt — und der Treffer des Gegners verschwindet vor seinen Augen! Ist niemand verletzt, schenkt dir die Zeit einen Extra-Zug.",
+    use: "Wirkt sofort: Eine Wunde heilt — der Gegner verliert die Spur.",
   },
   wirbel: {
     emoji: "🌪️",
@@ -393,6 +393,25 @@ export function whirlwindMove(board, rng = Math.random, shipId = null) {
     return { ship, cleared };
   }
   return null;
+}
+
+// Zeitzauber: time runs backward on YOUR board. The freshest wound on
+// the most endangered (most-wounded, not yet found) creature heals,
+// and the enemy's HIT mark on that cell is wiped — they watch their
+// own trail vanish, mirroring the Wirbelwind's honest mark-clearing.
+// Returns { ship, cell } or null when nothing is wounded.
+export function rewindWound(board) {
+  let best = null;
+  for (const ship of board.ships) {
+    if (E.isSunk(ship) || !ship.hits.length) continue;
+    if (!best || ship.hits.length > best.hits.length) best = ship;
+  }
+  if (!best) return null;
+  const cell = best.hits[best.hits.length - 1];
+  best.hits = best.hits.slice(0, -1);
+  const k = E.key(cell.x, cell.y);
+  if (board.shots[k] === E.HIT) delete board.shots[k];
+  return { ship: best, cell: { x: cell.x, y: cell.y } };
 }
 
 // Extra-Ballon: usable when no live balloon is on the board; the new

@@ -1107,7 +1107,7 @@ function dispatchTreasureFollowup() {
       kompass: "🧭 Folg dem Pfeil — such gleich weiter!",
       glocke: "🔔 Such unter dem Schatten — du bist noch dran!",
       klee: "🍀 Jedes Daneben zeigt jetzt die Entfernung — such gleich weiter!",
-      zeit: "⏳ Extra-Zug gespeichert — und du bist gleich nochmal dran!",
+      zeit: "⏳ Die Zeit ist auf deiner Seite — such gleich weiter!",
       schild: "🪷 Schild aktiv — und du darfst gleich weitersuchen!",
     }[kind] ?? "✨ Schatz-Zauber gewirkt — du bist immer noch dran!";
   setTimeout(() => {
@@ -1370,12 +1370,41 @@ function executePower(kind, target) {
     SCENE.doubleShotFlare(enemySlot);
     status("🎯 Doppelschuss bereit: Dein nächstes Daneben beendet den Zug nicht!");
   } else if (kind === "zeit") {
+    // time runs BACKWARD: heal the freshest wound on your most-injured
+    // friend — the enemy's hit mark rewinds away before their eyes
+    const healed = PW.rewindWound(S.boards[my]);
     consumePower(kind);
-    S.extraTurn = my;
-    if (S.mode === "online") S.net.send({ t: "pw", kind: "zeit" });
-    SCENE.clockRipple(enemySlot);
-    SND.sparkle();
-    status("⏳ Zeitzauber! Nach deinem nächsten Daneben darfst du gleich weitersuchen.");
+    if (!healed) {
+      // nothing to heal — time gifts a bonus turn instead
+      S.extraTurn = my;
+      if (S.mode === "online") S.net.send({ t: "pw", kind: "zeit" });
+      SCENE.clockRipple(enemySlot);
+      SND.sparkle();
+      status("⏳ Niemand ist verletzt — die Zeit schenkt dir einen Extra-Zug!");
+    } else {
+      const mySlot = slotFor(my);
+      const name = getWorld(S.worlds[my]).creatures[healed.ship.id]?.name ?? "dein Freund";
+      SCENE.focusBoard(mySlot);
+      SCENE.clockRipple(mySlot);
+      SCENE.whirlAwayMark(mySlot, healed.cell.x, healed.cell.y);
+      SCENE.clearMark(mySlot, healed.cell.x, healed.cell.y);
+      // robo saw its hit disappear — it forgets that lead, like a human
+      if (S.mode === "ai" && S.aiState?.openHits) {
+        S.aiState.openHits = S.aiState.openHits.filter(
+          (h) => !(h.x === healed.cell.x && h.y === healed.cell.y)
+        );
+      }
+      if (S.mode === "online") S.net.send({ t: "pw", kind: "zeit", cell: healed.cell });
+      SND.sparkle();
+      status(`⏳ Die Zeit dreht zurück: ${name} ist wieder heil!`);
+      // a beat to take it in, then back — BEFORE a chest followup (at
+      // 1400ms) unlocks input, so taps never land while flying home
+      S.inputLocked = true;
+      setTimeout(() => {
+        S.inputLocked = false;
+        resumeBattleView();
+      }, FAST ? 120 : 1300);
+    }
   } else if (kind === "schild") {
     consumePower(kind);
     st.shield = true;
@@ -1874,12 +1903,21 @@ function scheduleRoboTurn() {
         SCENE.shieldFlash("enemy");
         SND.powerCast("defense");
         toast("🤖 Robo wirkt einen Schutz-Zauber!");
-      } else if (zeitIdx >= 0 && S.extraTurn === null && Math.random() < 0.6) {
+      } else if (
+        zeitIdx >= 0 &&
+        Math.random() < 0.6 &&
+        S.boards[1].ships.some((s) => s.hits.length > 0 && !E.isSunk(s))
+      ) {
+        // robo rewinds time: one of its wounds heals, MY mark vanishes
         st1.hand.splice(zeitIdx, 1);
-        S.extraTurn = 1;
-        SCENE.clockRipple("mine");
-        SND.powerCast("defense");
-        toast("🤖 Robo wirkt einen Zeitzauber!");
+        const healed = PW.rewindWound(S.boards[1]);
+        if (healed) {
+          SCENE.clockRipple("enemy");
+          SCENE.whirlAwayMark("enemy", healed.cell.x, healed.cell.y);
+          SCENE.clearMark("enemy", healed.cell.x, healed.cell.y);
+          SND.powerCast("defense");
+          toast("🤖 ⏳ Robo dreht die Zeit zurück — dein Treffer ist weg!", 3200);
+        }
       } else if (doppelIdx >= 0 && !st1.doubleShot && Math.random() < 0.6) {
         st1.hand.splice(doppelIdx, 1);
         st1.doubleShot = true;
@@ -2672,8 +2710,16 @@ function handleNetMessage(msg) {
       } else if (msg.kind === "glocke") {
         S.net.send({ t: "pwr", kind: "glocke", big: PW.biggestHiddenRegion(b) });
       } else if (msg.kind === "zeit") {
-        S.extraTurn = 1;
-        toast("⏳ Dein Mitspieler hat einen Zeitzauber gewirkt!");
+        if (msg.cell && Number.isInteger(msg.cell.x) && Number.isInteger(msg.cell.y)) {
+          // their wound healed — my hit mark over there rewinds away
+          delete S.shadow.marks[E.key(msg.cell.x, msg.cell.y)];
+          SCENE.whirlAwayMark("enemy", msg.cell.x, msg.cell.y);
+          SCENE.clearMark("enemy", msg.cell.x, msg.cell.y);
+          toast("⏳ Zeitzauber! Drüben heilt eine Wunde — dein Treffer ist weg!", 3200);
+        } else {
+          S.extraTurn = 1;
+          toast("⏳ Dein Mitspieler hat einen Zeitzauber gewirkt — Extra-Zug für ihn!");
+        }
       } else if (msg.kind === "doppel") {
         toast("🎯 Drüben wirkt ein Doppelschuss — gleich wird zweimal gesucht!");
       } else if (msg.kind === "wirbel") {
