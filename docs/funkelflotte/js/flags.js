@@ -18,6 +18,7 @@ export const DEFAULT_FLAGS = {
   boss: true, // Monster gegen Flotte
   aquarium: true, // collected-creatures aquarium
   weltreise: true, // campaign across the worlds
+  variety: true, // board presets (size/fleet) + Kuschel-Regel
 };
 
 function stored() {

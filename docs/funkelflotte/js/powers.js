@@ -68,6 +68,7 @@ export const POWERS = {
     emoji: "🎈",
     name: "Extra-Ballon",
     target: "none",
+    cardsOnly: true,
     desc: "Versteck einen neuen Schwindel-Ballon auf deinem Brett. Peng!",
   },
   kompass: {
@@ -93,6 +94,7 @@ export const POWERS = {
     emoji: "⭐",
     name: "Sternschnuppen-Salve",
     target: "cell3",
+    cardsOnly: true,
     desc: "Drei Sternschnuppen sausen auf drei Felder nebeneinander! Danach ist der andere dran.",
   },
 };
@@ -127,15 +129,20 @@ export function worldPower(worldId) {
 
 export function drawPower(rng = Math.random, hand = [], { instant = false } = {}) {
   let pool = hand.includes("klee") ? POOL.filter((k) => k !== "klee") : POOL;
-  // treasures auto-fire their power on the spot — the salvo would grant
-  // extra shots there, so it only ever comes from recharges
-  if (instant) pool = pool.filter((k) => k !== "salve");
+  // treasures auto-fire their power on the spot — spells marked
+  // cardsOnly can't show themselves off there (the salvo grants extra
+  // shots, the balloon hides itself immediately) and only ever come
+  // from card recharges
+  if (instant) pool = pool.filter((k) => !POWERS[k].cardsOnly);
   return pool[Math.floor(rng() * pool.length)];
 }
 
-export function newPowerState(worldId) {
+// `cards: true` starts the hand with the world's signature card — the
+// on-demand card system is an opt-in extra; by default powers only
+// come out of treasures and cast themselves
+export function newPowerState(worldId, { cards = false } = {}) {
   return {
-    hand: [worldPower(worldId)],
+    hand: cards ? [worldPower(worldId)] : [],
     shield: false, // set when "schild" is activated, eaten by next hit
     clover: false, // permanent personal sonar
     doubleShot: false, // this-turn miss forgiveness
@@ -163,6 +170,26 @@ export function seedTreasures(board, count = TREASURES_PER_BOARD, rng = Math.ran
 
 export function treasureAt(board, x, y) {
   return (board.treasures ?? []).some((t) => t.x === x && t.y === y);
+}
+
+// Chests start buried: they surface when a shot lands right next to
+// them, or once the board has seen enough shots. Works on either a
+// real board's shots or the shooter's shadow marks. Returns the
+// treasures that JUST surfaced.
+export const TREASURE_REVEAL_SHOTS = 6;
+
+export function revealTreasures(treasures, marks, x = null, y = null) {
+  const out = [];
+  const shots = Object.keys(marks ?? {}).length;
+  for (const t of treasures ?? []) {
+    if (t.revealed) continue;
+    const near = x != null && Math.max(Math.abs(t.x - x), Math.abs(t.y - y)) <= 1;
+    if (near || shots >= TREASURE_REVEAL_SHOTS) {
+      t.revealed = true;
+      out.push(t);
+    }
+  }
+  return out;
 }
 
 // ------------------------------------------------------ info helpers
@@ -235,8 +262,10 @@ export function whirlwindMove(board, rng = Math.random) {
   const ship = candidates[Math.floor(rng() * candidates.length)];
   for (let tries = 0; tries < 300; tries += 1) {
     const dir = rng() < 0.5 ? "h" : "v";
-    const maxX = board.size - (dir === "h" ? ship.size : 1);
-    const maxY = board.size - (dir === "v" ? ship.size : 1);
+    const w = ship.shape === "sq" ? 2 : dir === "h" ? ship.size : 1;
+    const h = ship.shape === "sq" ? 2 : dir === "v" ? ship.size : 1;
+    const maxX = board.size - w;
+    const maxY = board.size - h;
     const x = Math.floor(rng() * (maxX + 1));
     const y = Math.floor(rng() * (maxY + 1));
     if (x === ship.x && y === ship.y && dir === ship.dir) continue;

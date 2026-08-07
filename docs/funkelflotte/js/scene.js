@@ -10,10 +10,14 @@ import { getWorld } from "./worlds.js";
 import { buildCreature, buildDecoy, buildTreasureChest, buildPowerIcon } from "./models.js";
 import { buildEnvironment } from "./environments.js";
 
-const GRID = 8;
+const GRID = 8; // default board size; each diorama can override (d.grid)
 const TILE = 1;
 const SPAN = GRID * TILE;
 const DIORAMA_GAP = 90;
+
+function gridOf(slot) {
+  return dioramas[slot]?.grid ?? GRID;
+}
 
 let renderer = null;
 let scene = null;
@@ -215,19 +219,20 @@ function dioramaX(slot) {
   return slot === "mine" ? 0 : DIORAMA_GAP;
 }
 
-export function setupBoard(slot, worldId, { bare = false } = {}) {
+export function setupBoard(slot, worldId, { bare = false, grid: gridSize = GRID } = {}) {
   disposeDiorama(slot);
   const world = getWorld(worldId);
+  const span = gridSize * TILE;
   const root = new THREE.Group();
   root.position.x = dioramaX(slot);
 
-  const env = buildEnvironment(worldId, SPAN * 0.72);
+  const env = buildEnvironment(worldId, Math.max(span, SPAN) * 0.72);
   root.add(env);
 
   if (!bare) {
     // soft dark mat under the play area so grid + pads read clearly
     const mat = new THREE.Mesh(
-      new THREE.PlaneGeometry(SPAN * 1.6, SPAN * 1.6),
+      new THREE.PlaneGeometry(span * 1.6, span * 1.6),
       new THREE.MeshBasicMaterial({
         map: radialTexture("rgba(0,10,20,0.26)", "rgba(0,10,20,0)"),
         transparent: true,
@@ -240,9 +245,9 @@ export function setupBoard(slot, worldId, { bare = false } = {}) {
 
     // --- crisp dotted grid, drawn once into a canvas texture -------------
     const grid = new THREE.Mesh(
-      new THREE.PlaneGeometry(SPAN, SPAN),
+      new THREE.PlaneGeometry(span, span),
       new THREE.MeshBasicMaterial({
-        map: gridTexture(world.colors.gridLine ?? 0xffffff),
+        map: gridTexture(world.colors.gridLine ?? 0xffffff, gridSize),
         transparent: true,
         opacity: 0.85,
         depthWrite: false,
@@ -258,8 +263,8 @@ export function setupBoard(slot, worldId, { bare = false } = {}) {
   const tileGeo = new THREE.PlaneGeometry(TILE * 0.98, TILE * 0.98);
   tileGeo.rotateX(-Math.PI / 2);
   const tilesGroup = new THREE.Group();
-  for (let y = 0; y < GRID; y += 1) {
-    for (let x = 0; x < GRID; x += 1) {
+  for (let y = 0; y < gridSize; y += 1) {
+    for (let x = 0; x < gridSize; x += 1) {
       const m = new THREE.Mesh(
         tileGeo,
         new THREE.MeshBasicMaterial({
@@ -269,7 +274,7 @@ export function setupBoard(slot, worldId, { bare = false } = {}) {
           depthWrite: false,
         })
       );
-      m.position.set(x - GRID / 2 + 0.5, 0.045, y - GRID / 2 + 0.5);
+      m.position.set(x - gridSize / 2 + 0.5, 0.045, y - gridSize / 2 + 0.5);
       m.userData = { cell: { x, y }, slot, state: "unknown" };
       tiles.set(`${x},${y}`, m);
       tilesGroup.add(m);
@@ -289,6 +294,8 @@ export function setupBoard(slot, worldId, { bare = false } = {}) {
     world,
     root,
     env,
+    grid: gridSize,
+    span,
     tiles,
     tilesGroup,
     creaturesGroup,
@@ -328,14 +335,28 @@ export function resetScene() {
   gesture = null;
 }
 
-function shipAnchor(ship) {
+// occupied cells of a ship, shape-aware ("sq" = chunky 2×2 friend)
+function shipLocalCells(ship) {
+  if (ship.shape === "sq") {
+    return [
+      [ship.x, ship.y],
+      [ship.x + 1, ship.y],
+      [ship.x, ship.y + 1],
+      [ship.x + 1, ship.y + 1],
+    ];
+  }
   const cells = [];
   for (let i = 0; i < ship.size; i += 1) {
     cells.push(ship.dir === "h" ? [ship.x + i, ship.y] : [ship.x, ship.y + i]);
   }
+  return cells;
+}
+
+function shipAnchor(ship, grid = GRID) {
+  const cells = shipLocalCells(ship);
   const cx = cells.reduce((a, c) => a + c[0], 0) / cells.length;
   const cy = cells.reduce((a, c) => a + c[1], 0) / cells.length;
-  return new THREE.Vector3(cx - GRID / 2 + 0.5, 0.1, cy - GRID / 2 + 0.5);
+  return new THREE.Vector3(cx - grid / 2 + 0.5, 0.1, cy - grid / 2 + 0.5);
 }
 
 export function placeCreatures(slot, ships, { popIn = false, found = null } = {}) {
@@ -351,19 +372,28 @@ export function placeCreatures(slot, ships, { popIn = false, found = null } = {}
 export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   const d = dioramas[slot];
   if (!d) return null;
+  const isSquare = ship.shape === "sq";
   const model = ship.decoy
     ? buildDecoy()
-    : buildCreature(d.worldId, ship.id, ship.size, customs[slot]?.[ship.id] ?? null);
+    : buildCreature(d.worldId, ship.id, ship.size, customs[slot]?.[ship.id] ?? null, ship.shape ?? "line");
   model.rotation.y = 0.16; // subtle 3/4 turn so faces catch the camera
   const holder = new THREE.Group();
   holder.add(model);
-  holder.position.copy(shipAnchor(ship));
+  holder.position.copy(shipAnchor(ship, d.grid));
   // +90° for vertical ships keeps their faces toward the camera
-  holder.rotation.y = ship.dir === "v" ? Math.PI / 2 : 0;
+  holder.rotation.y = !isSquare && ship.dir === "v" ? Math.PI / 2 : 0;
 
   // occupancy pads: one soft glowing disc per occupied cell
   const padTex = padTexture();
-  for (let i = 0; i < ship.size; i += 1) {
+  const padOffsets = isSquare
+    ? [
+        [-0.5, -0.5],
+        [0.5, -0.5],
+        [-0.5, 0.5],
+        [0.5, 0.5],
+      ]
+    : Array.from({ length: ship.size }, (_, i) => [i - (ship.size - 1) / 2, 0]);
+  for (const [ox, oz] of padOffsets) {
     const pad = new THREE.Mesh(
       new THREE.PlaneGeometry(0.92, 0.92),
       new THREE.MeshBasicMaterial({
@@ -375,7 +405,7 @@ export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
       })
     );
     pad.rotation.x = -Math.PI / 2;
-    pad.position.set(i - (ship.size - 1) / 2, 0.02, 0);
+    pad.position.set(ox, 0.02, oz);
     holder.add(pad);
   }
   // soft blob shadow
@@ -385,7 +415,8 @@ export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   );
   blob.rotation.x = -Math.PI / 2;
   blob.position.y = 0.05;
-  blob.scale.set(ship.size * 0.95, 0.85, 1);
+  if (isSquare) blob.scale.set(1.9, 1.9, 1);
+  else blob.scale.set(ship.size * 0.95, 0.85, 1);
   holder.add(blob);
 
   // persistent golden ring marks creatures that were already found
@@ -545,8 +576,8 @@ export function lureNearest(slot, px, pz) {
 export function nearestAquariumKey(slot, x, y) {
   const d = dioramas[slot];
   if (!d) return null;
-  const px = x - GRID / 2 + 0.5;
-  const pz = y - GRID / 2 + 0.5;
+  const px = x - d.grid / 2 + 0.5;
+  const pz = y - d.grid / 2 + 0.5;
   let best = null;
   let bestDist = 1.4;
   for (const [key, c] of d.creatures) {
@@ -637,17 +668,19 @@ function addFoundRing(d, holder, ship) {
   );
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 0.08;
-  ring.scale.set(ship.size * 0.78, 0.9, 1);
+  if (ship.shape === "sq") ring.scale.set(1.65, 1.65, 1);
+  else ring.scale.set(ship.size * 0.78, 0.9, 1);
   ring.userData.foundRing = true;
   holder.add(ring);
   return ring;
 }
 
 const gridTexCache = new Map();
-function gridTexture(colorHex) {
-  if (gridTexCache.has(colorHex)) return gridTexCache.get(colorHex);
+function gridTexture(colorHex, grid = GRID) {
+  const cacheKey = `${colorHex}-${grid}`;
+  if (gridTexCache.has(cacheKey)) return gridTexCache.get(cacheKey);
   const px = 1024;
-  const cell = px / GRID;
+  const cell = px / grid;
   const c = document.createElement("canvas");
   c.width = px;
   c.height = px;
@@ -682,7 +715,7 @@ function gridTexture(colorHex) {
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
-  gridTexCache.set(colorHex, tex);
+  gridTexCache.set(cacheKey, tex);
   return tex;
 }
 
@@ -691,8 +724,8 @@ export function moveCreature(slot, ship, { animate = true } = {}) {
   const c = d?.creatures.get(ship.id);
   if (!c) return;
   c.ship = { ...ship };
-  const target = shipAnchor(ship);
-  const targetRot = ship.dir === "v" ? Math.PI / 2 : 0;
+  const target = shipAnchor(ship, d.grid);
+  const targetRot = ship.shape !== "sq" && ship.dir === "v" ? Math.PI / 2 : 0;
   if (!animate) {
     c.holder.position.copy(target);
     c.holder.rotation.y = targetRot;
@@ -853,10 +886,10 @@ export function setEdgeCounts(slot, rows, cols) {
     return spr;
   };
   rows.forEach((n, y) => {
-    d.edgeSprites.rows.push(make(n, -GRID / 2 - 0.6, y - GRID / 2 + 0.5));
+    d.edgeSprites.rows.push(make(n, -d.grid / 2 - 0.6, y - d.grid / 2 + 0.5));
   });
   cols.forEach((n, x) => {
-    d.edgeSprites.cols.push(make(n, x - GRID / 2 + 0.5, -GRID / 2 - 0.6));
+    d.edgeSprites.cols.push(make(n, x - d.grid / 2 + 0.5, -d.grid / 2 - 0.6));
   });
   d.edgeGroup = group;
   d.root.add(group);
@@ -892,6 +925,27 @@ export function renderTreasures(slot, positions) {
     chest.scale.setScalar(0.01);
     tween((v) => chest.scale.setScalar(v), { dur: 0.6, ease: Ease.outBack });
   }
+}
+
+// a buried chest surfaces mid-game with a sparkle pop
+export function spawnChest(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  if (!d.chests) d.chests = new Map();
+  const key = `${x},${y}`;
+  if (d.chests.has(key)) return;
+  const tile = d.tiles.get(key);
+  if (!tile) return;
+  const chest = buildTreasureChest(d.worldId);
+  chest.position.set(tile.position.x, 0.05, tile.position.z);
+  chest.rotation.y = 0.4;
+  chest.userData.phase = Math.random() * 7;
+  d.root.add(chest);
+  d.chests.set(key, chest);
+  chest.scale.setScalar(0.01);
+  starburst(d, tile.position);
+  ringWave(d, tile.position, 0xffc94d);
+  tween((v) => chest.scale.setScalar(v), { dur: 0.7, ease: Ease.outBack });
 }
 
 // rich dig-up moment: lid flies open, gold fountains out, chest fades
@@ -961,13 +1015,14 @@ export function waveSweep(slot, y) {
       depthWrite: false,
     })
   );
-  const z = y - GRID / 2 + 0.5;
+  const g = d.grid;
+  const z = y - g / 2 + 0.5;
   ridge.scale.set(1.2, 0.7, 1.6);
-  ridge.position.set(-GRID / 2 - 0.6, 0.25, z);
+  ridge.position.set(-g / 2 - 0.6, 0.25, z);
   d.root.add(ridge);
   tween(
     (v) => {
-      ridge.position.x = -GRID / 2 - 0.6 + v * (GRID + 1.2);
+      ridge.position.x = -g / 2 - 0.6 + v * (g + 1.2);
       ridge.position.y = 0.25 + Math.sin(v * Math.PI * 4) * 0.08;
       ridge.material.opacity = v < 0.85 ? 0.75 : 0.75 * (1 - (v - 0.85) / 0.15);
     },
@@ -981,7 +1036,7 @@ export function waveSweep(slot, y) {
       },
     }
   );
-  for (let x = 0; x < GRID; x += 1) {
+  for (let x = 0; x < g; x += 1) {
     const tile = d.tiles.get(`${x},${y}`);
     if (!tile) continue;
     setTimeout(() => {
@@ -1164,7 +1219,7 @@ export function cloverRain(slot) {
   for (let i = 0; i < 22; i += 1) {
     const leaf = new THREE.Mesh(new THREE.CircleGeometry(0.14, 6), leafM);
     leaf.scale.y = 0.6;
-    leaf.position.set((Math.random() - 0.5) * SPAN, 3.2 + Math.random() * 1.6, (Math.random() - 0.5) * SPAN);
+    leaf.position.set((Math.random() - 0.5) * d.span, 3.2 + Math.random() * 1.6, (Math.random() - 0.5) * d.span);
     leaf.rotation.set(Math.random() * 3, Math.random() * 3, 0);
     d.root.add(leaf);
     leaves.push({ leaf, sway: 1 + Math.random() * 2, ph: Math.random() * 7, vy: 1.1 + Math.random() * 0.8 });
@@ -1348,7 +1403,7 @@ export function shieldFlash(slot) {
   ringWave(d, { x: 0, z: 0 }, 0x7de8ff);
   ringWave(d, { x: 0, z: 0 }, 0xffffff);
   const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(SPAN * 0.55, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.SphereGeometry(d.span * 0.55, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
     new THREE.MeshBasicMaterial({ color: 0x7de8ff, transparent: true, opacity: 0.3, depthWrite: false })
   );
   d.root.add(dome);
@@ -1525,10 +1580,7 @@ export function revealWater(slot, cells) {
 export function revealShip(slot, ship) {
   const d = dioramas[slot];
   if (!d) return;
-  const cells = new Set();
-  for (let i = 0; i < ship.size; i += 1) {
-    cells.add(ship.dir === "h" ? `${ship.x + i},${ship.y}` : `${ship.x},${ship.y + i}`);
-  }
+  const cells = new Set(shipLocalCells(ship).map(([cx, cy]) => `${cx},${cy}`));
   for (const m of [...d.marksGroup.children]) {
     if (cells.has(m.userData.cellKey)) d.marksGroup.remove(m);
   }
@@ -1536,7 +1588,7 @@ export function revealShip(slot, ship) {
   if (!entry) entry = addCreature(slot, ship, { found: false });
   const holder = entry.holder;
   const baseRot = holder.rotation.y;
-  const center = shipAnchor(ship);
+  const center = shipAnchor(ship, d.grid);
   const worldPos = holder.getWorldPosition(new THREE.Vector3());
   worldPos.y += 0.5;
 
@@ -1826,7 +1878,7 @@ let camBase = { pos: new THREE.Vector3(0, 14, 14), look: new THREE.Vector3() };
 
 function framingDistance() {
   const margin = 1.2;
-  const span = SPAN * margin;
+  const span = (dioramas[focused]?.span ?? SPAN) * margin;
   const vfov = (camera.fov * Math.PI) / 180;
   const fitH = span / 2 / Math.tan(vfov / 2);
   const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
@@ -1910,31 +1962,42 @@ export function focusBoard(slot, { immediate = false, onDone = null } = {}) {
 
   // Board switch: PLATE FLIP. The camera whips over the top of the old
   // board until it looks straight down (board fills the frame), then the
-  // new board tilts up into view on the other side. Fast and direct —
-  // no journey through the sky.
+  // new board tilts up into view on the other side. The user's orbit
+  // azimuth rides along the whole way — no snap when the view was
+  // rotated or tilted beforehand.
   const fromCx = fromPos.x > DIORAMA_GAP / 2 ? DIORAMA_GAP : 0;
   const fromCenter = new THREE.Vector3(fromCx, 0, 0);
   const toCenter = new THREE.Vector3(cx, 0, 0);
   const fromDist = Math.max(9, fromPos.distanceTo(fromCenter));
   const eTop = Math.PI * 0.49; // nearly straight down
-  const orbit = (center, e, r) =>
-    new THREE.Vector3(center.x, Math.sin(e) * r, Math.cos(e) * r);
-  const fromElev = Math.asin(Math.min(1, Math.max(0, (fromPos.y - 0) / fromDist)));
+  const orbitPos = (center, e, r, a) =>
+    new THREE.Vector3(
+      center.x + Math.cos(e) * Math.sin(a) * r,
+      Math.sin(e) * r,
+      Math.cos(e) * Math.cos(a) * r
+    );
+  const fromElev = Math.asin(Math.min(1, Math.max(0, fromPos.y / fromDist)));
+  // current + target azimuth, interpolated along the shortest arc
+  const fromA = Math.atan2(fromPos.x - fromCenter.x, fromPos.z - fromCenter.z);
+  const toA = orbit.azim;
+  let dA = toA - fromA;
+  dA = Math.atan2(Math.sin(dA), Math.cos(dA));
 
   camTween = tween(
     (v) => {
       // one global ease drives both halves so the angular velocity is
       // continuous through the top of the flip — no midpoint hitch
       const E = Ease.inOutCubic(v);
+      const a = fromA + dA * E;
       if (E < 0.5) {
         const k = E * 2;
         const e = fromElev + (eTop - fromElev) * k;
-        camera.position.copy(orbit(fromCenter, e, fromDist));
+        camera.position.copy(orbitPos(fromCenter, e, fromDist, a));
         camBase.look.lerpVectors(fromLook, fromCenter, k);
       } else {
         const k = (E - 0.5) * 2;
         const e = eTop + (elevation - eTop) * k;
-        camera.position.copy(orbit(toCenter, e, dist));
+        camera.position.copy(orbitPos(toCenter, e, dist, a));
         camBase.look.lerpVectors(toCenter, look, k);
       }
       camera.lookAt(camBase.look);
@@ -2067,9 +2130,7 @@ function onPointerDown(e) {
     if (cell && d) {
       for (const [, entry] of d.creatures) {
         const sh = entry.ship;
-        for (let i = 0; i < sh.size; i += 1) {
-          const cx = sh.dir === "h" ? sh.x + i : sh.x;
-          const cy = sh.dir === "v" ? sh.y + i : sh.y;
+        for (const [cx, cy] of shipLocalCells(sh)) {
           if (cx === cell.x && cy === cell.y) {
             picked = entry;
             grabDx = cell.x - sh.x;
@@ -2145,8 +2206,11 @@ function onPointerMove(e) {
     const cell = raycastTiles(e, placement.slot);
     if (!cell) return;
     const sh = drag.entry.ship;
-    const maxX = GRID - (sh.dir === "h" ? sh.size : 1);
-    const maxY = GRID - (sh.dir === "v" ? sh.size : 1);
+    const g = gridOf(placement.slot);
+    const shW = sh.shape === "sq" ? 2 : sh.dir === "h" ? sh.size : 1;
+    const shH = sh.shape === "sq" ? 2 : sh.dir === "v" ? sh.size : 1;
+    const maxX = g - shW;
+    const maxY = g - shH;
     drag.previewX = Math.max(0, Math.min(maxX, cell.x - drag.grabDx));
     drag.previewY = Math.max(0, Math.min(maxY, cell.y - drag.grabDy));
     const candidate = { ...sh, x: drag.previewX, y: drag.previewY };

@@ -17,6 +17,7 @@
     <canvas id="stage"></canvas>
     <div id="vignette" aria-hidden="true"></div>
     <div id="toast" role="status"></div>
+    <button id="update-banner" hidden>🔄 Neue Version! Hier tippen zum Aktualisieren</button>
 
     <button id="btn-mute" class="round-btn" aria-label="Ton an oder aus">
       <svg viewBox="0 0 24 24" id="ic-sound"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path id="ic-waves" d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
@@ -28,14 +29,11 @@
     <!-- battle / placement HUD -->
     <div id="hud" hidden>
       <div class="status-pill" id="status"></div>
-      <div class="chips" id="chips"></div>
       <div id="powers" hidden></div>
       <div id="power-gain" hidden></div>
       <div class="hud-actions">
         <button class="btn ghost" id="btn-shuffle" hidden>Mischen</button>
-        <button class="btn ghost" id="btn-world" hidden>🌍 Welt</button>
-        <button class="btn ghost" id="btn-opts" hidden>⚙️</button>
-        <button class="btn ghost" id="btn-style" hidden>Stil ✨</button>
+        <button class="btn ghost" id="btn-opts" hidden>⚙️ Menü</button>
         <button class="btn" id="btn-place-done" hidden>Fertig!</button>
         <button class="btn" id="btn-endturn" hidden>Weitergeben</button>
       </div>
@@ -69,6 +67,12 @@
       <div class="stars" aria-hidden="true"></div>
       <h1 class="logo">Funkel-Flotte</h1>
       <p class="subtitle">Wer findet alle Versteckten zuerst?</p>
+      <div id="resume-banner" hidden>
+        <span class="resume-emoji">🕹️</span>
+        <span class="resume-text" id="resume-text">Dein Spiel wartet noch!</span>
+        <button class="btn" id="btn-resume">▶️ Weiterspielen</button>
+        <button class="resume-discard" id="btn-resume-discard" aria-label="Verwerfen">✕</button>
+      </div>
       <p class="label">Deine Welt:</p>
       <div class="world-grid" id="world-grid"></div>
       <button class="btn ghost options-btn" id="btn-options">⚙️ Spiel-Optionen</button>
@@ -129,13 +133,32 @@
       <div class="stars" aria-hidden="true"></div>
       <h2 class="h2">⚙️ Spiel-Optionen</h2>
       <p class="hint" id="options-note" hidden>Regel-Änderungen gelten ab dem nächsten Spiel.</p>
+      <button class="btn ghost" id="opt-world" hidden>🌍 Welt wechseln</button>
+      <p class="opt-heading">🗺️ Brett &amp; Flotte</p>
+      <div id="board-presets" class="board-presets"></div>
       <div class="opt-list">
+        <label class="opt-row">
+          <input type="checkbox" id="rule-touch" />
+          <span class="opt-box"></span>
+          <span class="opt-text">
+            <span class="opt-name">🤗 Kuschel-Regel</span>
+            <span class="opt-desc">Freunde dürfen direkt nebeneinander sitzen — kein Feld Abstand nötig. Macht das Suchen kniffliger!</span>
+          </span>
+        </label>
         <label class="opt-row">
           <input type="checkbox" id="opt-powers" />
           <span class="opt-box"></span>
           <span class="opt-text">
-            <span class="opt-name">✨ Zauber-Kräfte</span>
-            <span class="opt-desc">Grabe 💎 Schätze aus, lade alle 4 Züge eine Kraft auf und starte mit der Spezial-Kraft deiner Welt. Gilt im klassischen Suchspiel.</span>
+            <span class="opt-name">💎 Schatz-Zauber</span>
+            <span class="opt-desc">Auf jedem Brett wartet eine sichtbare Schatztruhe. Wer sie ausgräbt, entfesselt sofort einen einmaligen Zauber — kostet aber den Zug.</span>
+          </span>
+        </label>
+        <label class="opt-row">
+          <input type="checkbox" id="opt-cards" />
+          <span class="opt-box"></span>
+          <span class="opt-text">
+            <span class="opt-name">🃏 Zauber-Karten (Extra)</span>
+            <span class="opt-desc">Starte mit der mächtigen Spezial-Karte deiner Welt und zieh alle 6 Züge eine neue. Karten spielst du, wann DU willst — für Profis!</span>
           </span>
         </label>
         <label class="opt-row">

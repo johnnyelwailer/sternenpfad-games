@@ -1164,15 +1164,19 @@ function applyTint(root, tintHex) {
 // Build a creature and normalize its footprint so every model clearly
 // spans its `size` cells along X and stays within ~1 cell of depth.
 // `custom` = { tint: index into TINTS, hat: index into ACCESSORIES }
-export function buildCreature(worldId, index, size, custom = null) {
+// `shape` "sq" makes a chunky 2×2 friend instead of a line creature.
+export function buildCreature(worldId, index, size, custom = null, shape = "line") {
   const builders = BUILDERS[worldId] || BUILDERS.ozean;
-  const inner = builders[index % builders.length](size);
+  const eff = shape === "sq" ? 2 : size;
+  const inner = builders[index % builders.length](eff);
   if (custom && TINTS[custom.tint]) applyTint(inner, TINTS[custom.tint]);
   const bbox = new THREE.Box3().setFromObject(inner);
   const w = Math.max(0.001, bbox.max.x - bbox.min.x);
   const d = Math.max(0.001, bbox.max.z - bbox.min.z);
-  const sx = clamp((size * 0.88) / w, 0.75, 2.1);
-  const sz = clamp(1.02 / d, 0.6, 1);
+  const spanX = shape === "sq" ? 1.76 : size * 0.88;
+  const spanZ = shape === "sq" ? 1.76 : 1.02;
+  const sx = clamp(spanX / w, 0.75, 2.1);
+  const sz = clamp(spanZ / d, 0.6, shape === "sq" ? 2.4 : 1);
   inner.scale.set(sx, clamp((sx + sz) / 2, 0.85, 1.25), sz);
   const wrap = new THREE.Group();
   wrap.add(inner);
@@ -1183,8 +1187,8 @@ export function buildCreature(worldId, index, size, custom = null) {
     const hat = buildAccessory(hatKind);
     const scaled = new THREE.Box3().setFromObject(wrap);
     // sit on the highest point, slightly toward the face (-X)
-    hat.position.set((scaled.min.x + scaled.max.x) / 2 - size * 0.12, scaled.max.y - 0.03, (scaled.min.z + scaled.max.z) / 2);
-    hat.scale.setScalar(clamp(size * 0.45, 0.85, 1.35));
+    hat.position.set((scaled.min.x + scaled.max.x) / 2 - eff * 0.12, scaled.max.y - 0.03, (scaled.min.z + scaled.max.z) / 2);
+    hat.scale.setScalar(clamp(eff * 0.45, 0.85, 1.35));
     wrap.add(hat);
     hatAnim = hat.userData.animate;
   }

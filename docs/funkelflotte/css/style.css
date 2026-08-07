@@ -904,6 +904,43 @@ h1.logo {
   width: min(94vw, 480px);
 }
 
+.opt-heading {
+  width: min(94vw, 480px);
+  text-align: left;
+  font-weight: 900;
+  font-size: 1.05rem;
+  margin: 6px 0 2px;
+}
+
+.board-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: min(94vw, 480px);
+  margin-bottom: 12px;
+}
+
+.board-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  padding: 12px 14px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.board-choice.selected {
+  border-color: var(--accent);
+  background: rgba(255, 200, 60, 0.14);
+  box-shadow: 0 0 0 1.5px var(--accent) inset;
+}
+
 .opt-row {
   display: flex;
   align-items: flex-start;
@@ -1315,6 +1352,88 @@ h1.logo {
   #cust-canvas {
     width: min(30vh, 200px);
     height: min(30vh, 200px);
+  }
+}
+
+/* ----------------------------------------------------- update banner */
+
+#resume-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(94vw, 480px);
+  margin: 4px 0 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 226, 122, 0.28), rgba(255, 212, 71, 0.16));
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 18px rgba(255, 212, 71, 0.35), 0 8px 20px rgba(0, 0, 0, 0.35);
+  animation: bannerIn 0.5s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+#resume-banner[hidden] {
+  display: none;
+}
+
+#resume-banner .resume-emoji {
+  font-size: 1.7rem;
+}
+
+#resume-banner .resume-text {
+  flex: 1;
+  text-align: left;
+  font-weight: 800;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+#btn-resume {
+  flex: none;
+  padding: 10px 14px;
+  min-height: 40px;
+}
+
+.resume-discard {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+#update-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 80;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: #4a2c00;
+  background: linear-gradient(180deg, #ffe27a, var(--accent));
+  border: none;
+  border-radius: 999px;
+  padding: 12px 22px;
+  cursor: pointer;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.28), 0 12px 26px rgba(0, 0, 0, 0.4);
+  animation: bannerIn 0.5s cubic-bezier(0.2, 1.4, 0.4, 1);
+  max-width: 92vw;
+}
+
+@keyframes bannerIn {
+  from {
+    transform: translateX(-50%) translateY(120%);
+  }
+  to {
+    transform: translateX(-50%) translateY(0);
   }
 }
 

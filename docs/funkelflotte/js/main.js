@@ -42,6 +42,8 @@ const S = {
   customs: [{}, {}], // per board index: shipId -> { tint, hat }
   oppCustom: null, // online: opponent's map (arrives with their "ready")
   rules: { decoy: false, sonar: false, ghost: false }, // extra rules
+  boardPreset: "klassisch", // which board/fleet preset (see BOARD_PRESETS)
+  allowTouch: false, // Kuschel-Regel: creatures may sit side by side
   powersOn: true, // Zauber-Kräfte option (persisted)
   powers: [null, null], // per player: PW.newPowerState() during battle
   pendingPower: null, // power kind waiting for a target tap
@@ -72,6 +74,7 @@ function show(screenId) {
     renderFriends();
     startFriendListener();
   }
+  maybeShowUpdate();
 }
 
 let toastTimer = null;
@@ -189,28 +192,9 @@ function buildWorldPicker(gridEl, onPick, selected) {
   }, 30);
 }
 
-function renderChips(targetIndex) {
-  const box = $("#chips");
-  box.innerHTML = "";
-  if (S.phase !== "battle" && S.phase !== "puzzle") return;
-  const worldId = S.worlds[targetIndex];
-  const found = foundIdsOn(targetIndex);
-  const custom = customFor(targetIndex);
-  const creatures = getWorld(worldId).creatures;
-  const ids =
-    S.phase === "puzzle"
-      ? S.puzzle.board.ships.map((s) => s.id)
-      : creatures.map((_, i) => i);
-  for (const id of ids) {
-    const chip = document.createElement("div");
-    chip.className = `chip${found.has(id) ? " done" : ""}`;
-    const img = document.createElement("img");
-    img.alt = creatures[id]?.name ?? "";
-    img.src = creatureThumb(worldId, id, custom[id]);
-    chip.appendChild(img);
-    box.appendChild(chip);
-  }
-}
+// the found/missing chip row was UI clutter — the golden rings on the
+// board already tell the story. Kept as a no-op so call sites stay.
+function renderChips() {}
 
 function foundIdsOn(index) {
   if (S.mode === "online" && index === 1) {
@@ -221,9 +205,68 @@ function foundIdsOn(index) {
 
 // --------------------------------------------------------------- helpers
 
+// ------------------------------------------------------- board & fleet
+// Preset boards: size + which creatures live there. "2x2" is a chunky
+// square friend, 1 is a tiny single-cell friend.
+
+const BOARD_PRESETS = {
+  klassisch: { grid: 8, fleet: [4, 3, 3, 2, 2], name: "🌊 Klassisch", desc: "8×8 Felder, fünf Freunde — so wie immer." },
+  flink: { grid: 6, fleet: [3, 2, 2, 1], name: "⚡ Flink", desc: "Kleines 6×6-Brett mit vier Freunden — perfekt für eine schnelle Runde." },
+  riesig: { grid: 10, fleet: [5, 4, 3, 3, 2, 2, 1], name: "🐋 Riesig", desc: "Großes 10×10-Meer mit sieben Freunden — die lange Expedition." },
+  knuddel: { grid: 8, fleet: ["2x2", 3, 3, 2, 1], name: "🧸 Knuddel", desc: "Ein pummeliger 2×2-Freund, ein Winzling und drei Normale auf 8×8." },
+};
+
+function boardPreset() {
+  return BOARD_PRESETS[S.boardPreset] ?? BOARD_PRESETS.klassisch;
+}
+
+function loadBoardOpt() {
+  if (!flag("variety")) return { preset: "klassisch", touch: false };
+  try {
+    const o = JSON.parse(localStorage.getItem("ff-board") || "{}");
+    return {
+      preset: BOARD_PRESETS[o.preset] ? o.preset : "klassisch",
+      touch: !!o.touch,
+    };
+  } catch {
+    return { preset: "klassisch", touch: false };
+  }
+}
+
+function saveBoardOpt() {
+  try {
+    localStorage.setItem("ff-board", JSON.stringify({ preset: S.boardPreset, touch: S.allowTouch }));
+  } catch {
+    /* private mode etc. */
+  }
+}
+
+function renderBoardPresets() {
+  const box = $("#board-presets");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const [id, p] of Object.entries(BOARD_PRESETS)) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "board-choice" + (id === S.boardPreset ? " selected" : "");
+    btn.dataset.preset = id;
+    btn.innerHTML = `<span class="opt-name">${p.name}</span><span class="opt-desc">${p.desc}</span>`;
+    btn.addEventListener("click", () => {
+      SND.unlock();
+      SND.tap();
+      S.boardPreset = id;
+      saveBoardOpt();
+      renderBoardPresets();
+    });
+    box.appendChild(btn);
+  }
+}
+
 function newBoardWithFleet() {
-  const b = E.createBoard();
-  E.randomFleet(b);
+  const p = boardPreset();
+  const b = E.createBoard(p.grid);
+  if (S.allowTouch) b.allowTouch = true;
+  E.randomFleet(b, p.fleet);
   if (S.rules.decoy) E.randomDecoy(b);
   return b;
 }
@@ -251,6 +294,8 @@ function syncRuleChips() {
   $("#rule-decoy").checked = S.rules.decoy;
   $("#rule-sonar").checked = S.rules.sonar;
   $("#rule-ghost").checked = S.rules.ghost;
+  $("#rule-touch").checked = S.allowTouch;
+  renderBoardPresets();
 }
 
 function rulesSummary(rules) {
@@ -258,6 +303,16 @@ function rulesSummary(rules) {
   if (rules.decoy) parts.push("🎈 Ballon-Schwindel");
   if (rules.sonar) parts.push("🐬 Sonar");
   if (rules.ghost) parts.push("👻 Geisterstunde");
+  return parts.join(" · ");
+}
+
+// everything non-default about this round, for a quick recap toast
+function setupSummary() {
+  const parts = [];
+  if (S.boardPreset !== "klassisch") parts.push(boardPreset().name);
+  if (S.allowTouch) parts.push("🤗 Kuschel-Regel");
+  const r = rulesSummary(S.rules);
+  if (r) parts.push(r);
   return parts.join(" · ");
 }
 
@@ -287,14 +342,28 @@ function loadPowersOpt() {
 function savePowersOpt() {
   try {
     localStorage.setItem("ff-powers", S.powersOn ? "1" : "0");
+    localStorage.setItem("ff-cards", S.cardsOn ? "1" : "0");
   } catch {
     /* private mode etc. */
+  }
+}
+
+function loadCardsOpt() {
+  try {
+    return localStorage.getItem("ff-cards") === "1"; // OFF by default
+  } catch {
+    return false;
   }
 }
 
 // powers only exist in the classic battle modes
 function powersEnabled() {
   return flag("powers") && S.powersOn && S.gameMode === "classic" && S.phase === "battle";
+}
+
+// the on-demand card hand (world powers + recharges) is an extra layer
+function cardsEnabled() {
+  return powersEnabled() && S.cardsOn;
 }
 
 // whose hand is acting right now (hotseat swaps seats)
@@ -323,6 +392,25 @@ function resetRuleState() {
 function ensureTreasures(board) {
   if (!board.treasures) PW.seedTreasures(board);
   return board.treasures;
+}
+
+function treasureListFor(idx) {
+  return S.mode === "online" && idx === 1 ? S.oppTreasures : S.boards[idx]?.treasures;
+}
+
+function marksFor(idx) {
+  return S.mode === "online" && idx === 1 ? S.shadow?.marks : S.boards[idx]?.shots;
+}
+
+// after any shot lands on board `idx`: do buried chests surface?
+function checkTreasureReveal(idx, x, y) {
+  if (!powersEnabled()) return;
+  const newly = PW.revealTreasures(treasureListFor(idx) ?? [], marksFor(idx) ?? {}, x, y);
+  for (const t of newly) {
+    SCENE.spawnChest(slotFor(idx), t.x, t.y);
+    SND.sparkle();
+    toast("💎 Eine Schatztruhe ist aufgetaucht!", 2200);
+  }
 }
 
 // ghost rule: count shots per board, fade old miss marks
@@ -392,6 +480,18 @@ function startMode(mode) {
   S.chase = null;
   S.boss = null;
   S.journey = null;
+  // fresh game, fresh board choice: the persisted preset wins (an online
+  // guest may have played the host's board last round)
+  const bo = loadBoardOpt();
+  S.boardPreset = bo.preset;
+  S.allowTouch = bo.touch;
+  if (S.forceClassicBoard) {
+    S.boardPreset = "klassisch";
+    S.allowTouch = false;
+    S.forceClassicBoard = false;
+  }
+  S.setupToastShown = false;
+  clearSave();
   S.turn = 0;
   S.viewer = 0;
   S.rematchMine = false;
@@ -421,7 +521,7 @@ function startPlacement(player) {
   const idx = player;
   const slot = slotFor(idx);
   applyUiWorld(S.worlds[idx]);
-  SCENE.setupBoard(slot, S.worlds[idx]);
+  SCENE.setupBoard(slot, S.worlds[idx], { grid: S.boards[idx].size });
   S.customs[idx] = loadCustom(S.worlds[idx]);
   SCENE.setCustomization(slot, S.customs[idx]);
   SCENE.placeCreatures(slot, shipsWithDecoy(S.boards[idx]), { popIn: true });
@@ -440,9 +540,11 @@ function startPlacement(player) {
     blockedCells: (id) => {
       const board = S.boards[idx];
       const set = new Set();
+      // Kuschel-Regel: only the occupied cells themselves are blocked
+      const reach = board.allowTouch ? 0 : 1;
       const markAround = (cx, cy) => {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -reach; dx <= reach; dx += 1) {
+          for (let dy = -reach; dy <= reach; dy += 1) {
             const x = cx + dx;
             const y = cy + dy;
             if (E.inBounds(board, x, y)) set.add(E.key(x, y));
@@ -466,7 +568,11 @@ function startPlacement(player) {
           SND.tap();
         } else {
           SND.sad();
-          toast("Der Ballon braucht ein Feld Abstand zu den Freunden!");
+          toast(
+            board.allowTouch
+              ? "Da sitzt schon jemand!"
+              : "Der Ballon braucht ein Feld Abstand zu den Freunden!"
+          );
         }
         SCENE.moveCreature(slot, decoyShipOf(board));
         return;
@@ -476,7 +582,11 @@ function startPlacement(player) {
         SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
       } else {
         SND.sad();
-        toast("Die Freunde brauchen ein Feld Abstand zueinander!");
+        toast(
+          board.allowTouch
+            ? "Da sitzt schon jemand!"
+            : "Die Freunde brauchen ein Feld Abstand zueinander!"
+        );
         SCENE.moveCreature(slot, board.ships.find((s) => s.id === id));
         SCENE.shakeCreature(slot, id);
       }
@@ -489,6 +599,12 @@ function startPlacement(player) {
         return;
       }
       const ship = board.ships.find((s) => s.id === id);
+      // squares and single-cell friends have nothing to rotate — wiggle
+      if (ship.shape === "sq" || ship.size === 1) {
+        SND.plop();
+        SCENE.shakeCreature(slot, id);
+        return;
+      }
       const dir = ship.dir === "h" ? "v" : "h";
       const maxX = board.size - (dir === "h" ? ship.size : 1);
       const maxY = board.size - (dir === "v" ? ship.size : 1);
@@ -507,11 +623,16 @@ function startPlacement(player) {
   SND.startAmbient(S.worlds[idx]);
   const who = S.mode === "hotseat" ? `Spieler ${player + 1}` : "Du";
   status(`${who}: Versteck deine Freunde! Ziehen = verschieben, Tippen = drehen.`);
+  // recap what's special about this round (online guests get the
+  // host's shared-options toast instead)
+  if (S.mode !== "online" && player === 0 && !S.setupToastShown) {
+    S.setupToastShown = true;
+    const summary = setupSummary();
+    if (summary) toast(`Diese Runde: ${summary}`, 3000);
+  }
   show(null);
   $("#btn-shuffle").hidden = false;
-  $("#btn-world").hidden = false;
   $("#btn-opts").hidden = false;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = false;
   $("#btn-place-done").disabled = false;
   $("#btn-place-done").textContent = "Fertig!";
@@ -688,9 +809,7 @@ function placementDone() {
   SCENE.clearInteraction();
   closeStylePanel();
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
   if (S.mode === "hotseat") {
@@ -751,7 +870,10 @@ function renderPowers() {
   }
   box.innerHTML = "";
   const counts = new Map();
-  for (const k of st.hand) counts.set(k, (counts.get(k) || 0) + 1);
+  // hand chips exist only in card mode; passive badges always show
+  if (cardsEnabled()) {
+    for (const k of st.hand) counts.set(k, (counts.get(k) || 0) + 1);
+  }
   for (const [kind, n] of counts) {
     const p = PW.POWERS[kind];
     const chip = document.createElement("button");
@@ -767,6 +889,7 @@ function renderPowers() {
   if (st.shield) box.appendChild(passiveBadge("schild", "Schild aktiv"));
   if (st.clover) box.appendChild(passiveBadge("klee", "Glücksklee"));
   if (st.doubleShot) box.appendChild(passiveBadge("doppel", "Doppelschuss"));
+  if (S.extraTurn === me()) box.appendChild(passiveBadge("zeit", "Extra-Zug bereit"));
   box.hidden = box.children.length === 0;
 }
 
@@ -1014,9 +1137,9 @@ function executePower(kind, target) {
     }
     consumePower(kind);
     syncCreatureVisibility();
-    const mid = moved.dir === "h" ? moved.x + Math.floor(moved.size / 2) : moved.x;
-    const midY = moved.dir === "v" ? moved.y + Math.floor(moved.size / 2) : moved.y;
-    SCENE.tornadoAt(slotFor(my), mid, midY);
+    const movedCells = E.shipCells(moved);
+    const mid = movedCells[Math.floor(movedCells.length / 2)];
+    SCENE.tornadoAt(slotFor(my), mid.x, mid.y);
     if (S.mode === "online") S.net.send({ t: "pw", kind: "wirbel" });
     SND.whoosh();
     status("🌪️ Wusch! Ein Freund hat heimlich das Versteck gewechselt.");
@@ -1040,6 +1163,7 @@ function executePower(kind, target) {
   }
   renderPowers();
   dispatchTreasureFollowup();
+  saveGame();
 }
 
 // activation timbre by temperament
@@ -1092,6 +1216,7 @@ function applySalvoResults(targetIdx, results, done) {
     setTimeout(() => {
       SND.plop();
       SCENE.applyShot(slot, r.x, r.y, r.res.result === E.MISS ? "miss" : "hit");
+      checkTreasureReveal(targetIdx, r.x, r.y);
       if (r.res.result === E.SUNK && r.res.ship) {
         SND.fanfare();
         SCENE.revealShip(slot, r.res.ship);
@@ -1134,28 +1259,31 @@ function startBattle(firstTurn) {
   closeStylePanel();
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
 
   // make sure both dioramas exist (enemy diorama may not yet)
   if (S.mode === "online" || S.mode === "ai") {
-    SCENE.setupBoard("enemy", S.worlds[1]);
+    SCENE.setupBoard("enemy", S.worlds[1], {
+      grid: S.boards[1]?.size ?? S.shadow?.size ?? boardPreset().grid,
+    });
   }
   SCENE.setCustomization("mine", customFor(0));
   SCENE.setCustomization("enemy", customFor(1));
 
-  // Zauber-Kräfte: hands, world powers, one visible treasure per board
+  // Zauber-Kräfte: one visible treasure per board (spells cast on dig);
+  // the on-demand card hand only with the extra option enabled
   if (flag("powers") && S.powersOn && S.gameMode === "classic") {
-    S.powers = [PW.newPowerState(S.worlds[0]), PW.newPowerState(S.worlds[1])];
+    const cards = S.cardsOn;
+    S.powers = [
+      PW.newPowerState(S.worlds[0], { cards }),
+      PW.newPowerState(S.worlds[1], { cards }),
+    ];
     for (const b of S.boards) if (b) ensureTreasures(b);
-    SCENE.renderTreasures("mine", S.boards[0]?.treasures ?? []);
-    SCENE.renderTreasures(
-      "enemy",
-      S.mode === "online" ? S.oppTreasures ?? [] : S.boards[1]?.treasures ?? []
-    );
-    showPowerGain(PW.worldPower(S.worlds[S.viewer]), "🌍 Deine Welt-Kraft");
+    // chests start buried — they surface as the search progresses
+    SCENE.renderTreasures("mine", (S.boards[0]?.treasures ?? []).filter((t) => t.revealed));
+    SCENE.renderTreasures("enemy", (treasureListFor(1) ?? []).filter((t) => t.revealed));
+    if (cards) showPowerGain(PW.worldPower(S.worlds[S.viewer]), "🌍 Deine Welt-Karte");
   } else {
     S.powers = [null, null];
     SCENE.renderTreasures("mine", []);
@@ -1168,6 +1296,7 @@ function startBattle(firstTurn) {
   show(null);
   beginTurn();
   if (S.mode === "ai" && firstTurn === 1) scheduleRoboTurn();
+  saveGame();
 }
 
 // set up camera + interaction for the current turn (from viewer's seat)
@@ -1183,19 +1312,20 @@ function beginTurn() {
     SCENE.clearInteraction();
     SCENE.setTapMode(slotFor(target), (x, y) => handleTap(x, y));
     beginTurnStatus();
-    // power recharge: every RECHARGE_EVERY own turns brings a new one
+    // card recharge: only with the card option, every RECHARGE_EVERY turns
     if (powersEnabled()) {
       const st = myPowers();
       if (st) {
         st.turns += 1;
         st.doubleShot = false;
-        if (st.turns % PW.RECHARGE_EVERY === 0) {
-          gainPower(S.turn, PW.drawPower(Math.random, st.hand), "⚡ Aufladung:");
+        if (cardsEnabled() && st.turns % PW.RECHARGE_EVERY === 0) {
+          gainPower(S.turn, PW.drawPower(Math.random, st.hand), "⚡ Neue Karte");
         }
       }
     }
     S.pendingPower = null;
     renderPowers();
+    saveGame();
   } else {
     renderPowers();
     SND.startAmbient(S.worlds[S.viewer]);
@@ -1290,6 +1420,7 @@ function showShotResult(idx, x, y, res, done) {
     { sonarDist }
   );
   ghostTick(idx, x, y, res.result);
+  checkTreasureReveal(idx, x, y);
   if (navigator.vibrate) {
     navigator.vibrate(res.result === E.SUNK ? [60, 40, 90] : res.result === E.HIT ? 40 : 15);
   }
@@ -1329,6 +1460,7 @@ function showShotResult(idx, x, y, res, done) {
     );
     renderChips(other(S.viewer));
   }
+  saveGame();
   setTimeout(done, FAST ? 50 : res.result === E.SUNK ? 1200 : 500);
 }
 
@@ -1411,8 +1543,8 @@ function scheduleRoboTurn() {
     const schlau = S.aiState.difficulty === "schlau";
     const st1 = powersEnabled() ? S.powers[1] : null;
 
-    // the clever robo actually casts its spells
-    if (schlau && st1) {
+    // the clever robo actually casts its spells (card mode only)
+    if (schlau && st1 && cardsEnabled()) {
       const shieldIdx = st1.hand.indexOf("schild");
       const zeitIdx = st1.hand.indexOf("zeit");
       const doppelIdx = st1.hand.indexOf("doppel");
@@ -1466,9 +1598,9 @@ function scheduleRoboTurn() {
       SCENE.applyShotQuiet("mine", shot.x, shot.y, "miss");
       SCENE.openTreasure("mine", shot.x, shot.y);
       SND.treasure();
-      if (schlau && st1 && st1.hand.length < PW.HAND_MAX) {
+      if (schlau && st1 && cardsEnabled() && st1.hand.length < PW.HAND_MAX) {
         st1.hand.push(PW.drawPower(Math.random, st1.hand, { instant: true }));
-        status("💎 Robo hat deinen Schatz geborgen und einen Zauber eingesteckt!");
+        status("💎 Robo hat deinen Schatz geborgen und eine Karte eingesteckt!");
       } else {
         status("💎 Oh nein, Robo hat deinen Schatz stibitzt!");
       }
@@ -1516,7 +1648,7 @@ function scheduleRoboTurn() {
 // ---------------------------------------------------------------- online
 
 function newShadow() {
-  return { size: E.DEFAULT_GRID, marks: {}, found: [] };
+  return { size: boardPreset().grid, marks: {}, found: [] };
 }
 
 // ---------------------------------------------------------------- friends
@@ -1735,6 +1867,11 @@ function wireNet() {
   S.net.onMessage = (msg) => handleNetMessage(msg);
   S.net.onClose = () => {
     if (S.phase === "over") return;
+    // mid-battle drop: hold the fort and let the opponent reconnect
+    if (S.phase === "battle" && S.mode === "online" && S.oppPid) {
+      enterReconnectWait();
+      return;
+    }
     toast("Die Verbindung ist weg.", 2600);
     goHome();
   };
@@ -1839,15 +1976,24 @@ function handleNetMessage(msg) {
         break;
       }
       S.gameMode = "classic";
-      // the host decides the extra rules + powers for both players
+      // the host decides the extra rules + powers + board for both players
       S.rules = {
         decoy: !!msg.rules?.decoy,
         sonar: !!msg.rules?.sonar,
         ghost: !!msg.rules?.ghost,
       };
       S.powersOn = flag("powers") && msg.powers !== false;
+      S.cardsOn = flag("powers") && !!msg.cards;
+      S.boardPreset = BOARD_PRESETS[msg.board?.preset] ? msg.board.preset : "klassisch";
+      S.allowTouch = !!msg.board?.touch;
       syncRuleChips();
-      const parts = [rulesSummary(S.rules), S.powersOn ? "✨ Zauber-Kräfte" : ""].filter(Boolean);
+      const parts = [
+        rulesSummary(S.rules),
+        S.boardPreset !== "klassisch" ? boardPreset().name : "",
+        S.allowTouch ? "🤗 Kuschel-Regel" : "",
+        S.powersOn ? "💎 Schatz-Zauber" : "",
+        S.cardsOn ? "🃏 Zauber-Karten" : "",
+      ].filter(Boolean);
       if (parts.length) toast(`Gemeinsame Optionen: ${parts.join(" · ")}`, 3200);
       if (S.phase === "over") {
         // rematch: the guest also picks a fresh world every match
@@ -1916,14 +2062,14 @@ function handleNetMessage(msg) {
         break;
       }
 
-      S.net.send({
+      const resultMsg = {
         t: "result",
         x: msg.x,
         y: msg.y,
         result: res.result,
         ship:
           res.result === E.SUNK
-            ? { id: res.ship.id, size: res.ship.size, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
+            ? { id: res.ship.id, size: res.ship.size, shape: res.ship.shape, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
             : null,
         revealed: res.revealed,
         gameOver: res.gameOver,
@@ -1931,7 +2077,9 @@ function handleNetMessage(msg) {
           (S.rules.sonar || msg.clover) && res.result === E.MISS
             ? E.sonarDistance(S.boards[0], msg.x, msg.y)
             : null,
-      });
+      };
+      S.net.send(resultMsg);
+      if (res.result !== E.REPEAT) S.lastResultMsg = resultMsg; // for resume replay
       if (res.result === E.REPEAT) break;
       showShotResult(0, msg.x, msg.y, res, () => {
         if (S.phase !== "battle") {
@@ -2075,7 +2223,7 @@ function handleNetMessage(msg) {
             result: res.result,
             ship:
               res.result === E.SUNK
-                ? { id: res.ship.id, size: res.ship.size, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
+                ? { id: res.ship.id, size: res.ship.size, shape: res.ship.shape, x: res.ship.x, y: res.ship.y, dir: res.ship.dir }
                 : null,
             revealed: res.revealed,
             gameOver: res.gameOver,
@@ -2098,6 +2246,39 @@ function handleNetMessage(msg) {
           }
         );
       }
+      break;
+    }
+    case "resume": {
+      // the opponent refreshed and is back — pick up where we stopped
+      if (S.phase !== "battle" || S.mode !== "online") break;
+      if (msg.pid && S.oppPid && msg.pid !== S.oppPid) break; // stranger
+      S.net.send({ t: "resume-ok", yourTurn: S.turn === 1, lastResult: S.lastResultMsg ?? null });
+      S.inputLocked = false;
+      beginTurn();
+      toast("🔌 Dein Mitspieler ist zurück!");
+      saveGame();
+      break;
+    }
+    case "resume-ok": {
+      if (S.phase !== "battle" || S.resumeOk) break;
+      S.resumeOk = true;
+      S.turn = msg.yourTurn ? 0 : 1;
+      // replay the one result that may have been lost in the refresh
+      const lr = msg.lastResult;
+      if (lr && lr.result && lr.result !== E.REPEAT && !S.shadow.marks[E.key(lr.x, lr.y)]) {
+        const mark = lr.result === E.MISS ? E.MISS : lr.result === E.DECOY ? E.DECOY : E.HIT;
+        S.shadow.marks[E.key(lr.x, lr.y)] = mark;
+        SCENE.applyShotQuiet("enemy", lr.x, lr.y, mark);
+        if (lr.result === E.SUNK && lr.ship) {
+          S.shadow.found.push(lr.ship);
+          for (const c of lr.revealed || []) S.shadow.marks[E.key(c.x, c.y)] = E.MISS;
+          SCENE.addCreature("enemy", { ...lr.ship, hits: [] }, { found: true });
+        }
+      }
+      S.inputLocked = false;
+      beginTurn();
+      toast("▶️ Weiter geht's!");
+      saveGame();
       break;
     }
     case "pw-done": {
@@ -2171,6 +2352,8 @@ function sendHello() {
     rules: S.rules,
     mode: S.gameMode,
     powers: flag("powers") && S.powersOn,
+    cards: flag("powers") && S.powersOn && S.cardsOn,
+    board: { preset: S.boardPreset, touch: S.allowTouch },
     pid: PID,
   });
 }
@@ -2238,9 +2421,7 @@ function setupChaseBoard() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
@@ -2623,9 +2804,7 @@ function setupBossBoard() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
@@ -3039,9 +3218,7 @@ function startPuzzle() {
   SND.startAmbient(worldId);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   puzzleStatus();
   renderChips(0);
@@ -3164,6 +3341,7 @@ function puzzleEnd(won) {
 
 function finishGame(winner) {
   S.phase = "over";
+  clearSave();
   SCENE.clearInteraction();
   renderPowers();
   $("#btn-rematch").textContent = "Nochmal spielen";
@@ -3288,6 +3466,7 @@ function startJourneyStop(i) {
     };
     syncRuleChips();
     S.forceRoboLevel = "leicht"; // the journey stays kind
+    S.forceClassicBoard = true; // curated stops play on the classic board
     startMode("ai");
   } else if (stop.type === "puzzle") {
     startPuzzle();
@@ -3364,6 +3543,12 @@ function openAquarium() {
       if (i >= 0) {
         S.aquariumIdx = i;
         toast(`${list[i].name} freut sich! 💛`, 1400);
+        // a tapped friend hops straight into the dressing room
+        if (flag("styles") && $("#customizer").hidden) {
+          setTimeout(() => {
+            if (S.mode === "aquarium") openCustomizer(i);
+          }, FAST ? 60 : 500);
+        }
       }
       return;
     }
@@ -3381,9 +3566,7 @@ function openAquarium() {
   SND.startAmbient(S.worlds[0]);
   show(null);
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = !flag("styles") || list.length === 0;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
@@ -3478,8 +3661,13 @@ function rematch() {
 
 function goHome() {
   S.phase = "title";
+  clearSave();
   SND.stopAmbient();
   stopFriendListener();
+  if (S.reconnectNet) {
+    S.reconnectNet.destroy();
+    S.reconnectNet = null;
+  }
   S.oppPid = null;
   S.pickingWorld = false;
   if (S.net) {
@@ -3495,6 +3683,12 @@ function goHome() {
   S.journey = null;
   S.gameMode = "classic";
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
+  S.powersOn = flag("powers") ? loadPowersOpt() : false;
+  S.cardsOn = flag("powers") ? loadCardsOpt() : false;
+  const bo = loadBoardOpt();
+  S.boardPreset = bo.preset;
+  S.allowTouch = bo.touch;
+  renderBoardPresets();
   syncRuleChips();
   S.customs = [{}, {}];
   S.oppCustom = null;
@@ -3505,13 +3699,279 @@ function goHome() {
   $("#btn-rematch").textContent = "Nochmal spielen";
   $("#btn-endturn").hidden = true;
   $("#btn-shuffle").hidden = true;
-  $("#btn-world").hidden = true;
   $("#btn-opts").hidden = true;
-  $("#btn-style").hidden = true;
   $("#btn-place-done").hidden = true;
   applyUiWorld(S.worlds[0]);
   renderPowers();
+  maybeShowResume();
   show("screen-title");
+}
+
+// ------------------------------------------------------------- resume
+// A page refresh (or crash) must not kill a running battle: the full
+// classic-game state is checkpointed continuously; online games
+// reconnect over the stable friend ids afterwards.
+
+const RESUME_KEY = "ff-resume";
+const RESUME_MAX_AGE = 3 * 60 * 60 * 1000;
+
+function saveGame() {
+  if (S.phase !== "battle" || !["ai", "hotseat", "online"].includes(S.mode)) return;
+  try {
+    localStorage.setItem(
+      RESUME_KEY,
+      JSON.stringify({
+        ts: Date.now(),
+        mode: S.mode,
+        gameMode: S.gameMode,
+        isHost: S.isHost,
+        worlds: S.worlds,
+        rules: S.rules,
+        boardPreset: S.boardPreset,
+        allowTouch: S.allowTouch,
+        powersOn: S.powersOn,
+        cardsOn: S.cardsOn,
+        turn: S.turn,
+        viewer: S.viewer,
+        extraTurn: S.extraTurn,
+        boards: S.boards,
+        shadow: S.shadow,
+        powers: S.powers,
+        customs: S.customs,
+        oppCustom: S.oppCustom,
+        oppTreasures: S.oppTreasures,
+        oppPid: S.oppPid,
+        lastShot: S.lastShot,
+        sonarMap: S.sonarMap,
+        ghostTrack: S.ghostTrack,
+        aiState: S.aiState,
+        journey: S.journey,
+      })
+    );
+  } catch {
+    /* storage full/private — resume is best effort */
+  }
+}
+
+function clearSave() {
+  try {
+    localStorage.removeItem(RESUME_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadSave() {
+  try {
+    const s = JSON.parse(localStorage.getItem(RESUME_KEY) || "null");
+    if (!s || !s.boards?.[0] || Date.now() - (s.ts || 0) > RESUME_MAX_AGE) return null;
+    return s;
+  } catch {
+    return null;
+  }
+}
+
+function restoreSavedGame(saved) {
+  S.mode = saved.mode;
+  S.gameMode = saved.gameMode ?? "classic";
+  S.isHost = !!saved.isHost;
+  S.worlds = saved.worlds ?? ["ozean", "ozean"];
+  S.rules = saved.rules ?? S.rules;
+  S.boardPreset = BOARD_PRESETS[saved.boardPreset] ? saved.boardPreset : "klassisch";
+  S.allowTouch = !!saved.allowTouch;
+  S.powersOn = !!saved.powersOn;
+  S.cardsOn = !!saved.cardsOn;
+  S.turn = saved.turn ?? 0;
+  S.viewer = saved.viewer ?? 0;
+  S.extraTurn = saved.extraTurn ?? null;
+  S.boards = saved.boards;
+  S.shadow = saved.shadow ?? null;
+  S.powers = saved.powers ?? [null, null];
+  S.customs = saved.customs ?? [{}, {}];
+  S.oppCustom = saved.oppCustom ?? null;
+  S.oppTreasures = saved.oppTreasures ?? [];
+  S.oppPid = saved.oppPid ?? null;
+  S.lastShot = saved.lastShot ?? [null, null];
+  S.sonarMap = saved.sonarMap ?? [{}, {}];
+  S.ghostTrack = saved.ghostTrack ?? [
+    { count: 0, queue: [] },
+    { count: 0, queue: [] },
+  ];
+  S.aiState = saved.aiState ?? createAiState("leicht");
+  S.journey = saved.journey ?? null;
+  S.phase = "battle";
+  syncRuleChips();
+  applyUiWorld(S.worlds[S.mode === "hotseat" ? S.turn : 0]);
+  SCENE.setupBoard("mine", S.worlds[0], { grid: S.boards[0]?.size ?? 8 });
+  SCENE.setupBoard("enemy", S.worlds[1], {
+    grid: S.boards[1]?.size ?? S.shadow?.size ?? 8,
+  });
+  SCENE.setCustomization("mine", customFor(0));
+  SCENE.setCustomization("enemy", customFor(1));
+  if (flag("powers") && S.powersOn) {
+    SCENE.renderTreasures("mine", (S.boards[0]?.treasures ?? []).filter((t) => t.revealed));
+    SCENE.renderTreasures("enemy", (treasureListFor(1) ?? []).filter((t) => t.revealed));
+  }
+  syncCreatureVisibility();
+  replayMarks(0);
+  replayMarks(1);
+  show(null);
+  $("#btn-shuffle").hidden = true;
+  $("#btn-opts").hidden = true;
+  $("#btn-place-done").hidden = true;
+  $("#btn-endturn").hidden = true;
+  renderPowers();
+}
+
+// the title-screen banner: an interrupted game is offered, not forced
+function maybeShowResume() {
+  const saved = loadSave();
+  const box = $("#resume-banner");
+  if (!saved) {
+    box.hidden = true;
+    return;
+  }
+  const label =
+    saved.mode === "online"
+      ? "Euer Zwei-Geräte-Spiel wartet noch!"
+      : saved.mode === "hotseat"
+        ? "Euer Spiel zu zweit wartet noch!"
+        : "Dein Spiel gegen Robo wartet noch!";
+  $("#resume-text").textContent = label;
+  box.hidden = false;
+}
+
+function resumeSavedGame(saved) {
+  restoreSavedGame(saved);
+  if (S.mode === "online") {
+    reconnectAfterRefresh();
+  } else {
+    S.inputLocked = false;
+    beginTurn();
+    if (S.mode === "ai" && S.turn === 1) scheduleRoboTurn();
+    toast("▶️ Spiel fortgesetzt!", 2400);
+  }
+}
+
+// refresher side: knock on the opponent's stable id and ask to resume
+function reconnectAfterRefresh() {
+  status("🔌 Verbinde wieder mit deinem Mitspieler …");
+  S.inputLocked = true;
+  S.resumeOk = false;
+  S.net = new Net();
+  wireNet();
+  S.net
+    .join(S.oppPid)
+    .then(() => {
+      let tries = 0;
+      const ping = setInterval(() => {
+        if (S.resumeOk || S.phase !== "battle" || !S.net) {
+          clearInterval(ping);
+          return;
+        }
+        tries += 1;
+        if (tries > 12) {
+          clearInterval(ping);
+          toast("Dein Mitspieler ist nicht mehr erreichbar.", 2800);
+          clearSave();
+          goHome();
+          return;
+        }
+        S.net.send({ t: "resume", pid: PID });
+      }, 2000);
+      S.net.send({ t: "resume", pid: PID });
+    })
+    .catch(() => {
+      toast("Dein Mitspieler ist nicht mehr erreichbar.", 2800);
+      clearSave();
+      goHome();
+    });
+}
+
+// survivor side: the line dropped mid-battle — wait for them to return
+function enterReconnectWait() {
+  status("🔌 Verbindung verloren — warte auf deinen Mitspieler …");
+  S.inputLocked = true;
+  SCENE.clearInteraction();
+  if (S.net) {
+    S.net.destroy();
+    S.net = null;
+  }
+  const net = new Net();
+  S.reconnectNet = net;
+  net.onMessage = (m) => handleNetMessage(m);
+  net.onClose = () => {};
+  net.onStatus = (st) => {
+    if (st === "connected" && S.reconnectNet === net) {
+      S.reconnectNet = null;
+      S.net = net;
+      wireNet();
+    }
+  };
+  net.host(PID).catch(() => {
+    if (S.reconnectNet === net) S.reconnectNet = null;
+  });
+  setTimeout(() => {
+    if (S.reconnectNet === net && S.phase === "battle" && S.mode === "online") {
+      net.destroy();
+      S.reconnectNet = null;
+      toast("Die Verbindung ist weg.", 2600);
+      clearSave();
+      goHome();
+    }
+  }, 120000);
+}
+
+// ------------------------------------------------------------- updates
+// Poll the deployment stamp; when a new version ships, offer a one-tap
+// refresh on the title screen (never interrupting a running game).
+
+let appVersion = null;
+let updatePending = false;
+
+async function fetchVersion() {
+  try {
+    const res = await fetch(`version.json?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j && j.v != null ? String(j.v) : null;
+  } catch {
+    return null; // offline or dev server without a build stamp
+  }
+}
+
+async function checkForUpdate() {
+  const v = await fetchVersion();
+  if (!v) return false;
+  if (appVersion === null) {
+    appVersion = v;
+    return false;
+  }
+  if (v !== appVersion) {
+    updatePending = true;
+    maybeShowUpdate();
+    return true;
+  }
+  return false;
+}
+
+function maybeShowUpdate() {
+  $("#update-banner").hidden = !(updatePending && S.phase === "title");
+}
+
+async function applyUpdate() {
+  SND.tap();
+  $("#update-banner").textContent = "✨ Wird aktualisiert …";
+  try {
+    // drop the offline cache so the reload really fetches the new build
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k.startsWith("funkelflotte")).map((k) => caches.delete(k)));
+    const reg = await navigator.serviceWorker?.getRegistration?.();
+    await reg?.update?.();
+  } catch {
+    /* best effort — the reload still helps */
+  }
+  window.location.reload();
 }
 
 // ------------------------------------------------------------------ boot
@@ -3521,7 +3981,30 @@ function boot() {
   applyUiWorld("ozean");
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
   S.powersOn = flag("powers") ? loadPowersOpt() : false;
+  S.cardsOn = flag("powers") ? loadCardsOpt() : false;
+  const boardOpt = loadBoardOpt();
+  S.boardPreset = boardOpt.preset;
+  S.allowTouch = boardOpt.touch;
+  renderBoardPresets();
+  $("#rule-touch").checked = S.allowTouch;
+  $("#rule-touch").addEventListener("change", (e) => {
+    SND.unlock();
+    SND.tap();
+    S.allowTouch = e.target.checked;
+    saveBoardOpt();
+  });
+  document.querySelector(".opt-heading").hidden = !flag("variety");
+  $("#board-presets").hidden = !flag("variety");
+  $("#rule-touch").closest(".opt-row").hidden = !flag("variety");
   syncRuleChips();
+  $("#opt-cards").checked = S.cardsOn;
+  $("#opt-cards").closest(".opt-row").hidden = !flag("powers");
+  $("#opt-cards").addEventListener("change", (e) => {
+    SND.unlock();
+    SND.tap();
+    S.cardsOn = e.target.checked;
+    savePowersOpt();
+  });
   for (const id of ["#rule-decoy", "#rule-sonar", "#rule-ghost"]) {
     $(id).closest(".opt-row").hidden = !flag("rules");
   }
@@ -3537,6 +4020,7 @@ function boot() {
     SND.tap();
     optionsReturn = null;
     $("#options-note").hidden = true;
+    $("#opt-world").hidden = true;
     show("screen-options");
   });
   $("#btn-options-back").addEventListener("click", () => {
@@ -3559,8 +4043,13 @@ function boot() {
     for (const [kind, p] of Object.entries(PW.POWERS)) {
       const row = document.createElement("div");
       row.className = "legend-row";
-      const worldTag = p.world ? ` <span class="legend-world">(${getWorld(p.world).name})</span>` : "";
-      row.innerHTML = `<img class="legend-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="legend-text"><b>${p.name}</b>${worldTag}<br />${p.desc}</span>`;
+      const tags = [
+        p.world ? `<span class="legend-world">(${getWorld(p.world).name})</span>` : "",
+        p.cardsOnly ? '<span class="legend-world">(nur als 🃏 Karte)</span>' : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      row.innerHTML = `<img class="legend-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="legend-text"><b>${p.name}</b>${tags ? ` ${tags}` : ""}<br />${p.desc}</span>`;
       box.appendChild(row);
     }
     box.hidden = false;
@@ -3683,17 +4172,17 @@ function boot() {
   });
 
   $("#btn-shuffle").addEventListener("click", shuffleFleet);
-  $("#btn-world").addEventListener("click", changeMyWorld);
   let optionsReturn = null;
   $("#btn-opts").addEventListener("click", () => {
     SND.tap();
     optionsReturn = "game";
     $("#options-note").hidden = false;
+    // world switching lives inside the menu now — placement only
+    $("#opt-world").hidden = S.phase !== "place";
     show("screen-options");
   });
-  $("#btn-style").addEventListener("click", () => {
-    if ($("#customizer").hidden) openCustomizer(S.aquariumIdx ?? 0);
-    else closeStylePanel();
+  $("#opt-world").addEventListener("click", () => {
+    changeMyWorld();
   });
   $("#btn-cust-done").addEventListener("click", () => {
     SND.tap();
@@ -3763,10 +4252,45 @@ function boot() {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 
+  // version polling: at boot, every 5 minutes, and when the app wakes up
+  $("#update-banner").addEventListener("click", applyUpdate);
+  checkForUpdate();
+  setInterval(checkForUpdate, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkForUpdate();
+  });
+  // checkpoint the running game when the app is backgrounded or closed
+  window.addEventListener("pagehide", saveGame);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) saveGame();
+  });
+
+  $("#btn-resume").addEventListener("click", () => {
+    SND.unlock();
+    SND.whoosh();
+    $("#resume-banner").hidden = true;
+    const saved = loadSave();
+    if (!saved) {
+      toast("Das Spiel ist leider nicht mehr da.", 2400);
+      return;
+    }
+    resumeSavedGame(saved);
+  });
+  $("#btn-resume-discard").addEventListener("click", () => {
+    SND.tap();
+    clearSave();
+    $("#resume-banner").hidden = true;
+  });
+
+  // an interrupted battle is offered back, never forced — the banner
+  // wins over a stale ?join= deep link still sitting in the URL
+  const savedGame = loadSave();
+  maybeShowResume();
+
   // deep link: ?join=CODE — let the guest pick their world first
   const params = new URLSearchParams(window.location.search);
   const joinCode = normalizeCode(params.get("join"));
-  if (joinCode.length === 4) {
+  if (!savedGame && joinCode.length === 4) {
     S.mode = "online";
     showWorldPick({
       title: "Wähl deine Welt!",
@@ -3812,6 +4336,7 @@ function boot() {
     usePower: (kind, target) => executePower(kind, target),
     flags: allFlags,
     setFlag,
+    checkUpdate: checkForUpdate,
     placementBoard: () => S.boards[S.placingPlayer],
     marksOn: (idx) => (S.mode === "online" && idx === 1 ? S.shadow.marks : S.boards[idx]?.shots),
     rotateFirst: () => {
