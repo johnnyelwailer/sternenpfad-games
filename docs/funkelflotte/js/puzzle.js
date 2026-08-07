@@ -7,6 +7,22 @@ import * as E from "./engine.js";
 export const PUZZLE_FLEET = [3, 3, 2];
 export const PUZZLE_SPADES = 6; // wrong digs allowed before the retry screen
 
+// difficulty ladder: wins unlock denser fleets (a sneaky single-cell
+// friend the counts can barely pin down!) and finally a 10×10 board
+export const PUZZLE_STAGES = [
+  { grid: 8, fleet: [3, 3, 2], spades: 6 },
+  { grid: 8, fleet: [4, 3, 2, 2, 1], spades: 5 },
+  { grid: 10, fleet: [4, 3, 3, 2, 2, 1], spades: 5 },
+];
+
+export function puzzleStage(wins) {
+  return PUZZLE_STAGES[wins >= 6 ? 2 : wins >= 2 ? 1 : 0];
+}
+
+export function puzzleStageIndex(wins) {
+  return wins >= 6 ? 2 : wins >= 2 ? 1 : 0;
+}
+
 export function computeCounts(board) {
   const rows = Array(board.size).fill(0);
   const cols = Array(board.size).fill(0);
@@ -24,6 +40,7 @@ function allPlacements(size, len) {
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x <= size - len; x += 1) out.push({ x, y, dir: "h", size: len });
   }
+  if (len === 1) return out; // a 1-cell ship has no orientation — no h/v twins
   for (let x = 0; x < size; x += 1) {
     for (let y = 0; y <= size - len; y += 1) out.push({ x, y, dir: "v", size: len });
   }

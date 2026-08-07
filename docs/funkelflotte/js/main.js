@@ -8,7 +8,7 @@ import { WORLDS, getWorld, randomOtherWorld } from "./worlds.js";
 import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
 import * as PROG from "./progress.js";
 import { flag, setFlag, allFlags } from "./flags.js";
-import { generatePuzzle, PUZZLE_SPADES } from "./puzzle.js";
+import { generatePuzzle, PUZZLE_SPADES, PUZZLE_STAGES, puzzleStage, puzzleStageIndex } from "./puzzle.js";
 import { icon } from "./icons.js";
 import * as PW from "./powers.js";
 import * as CHASE from "./chase.js";
@@ -983,24 +983,38 @@ function renderPowers() {
     chip.addEventListener("click", () => onPowerTap(kind));
     box.appendChild(chip);
   }
-  // passive badges so kids see what is active
-  if (st.shield) box.appendChild(passiveBadge("schild", "Schild aktiv"));
-  if (st.clover) box.appendChild(passiveBadge("klee", `Glücksklee ${st.clover}×`));
-  if (st.doubleShot) box.appendChild(passiveBadge("doppel", "Doppelschuss bereit"));
-  if (S.extraTurn === me()) box.appendChild(passiveBadge("zeit", "Extra-Zug bereit"));
+  // passive badges: compact round counters, deliberately NOT card-like —
+  // dark cards read as buttons and get tapped in vain. Icon + number.
+  if (st.shield) box.appendChild(passiveBadge("schild", 1));
+  if (st.clover) box.appendChild(passiveBadge("klee", st.clover));
+  if (st.doubleShot) box.appendChild(passiveBadge("doppel", 1));
+  if (S.extraTurn === me()) box.appendChild(passiveBadge("zeit", 1));
   box.hidden = box.children.length === 0;
 }
 
-function passiveBadge(kind, label) {
+function passiveBadge(kind, count) {
   const b = document.createElement("div");
-  b.className = "power-chip passive";
-  b.innerHTML = `<img class="power-icon" alt="" src="${SCENE.powerIconUrl(kind)}" /><span class="power-name">${label}</span>`;
+  b.className = "power-badge";
+  b.dataset.kind = kind;
+  b.innerHTML = `<img alt="" src="${SCENE.powerIconUrl(kind)}" />${
+    count > 0 ? `<span class="badge-count">${count}</span>` : ""
+  }`;
   return b;
 }
 
 // reveal card whenever a power arrives — big icon + name; the effect
 // itself is the explanation
 let gainTimer = null;
+let gainDismiss = null;
+function hidePowerGain() {
+  $("#power-gain").hidden = true;
+  clearTimeout(gainTimer);
+  if (gainDismiss) {
+    document.removeEventListener("pointerdown", gainDismiss, true);
+    gainDismiss = null;
+  }
+}
+
 function showPowerGain(kind, why) {
   const p = PW.POWERS[kind];
   const card = $("#power-gain");
@@ -1008,18 +1022,20 @@ function showPowerGain(kind, why) {
     <img alt="" src="${SCENE.powerIconUrl(kind, 192)}" />
     <div class="gain-name">${p.name}</div>
     <div class="gain-use">${p.use ?? ""}</div>
-    <div class="gain-dismiss">👆 Tippen, wenn du's gelesen hast</div>`;
+    <div class="gain-dismiss">Weiter geht's mit einem Tipp</div>`;
   card.hidden = false;
   clearTimeout(gainTimer);
   // the card waits for the reader — only automated tests rush it away
   if (FAST) {
-    gainTimer = setTimeout(() => {
-      card.hidden = true;
-    }, 300);
+    gainTimer = setTimeout(hidePowerGain, 300);
   }
-  card.onclick = () => {
-    card.hidden = true;
-  };
+  // a tap ANYWHERE dismisses (without swallowing that tap) — the card
+  // itself must not be the only target, it just looks tappable
+  if (gainDismiss) document.removeEventListener("pointerdown", gainDismiss, true);
+  gainDismiss = () => hidePowerGain();
+  setTimeout(() => {
+    if (!card.hidden) document.addEventListener("pointerdown", gainDismiss, true);
+  }, 50);
 }
 
 // the dug-up power sails from the chest to the middle of the screen,
@@ -3708,26 +3724,31 @@ function startPuzzle() {
   const worldId = S.worlds[0];
   applyUiWorld(worldId);
 
-  const { board, rows, cols, hints } = generatePuzzle();
-  S.puzzle = { board, rows, cols, spades: PUZZLE_SPADES };
+  // wins climb the difficulty ladder (the journey pins stage 1)
+  const stageIdx = S.forcePuzzleStage ?? puzzleStageIndex(loadPuzzleWins());
+  S.forcePuzzleStage = null;
+  const stage = PUZZLE_STAGES[stageIdx];
+
+  // deal a handful of boards and keep the one needing the FEWEST hints:
+  // fewer givens = purer deduction, less "obvious"
+  let deal = null;
+  for (let i = 0; i < 4; i += 1) {
+    const candidate = generatePuzzle(Math.random, { size: stage.grid, fleet: stage.fleet });
+    if (!deal || candidate.hints.length < deal.hints.length) deal = candidate;
+    if (deal.hints.length === 0) break;
+  }
+  const { board, rows, cols, hints } = deal;
+  S.puzzle = { board, rows, cols, spades: stage.spades, stageIdx };
   S.boards = [board, null];
 
-  SCENE.setupBoard("mine", worldId);
+  SCENE.setupBoard("mine", worldId, { grid: stage.grid });
   SCENE.placeCreatures("mine", []); // everything stays hidden
   SCENE.setEdgeCounts("mine", rows, cols);
-  // truthful pre-revealed hint cells
+  // hints are WHISPERS now, not free shots: a "!" marks a cell where
+  // someone surely hides — the child still digs it up themselves, so no
+  // sunk-ring cascade solves the board at the start
   for (const h of hints) {
-    const res = E.fire(board, h.x, h.y);
-    SCENE.applyShotQuiet("mine", h.x, h.y, res.result === E.MISS ? "miss" : "hit");
-    if (res.result === E.SUNK) {
-      SCENE.addCreature("mine", res.ship, { found: true });
-      for (const c of res.revealed) SCENE.applyShotQuiet("mine", c.x, c.y, "miss");
-    }
-  }
-  if (board.ships.every(E.isSunk)) {
-    // hints solved the whole thing (vanishingly rare) — deal a new one
-    startPuzzle();
-    return;
+    SCENE.peekMarker("mine", h.x, h.y, true);
   }
   updatePuzzleClues();
   SCENE.focusBoard("mine", { immediate: S.phase === "title" });
@@ -3740,8 +3761,12 @@ function startPuzzle() {
   $("#btn-place-done").hidden = true;
   puzzleStatus();
   renderChips(0);
-  toast("Jede Zahl zählt die Freund-Felder in ihrer Reihe — bei 0 ist alles schon Wasser!", 3400);
-  if (!FAST) setTimeout(() => toast("⭐⭐⭐ gibt es für höchstens 1 Fehlgrabung!", 2600), 3800);
+  if (stageIdx > 0) toast(`Knobel-Stufe ${stageIdx + 1}: mehr Freunde, weniger Schaufeln!`, 2600);
+  else toast("Jede Zahl zählt die Freund-Felder in ihrer Reihe — bei 0 ist alles schon Wasser!", 3400);
+  if (!FAST) {
+    setTimeout(() => toast("Bei ! versteckt sich sicher jemand — ein Gratis-Anfang zum Knobeln!", 3000), 3800);
+    setTimeout(() => toast("⭐⭐⭐ gibt es für höchstens 1 Fehlgrabung!", 2400), 7200);
+  }
 }
 
 function puzzleStatus(prefix = "") {
@@ -3821,10 +3846,33 @@ function puzzleTap(x, y) {
   }
 }
 
+function loadPuzzleWins() {
+  try {
+    return parseInt(localStorage.getItem("ff-knobel-wins") || "0", 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 function puzzleEnd(won) {
   S.phase = "over";
   S.inputLocked = false;
   SCENE.clearInteraction();
+  if (won && S.journey == null) {
+    // free play climbs the ladder — the journey stays a training ground
+    try {
+      const wins = loadPuzzleWins() + 1;
+      localStorage.setItem("ff-knobel-wins", String(wins));
+      if (puzzleStageIndex(wins) > (S.puzzle.stageIdx ?? 0)) {
+        setTimeout(
+          () => toast(`🏆 Knobel-Stufe ${puzzleStageIndex(wins) + 1} freigeschaltet!`, 3200),
+          FAST ? 100 : 1200
+        );
+      }
+    } catch {
+      /* private mode */
+    }
+  }
   const world = getWorld(S.worlds[0]);
   const stickerBox = $("#win-sticker");
   stickerBox.hidden = true;
@@ -4140,6 +4188,7 @@ function launchJourneyStop(i) {
     S.moreTreasures = false;
     startMode("ai");
   } else if (stop.type === "puzzle") {
+    S.forcePuzzleStage = 0; // the journey teaches on the gentle board
     startPuzzle();
   } else if (stop.type === "chase") {
     startChase("ai");
