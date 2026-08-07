@@ -875,6 +875,14 @@ h1.logo {
   line-height: 1.4;
 }
 
+.gain-use {
+  font-size: 0.9rem;
+  font-weight: 700;
+  opacity: 0.95;
+  line-height: 1.4;
+  max-width: 260px;
+}
+
 .power-name {
   flex: 1;
   line-height: 1.15;

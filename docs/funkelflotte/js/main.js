@@ -44,6 +44,9 @@ const S = {
   rules: { decoy: false, sonar: false, ghost: false }, // extra rules
   boardPreset: "klassisch", // which board/fleet preset (see BOARD_PRESETS)
   allowTouch: false, // Enge Verstecke: creatures may sit side by side
+  moreTreasures: false, // up to three chests per board (persisted)
+  forceTreasureKind: null, // story journey: this spell waits in the chest
+  treasureKind: null, // the spell the just-dug chest released
   powersOn: true, // Zauber-Kräfte option (persisted)
   powers: [null, null], // per player: PW.newPowerState() during battle
   pendingPower: null, // power kind waiting for a target tap
@@ -299,6 +302,8 @@ function syncRuleChips() {
   $("#rule-sonar").checked = S.rules.sonar;
   $("#rule-ghost").checked = S.rules.ghost;
   $("#rule-touch").checked = S.allowTouch;
+  const mt = $("#opt-treasures");
+  if (mt) mt.checked = S.moreTreasures;
   renderBoardPresets();
 }
 
@@ -315,6 +320,7 @@ function setupSummary() {
   const parts = [];
   if (S.boardPreset !== "klassisch") parts.push(boardPreset().name);
   if (S.allowTouch) parts.push("🤝 Enge Verstecke");
+  if (S.moreTreasures && flag("powers") && S.powersOn) parts.push("💎💎 Mehr Schätze");
   const r = rulesSummary(S.rules);
   if (r) parts.push(r);
   return parts.join(" · ");
@@ -360,6 +366,22 @@ function loadCardsOpt() {
   }
 }
 
+function loadTreasuresOpt() {
+  try {
+    return localStorage.getItem("ff-more-treasures") === "1"; // OFF by default
+  } catch {
+    return false;
+  }
+}
+
+function saveTreasuresOpt() {
+  try {
+    localStorage.setItem("ff-more-treasures", S.moreTreasures ? "1" : "0");
+  } catch {
+    /* private mode etc. */
+  }
+}
+
 // powers only exist in the classic battle modes
 function powersEnabled() {
   return flag("powers") && S.powersOn && S.gameMode === "classic" && S.phase === "battle";
@@ -394,7 +416,15 @@ function resetRuleState() {
 // seed a board's treasure exactly once — positions may already have
 // been announced to the opponent
 function ensureTreasures(board) {
-  if (!board.treasures) PW.seedTreasures(board);
+  if (!board.treasures) {
+    // Mehr Schätze: sometimes two, rarely three chests hide on a board
+    const count = S.moreTreasures
+      ? 1 + (Math.random() < 0.6 ? 1 : 0) + (Math.random() < 0.25 ? 1 : 0)
+      : PW.TREASURES_PER_BOARD;
+    PW.seedTreasures(board, count);
+    // the story journey teaches a spell: its chest is visible right away
+    if (S.forceTreasureKind) for (const t of board.treasures) t.revealed = true;
+  }
   return board.treasures;
 }
 
@@ -495,6 +525,10 @@ function startMode(mode) {
     S.forceClassicBoard = false;
   }
   S.setupToastShown = false;
+  // the story journey plants a specific spell in the chest (nextTeachKind
+  // is set right before startMode); ordinary games draw randomly
+  S.forceTreasureKind = S.nextTeachKind ?? null;
+  S.nextTeachKind = null;
   if (mode !== "online") stopFriendListener();
   if (S.pendingInvite) answerInvite(false);
   clearSave();
@@ -893,8 +927,8 @@ function renderPowers() {
   }
   // passive badges so kids see what is active
   if (st.shield) box.appendChild(passiveBadge("schild", "Schild aktiv"));
-  if (st.clover) box.appendChild(passiveBadge("klee", "Glücksklee"));
-  if (st.doubleShot) box.appendChild(passiveBadge("doppel", "Doppelschuss"));
+  if (st.clover) box.appendChild(passiveBadge("klee", `Glücksklee ${st.clover}×`));
+  if (st.doubleShot) box.appendChild(passiveBadge("doppel", "Doppelschuss bereit"));
   if (S.extraTurn === me()) box.appendChild(passiveBadge("zeit", "Extra-Zug bereit"));
   box.hidden = box.children.length === 0;
 }
@@ -914,12 +948,13 @@ function showPowerGain(kind, why) {
   const card = $("#power-gain");
   card.innerHTML = `<div class="gain-why">${why}</div>
     <img alt="" src="${SCENE.powerIconUrl(kind, 192)}" />
-    <div class="gain-name">${p.name}</div>`;
+    <div class="gain-name">${p.name}</div>
+    <div class="gain-use">${p.use ?? ""}</div>`;
   card.hidden = false;
   clearTimeout(gainTimer);
   gainTimer = setTimeout(() => {
     card.hidden = true;
-  }, FAST ? 300 : 2600);
+  }, FAST ? 300 : 3400);
   card.onclick = () => {
     card.hidden = true;
   };
@@ -955,6 +990,7 @@ function powerFlyOut(kind, slot, x, y, onDone) {
 // treasures cast their power immediately — cause and effect in one go
 function autoUsePower(kind) {
   const p = PW.POWERS[kind];
+  S.treasureKind = kind;
   showPowerGain(kind, "💎 Schatz-Zauber");
   if (p.target === "none") {
     executePower(kind, null);
@@ -969,6 +1005,21 @@ function dispatchTreasureFollowup() {
   if (!S.treasureFollowup) return;
   const f = S.treasureFollowup;
   S.treasureFollowup = null;
+  const fromDoppel = S.treasureKind === "doppel";
+  S.treasureKind = null;
+  // Doppelschuss from a chest means action NOW: the turn does not pass —
+  // you search right away, and the forgiven miss covers shot number two
+  if (fromDoppel) {
+    setTimeout(() => {
+      if (S.phase !== "battle") return;
+      if (S.mode === "online") S.net.send({ t: "pw", kind: "doppel" });
+      S.inputLocked = false;
+      status("🎯 Doppelschuss! Du darfst gleich ZWEIMAL suchen!");
+      renderPowers();
+      saveGame();
+    }, FAST ? 140 : 1400);
+    return;
+  }
   setTimeout(f, FAST ? 140 : 1700);
 }
 
@@ -1058,9 +1109,9 @@ function ownPowerTap(x, y) {
     SND.tap();
     return;
   }
-  if (ship.hits.length > 0) {
+  if (E.isSunk(ship)) {
     SND.sad();
-    toast("Der wurde schon entdeckt — wähl einen ganz versteckten Freund!");
+    toast("Der wurde schon ganz gefunden — der kann nicht mehr fliehen!");
     return;
   }
   S.pendingPower = null;
@@ -1141,22 +1192,45 @@ function executePower(kind, target) {
     SCENE.bellToll(enemySlot);
     resolveInfo(kind, {}, ({ big }) => {
       SND.sparkle();
+      // a glowing ghost silhouette floats over the board — lying flat or
+      // standing tall — and stays until the next shot
+      if (big) SCENE.orientationGhost(enemySlot, big);
       status(
         big
-          ? `🔔 Die Glocke flüstert: Der größte Freund liegt ${big === "h" ? "QUER" : "HOCHKANT"}!`
+          ? `🔔 Die Glocke flüstert: Der größte Freund liegt ${big === "h" ? "QUER ↔" : "HOCHKANT ↕"}!`
           : "🔔 Die Glocke schweigt — alle sind gefunden!"
       );
     });
   } else if (kind === "klee") {
     consumePower(kind);
-    st.clover = true;
+    st.clover = PW.CLOVER_USES;
     SCENE.cloverRain(enemySlot);
     SND.fanfare();
-    status("🍀 Glücksklee! Jedes Daneben zeigt jetzt die Entfernung.");
+    // teach by showing: flash real distance numbers on a few free cells
+    // (offline modes know the enemy board; online the first miss teaches)
+    if (S.mode !== "online") {
+      const eb = S.boards[other(my)];
+      const demo = [];
+      const used = new Set();
+      for (let tries = 0; tries < 80 && demo.length < 3; tries += 1) {
+        const x = Math.floor(Math.random() * eb.size);
+        const y = Math.floor(Math.random() * eb.size);
+        const k = E.key(x, y);
+        if (used.has(k) || eb.shots[k] || E.shipAt(eb, x, y)) continue;
+        if (PW.treasureAt(eb, x, y)) continue;
+        const dist = E.sonarDistance(eb, x, y);
+        if (dist == null) continue;
+        used.add(k);
+        demo.push({ x, y, dist });
+      }
+      SCENE.sonarPreview(enemySlot, demo);
+    }
+    status("🍀 Glücksklee! Jedes Daneben zeigt ab jetzt so eine Zahl: Felder bis zum nächsten Freund.");
   } else if (kind === "doppel") {
     consumePower(kind);
     st.doubleShot = true;
-    status("🎯 Doppelschuss bereit: Dein nächstes Daneben zählt nicht!");
+    SCENE.doubleShotFlare(enemySlot);
+    status("🎯 Doppelschuss bereit: Dein nächstes Daneben beendet den Zug nicht!");
   } else if (kind === "zeit") {
     consumePower(kind);
     S.extraTurn = my;
@@ -1174,8 +1248,8 @@ function executePower(kind, target) {
     const board = S.boards[my];
     const chosen = board.ships.find((s) => s.id === target?.shipId) ?? null;
     const fromCells = chosen ? E.shipCells(chosen) : null;
-    const moved = PW.whirlwindMove(board, Math.random, target?.shipId ?? null);
-    if (!moved) {
+    const res = PW.whirlwindMove(board, Math.random, target?.shipId ?? null);
+    if (!res) {
       SND.sad();
       toast("Kein Platz zum Wirbeln — probier einen anderen Freund!");
       S.pendingPower = null;
@@ -1183,6 +1257,7 @@ function executePower(kind, target) {
       resumeBattleView();
       return;
     }
+    const { ship: moved, cleared } = res;
     consumePower(kind);
     // show the whole journey: tornado at the old hiding spot, then the
     // friend visibly hops over to the new one while you watch
@@ -1190,10 +1265,23 @@ function executePower(kind, target) {
     SCENE.focusBoard(mySlot);
     const fromMid = fromCells?.[Math.floor(fromCells.length / 2)];
     if (fromMid) SCENE.tornadoAt(mySlot, fromMid.x, fromMid.y);
+    // a wounded friend escapes: the enemy's hit marks swirl away
+    for (const c of cleared) SCENE.whirlAwayMark(mySlot, c.x, c.y);
     SCENE.moveCreature(mySlot, moved);
-    if (S.mode === "online") S.net.send({ t: "pw", kind: "wirbel" });
+    // robo saw its hits vanish too — it forgets those leads, like a human
+    if (S.mode === "ai" && S.aiState?.openHits && cleared.length) {
+      S.aiState.openHits = S.aiState.openHits.filter(
+        (h) => !cleared.some((c) => c.x === h.x && c.y === h.y)
+      );
+    }
+    if (S.mode === "online") S.net.send({ t: "pw", kind: "wirbel", cleared });
     SND.whoosh();
-    status("🌪️ Wusch! Dein Freund ist umgezogen — pssst, neues Versteck!");
+    if (cleared.length) SND.growl();
+    status(
+      cleared.length
+        ? "🌪️ Wusch! Dein verletzter Freund ist entwischt — die Treffer dort sind weg!"
+        : "🌪️ Wusch! Dein Freund ist umgezogen — pssst, neues Versteck!"
+    );
     // a beat to take it in, then back to the hunt
     S.inputLocked = true;
     setTimeout(() => {
@@ -1213,7 +1301,18 @@ function executePower(kind, target) {
     syncCreatureVisibility();
     if (S.mode === "online") S.net.send({ t: "pw", kind: "ballon" });
     SND.plop();
-    status("🎈 Ein neuer Schwindel-Ballon ist versteckt!");
+    // show the owner WHERE it landed: quick hop to the own board, a
+    // spotlight on the new balloon, then back to the hunt
+    const meSlot = slotFor(my);
+    const dc = S.boards[my].decoy;
+    SCENE.focusBoard(meSlot);
+    if (dc) SCENE.spotlight(meSlot, dc.x, dc.y);
+    status("🎈 Dein neuer Schwindel-Ballon sitzt HIER — pssst!");
+    S.inputLocked = true;
+    setTimeout(() => {
+      S.inputLocked = false;
+      resumeBattleView();
+    }, FAST ? 120 : 2000);
   } else if (kind === "salve") {
     consumePower(kind);
     runSalvo(target);
@@ -1374,7 +1473,8 @@ function beginTurn() {
       const st = myPowers();
       if (st) {
         st.turns += 1;
-        st.doubleShot = false;
+        // NOTE: doubleShot deliberately survives turn changes — it
+        // lasts until a miss actually consumes it
         if (cardsEnabled() && st.turns % PW.RECHARGE_EVERY === 0) {
           gainPower(S.turn, PW.drawPower(Math.random, st.hand), "⚡ Neue Karte");
         }
@@ -1444,7 +1544,7 @@ function handleTap(x, y) {
     SCENE.applyShotQuiet(slotFor(targetIdx), x, y, "miss");
     SCENE.openTreasure(slotFor(targetIdx), x, y);
     SND.treasure();
-    const kind = PW.drawPower(Math.random, [], { instant: true });
+    const kind = S.forceTreasureKind ?? PW.drawPower(Math.random, [], { instant: true });
     S.treasureFollowup = () => afterMyShot({ result: E.MISS, gameOver: false });
     setTimeout(
       () => powerFlyOut(kind, slotFor(targetIdx), x, y, () => autoUsePower(kind)),
@@ -1469,6 +1569,16 @@ function showShotResult(idx, x, y, res, done) {
       ? res.dist ?? (S.boards[idx] ? E.sonarDistance(S.boards[idx], x, y) : null)
       : null;
   if (sonarDist != null) S.sonarMap[idx][E.key(x, y)] = sonarDist;
+  // Glücksklee is a limited charm: each shown number uses up one leaf
+  if (res.result === E.MISS && sonarDist != null) {
+    const shSt = powersEnabled() ? S.powers[other(idx)] : null;
+    if (shSt && typeof shSt.clover === "number" && shSt.clover > 0) {
+      shSt.clover -= 1;
+      if (other(idx) === me() && shSt.clover === 0) {
+        setTimeout(() => toast("🍀 Der Glücksklee ist verwelkt."), FAST ? 100 : 1400);
+      }
+    }
+  }
   SCENE.applyShot(
     slot,
     x,
@@ -2180,6 +2290,7 @@ function handleNetMessage(msg) {
       };
       S.powersOn = flag("powers") && msg.powers !== false;
       S.cardsOn = flag("powers") && !!msg.cards;
+      S.moreTreasures = flag("powers") && !!msg.moreTreasures;
       S.boardPreset = BOARD_PRESETS[msg.board?.preset] ? msg.board.preset : "klassisch";
       S.allowTouch = !!msg.board?.touch;
       syncRuleChips();
@@ -2188,6 +2299,7 @@ function handleNetMessage(msg) {
         S.boardPreset !== "klassisch" ? boardPreset().name : "",
         S.allowTouch ? "🤝 Enge Verstecke" : "",
         S.powersOn ? "💎 Schatz-Zauber" : "",
+        S.moreTreasures ? "💎💎 Mehr Schätze" : "",
         S.cardsOn ? "🃏 Zauber-Karten" : "",
       ].filter(Boolean);
       if (parts.length) toast(`Gemeinsame Optionen: ${parts.join(" · ")}`, 3200);
@@ -2403,8 +2515,25 @@ function handleNetMessage(msg) {
       } else if (msg.kind === "zeit") {
         S.extraTurn = 1;
         toast("⏳ Dein Mitspieler hat einen Zeitzauber gewirkt!");
+      } else if (msg.kind === "doppel") {
+        toast("🎯 Drüben wirkt ein Doppelschuss — gleich wird zweimal gesucht!");
       } else if (msg.kind === "wirbel") {
-        toast("🌪️ Drüben hat jemand heimlich das Versteck gewechselt …");
+        // their creature escaped — my hit marks over there swirl away
+        const cleared = Array.isArray(msg.cleared)
+          ? msg.cleared.filter((c) => Number.isInteger(c?.x) && Number.isInteger(c?.y))
+          : [];
+        for (const c of cleared) {
+          delete S.shadow.marks[E.key(c.x, c.y)];
+          SCENE.whirlAwayMark("enemy", c.x, c.y);
+          SCENE.tornadoAt("enemy", c.x, c.y);
+        }
+        if (cleared.length) SND.growl();
+        toast(
+          cleared.length
+            ? "🌪️ Wirbelwind! Der getroffene Freund ist entwischt — deine Treffer dort sind weg!"
+            : "🌪️ Drüben hat jemand heimlich das Versteck gewechselt …",
+          3200
+        );
       } else if (msg.kind === "ballon") {
         toast("🎈 Drüben wurde ein neuer Schwindel-Ballon versteckt …");
       } else if (msg.kind === "salve") {
@@ -2551,6 +2680,7 @@ function sendHello() {
     mode: S.gameMode,
     powers: flag("powers") && S.powersOn,
     cards: flag("powers") && S.powersOn && S.cardsOn,
+    moreTreasures: flag("powers") && S.powersOn && S.moreTreasures,
     board: { preset: S.boardPreset, touch: S.allowTouch },
     pid: PID,
   });
@@ -3120,7 +3250,7 @@ function bossSeekTap(x, y) {
   }
 
   if (S.boss.kind === "ai") {
-    if (BOSS.bossLimps(st)) {
+    if (BOSS.bossRests(st)) {
       status(`${bossName()} humpelt und bleibt stehen! Jetzt hast du es!`);
     } else {
       BOSS.roboBossMove(st, { x, y });
@@ -3128,7 +3258,7 @@ function bossSeekTap(x, y) {
       if (BOSS.bossRoars(st)) bossRoar();
     }
   } else {
-    if (BOSS.bossLimps(st)) {
+    if (BOSS.bossRests(st)) {
       toast(`${bossName()} humpelt und bleibt stehen! 🩹`);
       S.inputLocked = false;
       bossHunterStatus(st.wounds.length, st.shotsLeft, "Es kann nicht fliehen —");
@@ -3598,15 +3728,124 @@ function finishGame(winner) {
 // ------------------------------------------------------------ Weltreise
 
 // eight stops across the four worlds — each teaches one game or twist
+// The Weltreise is a STORY: stop by stop it introduces the game's magic,
+// one spell at a time — `teach` plants that spell in a chest that is
+// visible from the first second, so the child digs it up on purpose and
+// SEES what it does. Non-classic stops weave the minigames into the tale.
 const JOURNEY = [
-  { world: "ozean", type: "classic", rules: {}, emoji: "🌊", label: "Die erste Suche" },
-  { world: "ozean", type: "classic", rules: { sonar: true }, emoji: "🐬", label: "Delfin-Sonar" },
-  { world: "teich", type: "puzzle", emoji: "🧩", label: "Knobel-Teich" },
-  { world: "teich", type: "classic", rules: { decoy: true }, emoji: "🎈", label: "Ballon-Trick" },
-  { world: "dino", type: "chase", emoji: "🙈", label: "Fang den Frechdachs" },
-  { world: "dino", type: "classic", rules: { ghost: true }, emoji: "👻", label: "Geisterstunde" },
-  { world: "weltraum", type: "puzzle", emoji: "✨", label: "Sternen-Rätsel" },
-  { world: "weltraum", type: "boss", emoji: "👑", label: "Das König-Monster" },
+  {
+    world: "ozean",
+    type: "classic",
+    rules: {},
+    emoji: "🌊",
+    label: "Die erste Suche",
+    story:
+      "Ein Sturm hat alle Meeresfreunde durcheinandergewirbelt! Such sie, bevor Robo sie findet — tippe Feld für Feld und merk dir, wo es nur Wasser gab.",
+  },
+  {
+    world: "ozean",
+    type: "classic",
+    rules: {},
+    teach: "fernglas",
+    emoji: "🔍",
+    label: "Die glitzernde Truhe",
+    story:
+      "Vor der Küste funkelt eine Schatztruhe! Grab sie aus (tipp einfach ihr Feld an) — darin wartet ein Fernglas, mit dem du heimlich unter ein Feld schauen kannst.",
+  },
+  {
+    world: "teich",
+    type: "classic",
+    rules: { decoy: true },
+    emoji: "🎈",
+    label: "Das Ballon-Fest",
+    story:
+      "Am Angelteich ist Ballon-Fest! Jeder versteckt einen Schwindel-Ballon. Wer ihn trifft — PENG! — schenkt dem anderen einen Extra-Zug. Lass dich nicht reinlegen!",
+  },
+  {
+    world: "weltraum",
+    type: "classic",
+    rules: {},
+    teach: "doppel",
+    emoji: "🎯",
+    label: "Der Doppelstern",
+    story:
+      "Im Weltraum leuchtet ein Doppelstern über einer Truhe. Sein Zauber: Du darfst gleich ZWEIMAL suchen! Grab ihn aus und leg los.",
+  },
+  {
+    world: "teich",
+    type: "puzzle",
+    emoji: "🧩",
+    label: "Die Knobel-Insel",
+    story:
+      "Eine kleine Insel voller Rätsel! Die Zahlen am Rand verraten, wie viele Freunde in jeder Reihe stecken. Denk nach, bevor du gräbst — die Schaufeln sind knapp.",
+  },
+  {
+    world: "dino",
+    type: "classic",
+    rules: {},
+    teach: "trommel",
+    emoji: "🥁",
+    label: "Trommeln im Dschungel",
+    story:
+      "Tief im Dino-Dschungel schlägt eine Urwald-Trommel. Ihr Zauber zeigt dir mit einem Pfeil den Weg zum nächsten Versteck — der Pfeil bleibt stehen, bis du schießt!",
+  },
+  {
+    world: "dino",
+    type: "chase",
+    emoji: "🙈",
+    label: "Der freche Keksdieb",
+    story:
+      "Ein Frechdachs hat die Expeditions-Kekse stibitzt und flitzt übers Feld! Nach jedem Schuss huscht er weiter. Die Zahlen verraten, wie nah du ihm bist.",
+  },
+  {
+    world: "ozean",
+    type: "classic",
+    rules: {},
+    teach: "glocke",
+    emoji: "🔔",
+    label: "Die singende Glocke",
+    story:
+      "Aus der Tiefe klingt eine Zauberglocke. Sie verrät dir, ob der größte versteckte Freund QUER oder HOCHKANT liegt — ein leuchtender Schatten zeigt es dir.",
+  },
+  {
+    world: "teich",
+    type: "classic",
+    rules: {},
+    teach: "klee",
+    emoji: "🍀",
+    label: "Das Glücksklee-Feld",
+    story:
+      "Am Teichufer wächst Glücksklee! Wer ihn findet, sieht bei den nächsten 4 Fehlschüssen eine Zahl: so viele Felder bis zum nächsten Freund. Zähl mit!",
+  },
+  {
+    world: "weltraum",
+    type: "classic",
+    rules: {},
+    teach: "zeit",
+    emoji: "⏳",
+    label: "Der Zeitkristall",
+    story:
+      "Ein Zeitkristall schwebt zwischen den Sternen. Sein Zauber schenkt dir einen Extra-Zug: Nach deinem nächsten Daneben darfst du einfach weitersuchen.",
+  },
+  {
+    world: "weltraum",
+    type: "boss",
+    emoji: "👑",
+    label: "Das König-Monster",
+    story:
+      "Ein riesiges Monster stapft durchs Sternenmeer — und es LÄUFT nach jedem Schuss weiter! Die Zahlen zeigen, wie nah du dran bist. Triff jeden Körperteil einmal!",
+  },
+  {
+    world: "dino",
+    type: "classic",
+    rules: {},
+    teach: "schild",
+    emoji: "🏆",
+    label: "Die große Prüfung",
+    story:
+      "Die letzte Etappe! Robo hat trainiert und sucht diesmal richtig schlau. Zum Glück wartet ein Seerosen-Schild in der Truhe: Der nächste Treffer auf deine Freunde prallt ab!",
+    robo: "schlau",
+  },
 ];
 
 function loadJourney() {
@@ -3654,6 +3893,17 @@ function startJourneyStop(i) {
     return;
   }
   const stop = JOURNEY[i];
+  // every stop begins with its piece of the story — then the adventure
+  showPass({
+    title: `${stop.emoji} Etappe ${i + 1}: ${stop.label}`,
+    sub: stop.story,
+    btn: "Los geht's!",
+    action: () => launchJourneyStop(i),
+  });
+}
+
+function launchJourneyStop(i) {
+  const stop = JOURNEY[i];
   S.worlds[0] = stop.world;
   applyUiWorld(stop.world);
   if (stop.type === "classic") {
@@ -3663,8 +3913,13 @@ function startJourneyStop(i) {
       ghost: !!stop.rules.ghost,
     };
     syncRuleChips();
-    S.forceRoboLevel = "leicht"; // the journey stays kind
+    S.forceRoboLevel = stop.robo ?? "leicht"; // the journey stays kind (finale excepted)
     S.forceClassicBoard = true; // curated stops play on the classic board
+    // the teaching spell waits in a chest that is visible from the start
+    S.nextTeachKind = stop.teach ?? null;
+    S.powersOn = flag("powers") && !!stop.teach;
+    S.cardsOn = false;
+    S.moreTreasures = false;
     startMode("ai");
   } else if (stop.type === "puzzle") {
     startPuzzle();
@@ -3675,7 +3930,6 @@ function startJourneyStop(i) {
   }
   // the starters clear any stale journey state — claim it afterwards
   S.journey = { stop: i, nextStop: i };
-  toast(`${stop.emoji} Etappe ${i + 1}: ${stop.label}`, 2600);
 }
 
 // call from every win path — upgrades the win screen into a stage clear
@@ -3885,6 +4139,9 @@ function goHome({ keepSave = false } = {}) {
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
   S.powersOn = flag("powers") ? loadPowersOpt() : false;
   S.cardsOn = flag("powers") ? loadCardsOpt() : false;
+  S.moreTreasures = flag("powers") ? loadTreasuresOpt() : false;
+  S.forceTreasureKind = null;
+  S.treasureKind = null;
   const bo = loadBoardOpt();
   S.boardPreset = bo.preset;
   S.allowTouch = bo.touch;
@@ -4320,6 +4577,14 @@ function boot() {
     S.cardsOn = e.target.checked;
     savePowersOpt();
   });
+  S.moreTreasures = flag("powers") ? loadTreasuresOpt() : false;
+  $("#opt-treasures").checked = S.moreTreasures;
+  $("#opt-treasures").addEventListener("change", (e) => {
+    SND.unlock();
+    SND.tap();
+    S.moreTreasures = e.target.checked;
+    saveTreasuresOpt();
+  });
   $("#opt-powers").checked = S.powersOn;
   $("#opt-powers").addEventListener("change", (e) => {
     SND.unlock();
@@ -4639,6 +4904,9 @@ function boot() {
     },
     tap: (x, y) => handleTap(x, y),
     ownTap: (x, y) => ownPowerTap(x, y),
+    forceTreasure: (kind) => {
+      S.forceTreasureKind = kind;
+    },
     puzzleTap: (x, y) => puzzleTap(x, y),
     chaseTap: (x, y) => chaseSeekTap(x, y),
     chaseNetTap: (x, y) => chaseOnlineSeekTap(x, y),

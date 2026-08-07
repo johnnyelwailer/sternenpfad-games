@@ -192,7 +192,9 @@ export function initScene(canvasEl) {
             ch.userData.animate?.(clockT + (ch.userData.phase || 0));
           }
         }
-        if (d.hintArrow) d.hintArrow.position.y = 0.55 + Math.sin(clockT * 3) * 0.12;
+        if (d.hintArrow) {
+          d.hintArrow.position.y = (d.hintArrow.userData.baseY ?? 0.55) + Math.sin(clockT * 3) * 0.12;
+        }
         updateBursts(d, dt);
       }
       camKick *= Math.max(0, 1 - dt * 7);
@@ -1363,11 +1365,141 @@ export function arrowMarker(slot, x, y, angle) {
   holder.add(head, tail);
   holder.position.set(tile.position.x, 0.55, tile.position.z);
   holder.rotation.y = -angle; // board +y runs along world +z
+  holder.userData.baseY = 0.55;
   d.root.add(holder);
   d.hintArrow = holder;
   flash(d, tile.position, 0xffd447);
   holder.scale.setScalar(0.01);
   tween((v) => holder.scale.setScalar(v), { dur: 0.45, ease: Ease.outBack });
+}
+
+// Zauberglocke: a glowing ghost silhouette hovers over the board —
+// lying flat (h) or standing tall (v) like the biggest hidden friend.
+// It lingers (as the current hint) until the next shot.
+export function orientationGhost(slot, dir) {
+  const d = dioramas[slot];
+  if (!d) return;
+  clearHintArrow(slot);
+  const holder = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffe27a,
+    emissive: 0xffc94d,
+    emissiveIntensity: 1.1,
+    transparent: true,
+    opacity: 0.55,
+    flatShading: true,
+    depthWrite: false,
+  });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 2.2, 4, 10), mat);
+  if (dir === "v") {
+    // standing tall: upright above the board
+    holder.add(body);
+  } else {
+    body.rotation.z = Math.PI / 2; // lying flat along X
+    holder.add(body);
+  }
+  holder.position.set(0, dir === "v" ? 1.9 : 1.3, 0);
+  holder.userData.baseY = holder.position.y;
+  d.root.add(holder);
+  d.hintArrow = holder;
+  flash(d, { x: 0, z: 0 }, 0xffc94d);
+  holder.scale.setScalar(0.01);
+  tween((v) => holder.scale.setScalar(v), { dur: 0.55, ease: Ease.outBack });
+}
+
+// Wirbelwind: a HIT mark spins up into the air and vanishes — the
+// wounded creature fled and took the enemy's knowledge with it
+export function whirlAwayMark(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const key = `${x},${y}`;
+  const tile = d.tiles.get(key);
+  if (tile) {
+    tile.userData.state = "unknown";
+    tile.material.color.setHex(0xffffff);
+    tile.material.opacity = 0.045;
+  }
+  for (const m of [...d.marksGroup.children]) {
+    if (m.userData.cellKey !== key) continue;
+    if (m.material) m.material.transparent = true;
+    const baseY = m.position.y;
+    tween(
+      (v) => {
+        m.position.y = baseY + v * 1.8;
+        m.rotation.y += 0.35;
+        m.scale.setScalar(Math.max(0.01, 1 - v * 0.9));
+        if (m.material) m.material.opacity = 1 - v;
+      },
+      {
+        dur: 0.9,
+        ease: Ease.outQuad,
+        onDone: () => {
+          d.marksGroup.remove(m);
+          m.geometry?.dispose?.();
+          m.material?.dispose?.();
+        },
+      }
+    );
+  }
+}
+
+// Glücksklee demo: float real distance numbers over a few free cells so
+// kids instantly see what the clover will do on every miss
+export function sonarPreview(slot, cells) {
+  const d = dioramas[slot];
+  if (!d) return;
+  cells.forEach((c, i) => {
+    setTimeout(() => {
+      if (dioramas[slot] !== d) return;
+      const tile = d.tiles.get(`${c.x},${c.y}`);
+      if (!tile) return;
+      const spr = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: textTexture(c.dist), transparent: true, depthWrite: false })
+      );
+      spr.position.set(tile.position.x, 0.55, tile.position.z);
+      spr.scale.setScalar(0.9);
+      d.root.add(spr);
+      ringWave(d, tile.position, 0x6fd087);
+      tween(
+        (v) => {
+          spr.position.y = 0.55 + v * 0.75;
+          spr.material.opacity = v < 0.55 ? 1 : 1 - (v - 0.55) / 0.45;
+        },
+        {
+          dur: 2.4,
+          ease: Ease.outQuad,
+          onDone: () => {
+            d.root.remove(spr);
+            spr.material.map?.dispose?.();
+            spr.material.dispose();
+          },
+        }
+      );
+    }, 250 + i * 420);
+  });
+}
+
+// Doppelschuss: two golden comets streak in, one after the other —
+// "you get two of these"
+export function doubleShotFlare(slot) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const g = d.grid;
+  const spots = [
+    { x: g / 2 - 1, y: Math.floor(g / 2) },
+    { x: g / 2 + 0.2, y: Math.floor(g / 2) },
+  ];
+  spots.forEach((s, i) => {
+    setTimeout(() => {
+      if (dioramas[slot] !== d) return;
+      const px = s.x - g / 2 + 0.5;
+      const pz = s.y - g / 2 + 0.5;
+      flash(d, { x: px, z: pz }, 0xffd447);
+      ringWave(d, { x: px, z: pz }, 0xffd447);
+      burst(d, new THREE.Vector3(px + d.root.position.x, 0.8, pz), 0xffd447, { count: 22, up: true });
+    }, i * 380);
+  });
+  camKick = 0.3;
 }
 
 export function clearHintArrow(slot) {
