@@ -48,6 +48,11 @@ test("title screen shows worlds and modes, world picking re-themes", async ({ pa
     "src",
     /^data:image\/png/
   );
+  // the (empty) toast pill must be truly invisible, not just slid down
+  await expect(page.locator("#toast")).toBeHidden();
+  // ...but toasts still appear when they carry a message
+  await page.evaluate(() => document.getElementById("toast").classList.add("show"));
+  await expect(page.locator("#toast")).toBeVisible();
 });
 
 test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async ({ page }) => {
