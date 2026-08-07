@@ -2424,6 +2424,127 @@ function onPointerUp(e) {
   }
 }
 
+// ------------------------------------------------------ story vignette
+// A tiny animated diorama for Weltreise briefings: the world's hero
+// creature meets the stop's prop (chest, balloon, spell sculpture, a
+// looming monster …). Self-contained renderer, disposed on hide.
+
+export function storyVignette(canvas, worldId, prop) {
+  const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  r.outputColorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
+  cam.position.set(0, 1.9, 4.4);
+  cam.lookAt(0, 0.55, 0);
+  s.add(new THREE.HemisphereLight(0xffffff, 0x667788, 1.1));
+  const dl = new THREE.DirectionalLight(0xfff4d6, 1.5);
+  dl.position.set(-3, 5, 4);
+  s.add(dl);
+
+  const world = getWorld(worldId);
+
+  // soft glowing ground disc
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(2.6, 36),
+    new THREE.MeshBasicMaterial({
+      map: radialTexture("rgba(255,255,255,0.30)", "rgba(255,255,255,0)"),
+      color: world.colors.accent,
+      transparent: true,
+      depthWrite: false,
+    })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  s.add(ground);
+
+  // the hero (faces -X) looks toward the prop on the left
+  const hero = buildCreature(worldId, 0, 2);
+  hero.position.set(1.15, 0.1, 0);
+  s.add(hero);
+
+  // the co-star, by prop kind
+  let star = null;
+  let starSpin = 0.35;
+  if (prop === "chest") star = buildTreasureChest(worldId);
+  else if (prop === "decoy") star = buildDecoy();
+  else if (prop === "frido") {
+    star = buildCreature(worldId, 4, 1);
+    star.rotation.y = Math.PI; // the sneak faces the hero
+  } else if (prop === "monster") {
+    star = buildCreature(worldId, 0, 4);
+    star.scale.setScalar(1.35);
+    star.rotation.y = Math.PI;
+    starSpin = 0;
+    hero.scale.setScalar(0.7); // David vs Goliath framing
+  } else if (prop) {
+    star = buildPowerIcon(prop);
+    star.scale.setScalar(2.4);
+    star.position.y = 0.55;
+  } else {
+    star = buildCreature(worldId, 1, 1.3);
+    star.rotation.y = Math.PI; // a friend to find
+  }
+  star.position.x = -1.15;
+  if (prop === "monster") star.position.x = -1.35;
+  s.add(star);
+
+  // drifting sparkles
+  const sparkTex = radialTexture("rgba(255,240,180,1)", "rgba(255,240,180,0)", 64);
+  const sparks = [];
+  for (let i = 0; i < 6; i += 1) {
+    const spr = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: sparkTex, transparent: true, depthWrite: false })
+    );
+    spr.scale.setScalar(0.16 + Math.random() * 0.14);
+    sparks.push({ spr, ph: Math.random() * 7, rx: 0.8 + Math.random() * 1.6 });
+    s.add(spr);
+  }
+
+  let running = true;
+  const baseStarY = star.position.y;
+  const loop = (now) => {
+    if (!running) return;
+    const t = now / 1000;
+    const size = canvas.clientWidth || 300;
+    const h = canvas.clientHeight || Math.round(size * 0.62);
+    if (canvas.width !== size || canvas.height !== h) {
+      r.setSize(size, h, false);
+      cam.aspect = size / h;
+      cam.updateProjectionMatrix();
+    }
+    hero.userData.animate?.(t);
+    hero.position.y = 0.1 + Math.sin(t * 1.5) * 0.06;
+    star.userData.animate?.(t + 3);
+    if (starSpin) star.rotation.y += starSpin / 60;
+    star.position.y = baseStarY + Math.sin(t * 1.2 + 2) * 0.08;
+    for (const sp of sparks) {
+      sp.spr.position.set(
+        Math.sin(t * 0.5 + sp.ph) * sp.rx,
+        0.7 + Math.sin(t * 0.9 + sp.ph * 2) * 0.45,
+        Math.cos(t * 0.4 + sp.ph) * 0.7
+      );
+      sp.spr.material.opacity = 0.5 + Math.sin(t * 2 + sp.ph) * 0.4;
+    }
+    r.render(s, cam);
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+
+  return {
+    dispose() {
+      running = false;
+      s.traverse((o) => {
+        if (o.isMesh || o.isSprite) {
+          o.geometry?.dispose?.();
+          if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+          else o.material?.dispose?.();
+        }
+      });
+      r.dispose();
+    },
+  };
+}
+
 // ------------------------------------------------------- live preview
 // A small self-contained renderer for the customizer: one creature,
 // softly turning, with its idle animation running.
