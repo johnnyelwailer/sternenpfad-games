@@ -19,6 +19,16 @@
     <div id="toast" role="status"></div>
     <button id="update-banner" hidden>🔄 Neue Version! Hier tippen zum Aktualisieren</button>
 
+    <!-- incoming friend invite: flashes until answered -->
+    <div id="invite-pop" hidden>
+      <span class="invite-emoji">🔔</span>
+      <span id="invite-text">Ein Freund möchte mit dir spielen!</span>
+      <div class="invite-actions">
+        <button class="btn" id="invite-yes">🎮 Mitspielen!</button>
+        <button class="btn ghost" id="invite-no">Jetzt nicht</button>
+      </div>
+    </div>
+
     <button id="btn-mute" class="round-btn" aria-label="Ton an oder aus">
       <svg viewBox="0 0 24 24" id="ic-sound"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path id="ic-waves" d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
     </button>
@@ -73,6 +83,7 @@
         <button class="btn" id="btn-resume">▶️ Weiterspielen</button>
         <button class="resume-discard" id="btn-resume-discard" aria-label="Verwerfen">✕</button>
       </div>
+      <div id="title-friends" hidden></div>
       <p class="label">Deine Welt:</p>
       <div class="world-grid" id="world-grid"></div>
       <button class="btn ghost options-btn" id="btn-options">⚙️ Spiel-Optionen</button>
@@ -134,60 +145,72 @@
       <h2 class="h2">⚙️ Spiel-Optionen</h2>
       <p class="hint" id="options-note" hidden>Regel-Änderungen gelten ab dem nächsten Spiel.</p>
       <button class="btn ghost" id="opt-world" hidden>🌍 Welt wechseln</button>
-      <p class="opt-heading">🗺️ Brett &amp; Flotte</p>
-      <div id="board-presets" class="board-presets"></div>
-      <div class="opt-list">
-        <label class="opt-row">
-          <input type="checkbox" id="rule-touch" />
-          <span class="opt-box"></span>
-          <span class="opt-text">
-            <span class="opt-name">🤗 Kuschel-Regel</span>
-            <span class="opt-desc">Freunde dürfen direkt nebeneinander sitzen — kein Feld Abstand nötig. Macht das Suchen kniffliger!</span>
-          </span>
-        </label>
-        <label class="opt-row">
-          <input type="checkbox" id="opt-powers" />
-          <span class="opt-box"></span>
-          <span class="opt-text">
-            <span class="opt-name">💎 Schatz-Zauber</span>
-            <span class="opt-desc">Auf jedem Brett wartet eine sichtbare Schatztruhe. Wer sie ausgräbt, entfesselt sofort einen einmaligen Zauber — kostet aber den Zug.</span>
-          </span>
-        </label>
-        <label class="opt-row">
-          <input type="checkbox" id="opt-cards" />
-          <span class="opt-box"></span>
-          <span class="opt-text">
-            <span class="opt-name">🃏 Zauber-Karten (Extra)</span>
-            <span class="opt-desc">Starte mit der mächtigen Spezial-Karte deiner Welt und zieh alle 6 Züge eine neue. Karten spielst du, wann DU willst — für Profis!</span>
-          </span>
-        </label>
-        <label class="opt-row">
-          <input type="checkbox" id="rule-decoy" />
-          <span class="opt-box"></span>
-          <span class="opt-text">
-            <span class="opt-name">🎈 Schwindel-Ballon</span>
-            <span class="opt-desc">Jeder versteckt einen Schwindel-Ballon. Wer ihn trifft: PENG! Und der Ballon-Besitzer bekommt einen Extra-Zug.</span>
-          </span>
-        </label>
-        <label class="opt-row">
-          <input type="checkbox" id="rule-sonar" />
-          <span class="opt-box"></span>
-          <span class="opt-text">
-            <span class="opt-name">🐬 Sonar</span>
-            <span class="opt-desc">Jedes Daneben zeigt eine Zahl: So viele Felder sind es bis zum nächsten Versteck.</span>
-          </span>
-        </label>
-        <label class="opt-row">
-          <input type="checkbox" id="rule-ghost" />
-          <span class="opt-box"></span>
-          <span class="opt-text">
-            <span class="opt-name">👻 Geisterstunde</span>
-            <span class="opt-desc">Daneben-Markierungen verschwinden nach 5 Schüssen wieder. Gut merken!</span>
-          </span>
-        </label>
-      </div>
-      <button class="btn ghost" id="btn-powers-legend">Alle Zauber ansehen 📜</button>
-      <div id="powers-legend" hidden></div>
+      <details class="opt-sect" id="sect-board" open>
+        <summary>🗺️ Brett &amp; Flotte</summary>
+        <div id="board-presets" class="board-presets"></div>
+        <div class="opt-list">
+          <label class="opt-row">
+            <input type="checkbox" id="rule-touch" />
+            <span class="opt-box"></span>
+            <span class="opt-text">
+              <span class="opt-name">🤝 Enge Verstecke</span>
+              <span class="opt-desc">Freunde dürfen direkt nebeneinander sitzen — kein Feld Abstand nötig. Macht das Suchen kniffliger!</span>
+            </span>
+          </label>
+        </div>
+      </details>
+      <details class="opt-sect" id="sect-zauber">
+        <summary>💎 Zauber</summary>
+        <div class="opt-list">
+          <label class="opt-row">
+            <input type="checkbox" id="opt-powers" />
+            <span class="opt-box"></span>
+            <span class="opt-text">
+              <span class="opt-name">💎 Schatz-Zauber</span>
+              <span class="opt-desc">Auf jedem Brett wartet eine sichtbare Schatztruhe. Wer sie ausgräbt, entfesselt sofort einen einmaligen Zauber — kostet aber den Zug.</span>
+            </span>
+          </label>
+          <label class="opt-row">
+            <input type="checkbox" id="opt-cards" />
+            <span class="opt-box"></span>
+            <span class="opt-text">
+              <span class="opt-name">🃏 Zauber-Karten (Extra)</span>
+              <span class="opt-desc">Starte mit der mächtigen Spezial-Karte deiner Welt und zieh alle 6 Züge eine neue. Karten spielst du, wann DU willst — für Profis!</span>
+            </span>
+          </label>
+        </div>
+        <button class="btn ghost" id="btn-powers-legend">Alle Zauber ansehen 📜</button>
+        <div id="powers-legend" hidden></div>
+      </details>
+      <details class="opt-sect" id="sect-rules">
+        <summary>🎲 Extra-Regeln</summary>
+        <div class="opt-list">
+          <label class="opt-row">
+            <input type="checkbox" id="rule-decoy" />
+            <span class="opt-box"></span>
+            <span class="opt-text">
+              <span class="opt-name">🎈 Schwindel-Ballon</span>
+              <span class="opt-desc">Jeder versteckt einen Schwindel-Ballon. Wer ihn trifft: PENG! Und der Ballon-Besitzer bekommt einen Extra-Zug.</span>
+            </span>
+          </label>
+          <label class="opt-row">
+            <input type="checkbox" id="rule-sonar" />
+            <span class="opt-box"></span>
+            <span class="opt-text">
+              <span class="opt-name">🐬 Sonar</span>
+              <span class="opt-desc">Jedes Daneben zeigt eine Zahl: So viele Felder sind es bis zum nächsten Versteck.</span>
+            </span>
+          </label>
+          <label class="opt-row">
+            <input type="checkbox" id="rule-ghost" />
+            <span class="opt-box"></span>
+            <span class="opt-text">
+              <span class="opt-name">👻 Geisterstunde</span>
+              <span class="opt-desc">Daneben-Markierungen verschwinden nach 5 Schüssen wieder. Gut merken!</span>
+            </span>
+          </label>
+        </div>
+      </details>
       <button class="btn big" id="btn-options-back">Fertig</button>
     </section>
 

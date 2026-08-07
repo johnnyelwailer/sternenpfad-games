@@ -63,7 +63,7 @@ export function canPlace(board, ship, ignoreId = null) {
   for (const c of cells) {
     if (!inBounds(board, c.x, c.y)) return false;
   }
-  // board.allowTouch (Kuschel-Regel): only overlaps are forbidden
+  // board.allowTouch (Enge Verstecke): only overlaps are forbidden
   const conflict = board.allowTouch
     ? (a, b) => a.x === b.x && a.y === b.y
     : cellsTouch;

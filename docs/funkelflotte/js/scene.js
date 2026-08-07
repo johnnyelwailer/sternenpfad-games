@@ -192,6 +192,7 @@ export function initScene(canvasEl) {
             ch.userData.animate?.(clockT + (ch.userData.phase || 0));
           }
         }
+        if (d.hintArrow) d.hintArrow.position.y = 0.55 + Math.sin(clockT * 3) * 0.12;
         updateBursts(d, dt);
       }
       camKick *= Math.max(0, 1 - dt * 7);
@@ -1338,9 +1339,12 @@ export function peekMarker(slot, x, y, isShip) {
 
 // magic arrow pointing from a cell toward the nearest hidden creature;
 // pulses a few times, then fades away
+// The compass/drum hint arrow stays on the board (gently bobbing)
+// until the next shot lands there — a fleeting hint is a missed hint.
 export function arrowMarker(slot, x, y, angle) {
   const d = dioramas[slot];
   if (!d) return;
+  clearHintArrow(slot);
   const tile = d.tiles.get(`${x},${y}`);
   if (!tile) return;
   const holder = new THREE.Group();
@@ -1360,23 +1364,24 @@ export function arrowMarker(slot, x, y, angle) {
   holder.position.set(tile.position.x, 0.55, tile.position.z);
   holder.rotation.y = -angle; // board +y runs along world +z
   d.root.add(holder);
+  d.hintArrow = holder;
   flash(d, tile.position, 0xffd447);
-  tween(
-    (v) => {
-      holder.position.y = 0.55 + Math.sin(v * Math.PI * 5) * 0.12;
-      mat.opacity = v < 0.75 ? 1 : 1 - (v - 0.75) / 0.25;
-    },
-    {
-      dur: 4.5,
-      ease: Ease.linear,
-      onDone: () => {
-        d.root.remove(holder);
-        head.geometry.dispose();
-        tail.geometry.dispose();
-        mat.dispose();
-      },
+  holder.scale.setScalar(0.01);
+  tween((v) => holder.scale.setScalar(v), { dur: 0.45, ease: Ease.outBack });
+}
+
+export function clearHintArrow(slot) {
+  const d = dioramas[slot];
+  if (!d?.hintArrow) return;
+  const holder = d.hintArrow;
+  d.hintArrow = null;
+  d.root.remove(holder);
+  holder.traverse((o) => {
+    if (o.isMesh) {
+      o.geometry?.dispose?.();
+      o.material?.dispose?.();
     }
-  );
+  });
 }
 
 // golden treasure pop
@@ -1497,6 +1502,7 @@ function hitMarker(d, tile, key) {
 export function applyShot(slot, x, y, result, { sonarDist = null } = {}) {
   const d = dioramas[slot];
   if (!d) return;
+  clearHintArrow(slot); // the hint did its job — the next shot retires it
   const key = `${x},${y}`;
   const tile = d.tiles.get(key);
   if (!tile) return;

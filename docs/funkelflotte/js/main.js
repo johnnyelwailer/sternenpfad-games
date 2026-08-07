@@ -43,7 +43,7 @@ const S = {
   oppCustom: null, // online: opponent's map (arrives with their "ready")
   rules: { decoy: false, sonar: false, ghost: false }, // extra rules
   boardPreset: "klassisch", // which board/fleet preset (see BOARD_PRESETS)
-  allowTouch: false, // Kuschel-Regel: creatures may sit side by side
+  allowTouch: false, // Enge Verstecke: creatures may sit side by side
   powersOn: true, // Zauber-Kräfte option (persisted)
   powers: [null, null], // per player: PW.newPowerState() during battle
   pendingPower: null, // power kind waiting for a target tap
@@ -72,6 +72,10 @@ function show(screenId) {
   if (screenId === "screen-online") {
     // visible to remembered friends while this screen is open
     renderFriends();
+    startFriendListener();
+  }
+  if (screenId === "screen-title") {
+    renderTitleFriends();
     startFriendListener();
   }
   maybeShowUpdate();
@@ -213,7 +217,7 @@ const BOARD_PRESETS = {
   klassisch: { grid: 8, fleet: [4, 3, 3, 2, 2], name: "🌊 Klassisch", desc: "8×8 Felder, fünf Freunde — so wie immer." },
   flink: { grid: 6, fleet: [3, 2, 2, 1], name: "⚡ Flink", desc: "Kleines 6×6-Brett mit vier Freunden — perfekt für eine schnelle Runde." },
   riesig: { grid: 10, fleet: [5, 4, 3, 3, 2, 2, 1], name: "🐋 Riesig", desc: "Großes 10×10-Meer mit sieben Freunden — die lange Expedition." },
-  knuddel: { grid: 8, fleet: ["2x2", 3, 3, 2, 1], name: "🧸 Knuddel", desc: "Ein pummeliger 2×2-Freund, ein Winzling und drei Normale auf 8×8." },
+  grossklein: { grid: 8, fleet: ["2x2", 3, 3, 2, 1], name: "🐙 Groß & Klein", desc: "Ein extragroßer 2×2-Freund und ein Winzling mischen die Flotte auf (8×8)." },
 };
 
 function boardPreset() {
@@ -310,7 +314,7 @@ function rulesSummary(rules) {
 function setupSummary() {
   const parts = [];
   if (S.boardPreset !== "klassisch") parts.push(boardPreset().name);
-  if (S.allowTouch) parts.push("🤗 Kuschel-Regel");
+  if (S.allowTouch) parts.push("🤝 Enge Verstecke");
   const r = rulesSummary(S.rules);
   if (r) parts.push(r);
   return parts.join(" · ");
@@ -491,6 +495,8 @@ function startMode(mode) {
     S.forceClassicBoard = false;
   }
   S.setupToastShown = false;
+  if (mode !== "online") stopFriendListener();
+  if (S.pendingInvite) answerInvite(false);
   clearSave();
   S.turn = 0;
   S.viewer = 0;
@@ -540,7 +546,7 @@ function startPlacement(player) {
     blockedCells: (id) => {
       const board = S.boards[idx];
       const set = new Set();
-      // Kuschel-Regel: only the occupied cells themselves are blocked
+      // Enge Verstecke: only the occupied cells themselves are blocked
       const reach = board.allowTouch ? 0 : 1;
       const markAround = (cx, cy) => {
         for (let dx = -reach; dx <= reach; dx += 1) {
@@ -1725,31 +1731,122 @@ function renderFriends() {
   }
 }
 
+// one-tap rematch straight from the title screen — remembered friends
+// deserve better than three clicks
+function renderTitleFriends() {
+  const box = $("#title-friends");
+  if (!box) return;
+  const friends = Object.entries(loadFriends())
+    .sort((a, b) => b[1].ts - a[1].ts)
+    .slice(0, 2);
+  box.hidden = friends.length === 0;
+  box.innerHTML = "";
+  for (const [pid, f] of friends) {
+    const btn = document.createElement("button");
+    btn.className = "btn friend-quick";
+    btn.innerHTML = `🤝 Zusammen spielen <small>Freund aus ${getWorld(f.world).name} · ${timeAgo(f.ts)}</small>`;
+    btn.addEventListener("click", () => joinFriend(pid));
+    box.appendChild(btn);
+  }
+}
+
+// where the always-open friend door makes sense: any menu screen, and
+// throughout an online match (it doubles as the resume door)
+function friendListenerWanted() {
+  if (S.phase === "title" || S.phase === "over") return true;
+  return S.mode === "online" && ["place", "battle"].includes(S.phase);
+}
+
 function startFriendListener() {
   if (S.friendNet) return;
   const net = new Net();
   S.friendNet = net;
-  net.onMessage = (m) => handleNetMessage(m);
+  net.onMessage = () => {};
   net.onClose = () => {};
   net.onStatus = (st) => {
     if (st !== "connected" || S.friendNet !== net) return;
-    if (S.net?.conn) {
-      // already talking to someone — turn the second knock away
-      net.destroy();
-      if (S.friendNet === net) S.friendNet = null;
-      return;
-    }
-    if (S.net) S.net.destroy();
     S.friendNet = null;
-    S.net = net;
-    S.isHost = true;
-    wireNet();
-    toast("🤝 Ein bekannter Freund ist beigetreten!", 2600);
-    // the friend's `hi` pings drive the usual handshake from here
+    handleKnock(net);
   };
   net.host(PID).catch(() => {
-    if (S.friendNet === net) S.friendNet = null; // e.g. second tab holds the id
+    // e.g. a second tab (or our own game net) holds the id — try again
+    // later so the door reopens once it frees up
+    if (S.friendNet === net) S.friendNet = null;
+    setTimeout(() => {
+      if (!S.friendNet && friendListenerWanted()) startFriendListener();
+    }, 8000);
   });
+}
+
+// someone connected to our stable address — figure out who and why
+function handleKnock(net) {
+  // mid-battle it can only be our opponent finding the way back
+  if (S.phase === "battle" && S.mode === "online") {
+    net.onMessage = (m) => {
+      if (m && m.t === "resume" && (!S.oppPid || m.pid === S.oppPid)) {
+        if (S.net) S.net.destroy();
+        S.net = net;
+        wireNet();
+        handleNetMessage(m);
+      } else {
+        net.destroy();
+        startFriendListener();
+      }
+    };
+    return;
+  }
+  // busy (already paired, or an invite is pending) — politely decline
+  if (S.phase !== "title" || S.net?.conn || S.pendingInvite) {
+    net.destroy();
+    if (friendListenerWanted()) startFriendListener();
+    return;
+  }
+  showInvitePopup(net);
+}
+
+// ---------------------------------------------------- incoming invite
+// A friend knocked: flash a popup so this device's player notices —
+// nothing starts until they say yes.
+
+function showInvitePopup(net) {
+  S.pendingInvite = { net };
+  const pop = $("#invite-pop");
+  $("#invite-text").textContent = "Ein Freund möchte mit dir spielen!";
+  pop.hidden = false;
+  SND.unlock();
+  SND.fanfare();
+  try {
+    navigator.vibrate?.([120, 60, 120]);
+  } catch {
+    /* not supported */
+  }
+  net.onMessage = (m) => {
+    if (m && m.t === "hi" && m.world && WORLDS[m.world]) {
+      $("#invite-text").textContent = `Dein Freund aus ${getWorld(m.world).name} möchte spielen!`;
+    }
+  };
+  net.onClose = () => {
+    // the knocker gave up before we answered
+    if (S.pendingInvite?.net === net) answerInvite(false);
+  };
+}
+
+function answerInvite(accepted) {
+  const inv = S.pendingInvite;
+  if (!inv) return;
+  S.pendingInvite = null;
+  $("#invite-pop").hidden = true;
+  if (accepted && inv.net.conn?.open) {
+    if (S.net) S.net.destroy();
+    S.net = inv.net;
+    S.isHost = true;
+    wireNet();
+    toast("🤝 Los geht's!", 2000);
+    // the friend's `hi` pings drive the world pick from here
+  } else {
+    inv.net.destroy();
+    if (friendListenerWanted()) startFriendListener();
+  }
 }
 
 function stopFriendListener() {
@@ -1771,28 +1868,37 @@ function joinFriend(pid) {
       show("screen-online");
       toast("Klopfe beim Freund an …", 2400);
       S.isHost = false;
-      if (S.net) S.net.destroy();
-      S.net = new Net();
-      wireNet();
-      S.net
-        .join(pid)
-        .then(() => {
-          const ping = setInterval(() => {
-            if (S.phase !== "title" || !S.net) {
-              clearInterval(ping);
+      // knock up to three times — brokers and sleepy phones need a moment
+      const attempt = (triesLeft) => {
+        if (S.net) S.net.destroy();
+        S.net = new Net();
+        wireNet();
+        S.net
+          .join(pid)
+          .then(() => {
+            const ping = setInterval(() => {
+              if (S.phase !== "title" || !S.net) {
+                clearInterval(ping);
+                return;
+              }
+              S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
+            }, 1500);
+            S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
+          })
+          .catch(() => {
+            if (triesLeft > 0 && S.phase === "title") {
+              toast("Klopfe nochmal an …", 2000);
+              setTimeout(() => attempt(triesLeft - 1), 2500);
               return;
             }
-            S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
-          }, 1500);
-          S.net.send({ t: "hi", world: S.worlds[0], pid: PID });
-        })
-        .catch(() => {
-          toast("Dein Freund ist gerade nicht da. Zeigt euch sonst den QR-Code!", 3400);
-          if (S.net) {
-            S.net.destroy();
-            S.net = null;
-          }
-        });
+            toast("Dein Freund ist gerade nicht da. Zeigt euch sonst den QR-Code!", 3400);
+            if (S.net) {
+              S.net.destroy();
+              S.net = null;
+            }
+          });
+      };
+      attempt(2);
     },
   });
 }
@@ -1875,11 +1981,50 @@ function wireNet() {
     toast("Die Verbindung ist weg.", 2600);
     goHome();
   };
+  // a second knock on our address while the old socket still LOOKS open:
+  // if it announces itself as our opponent resuming, swap it in — waiting
+  // for a zombie connection to time out is how reconnects get lost
+  S.net.onKnock = (conn) => {
+    const net = S.net;
+    const probe = (data) => {
+      conn.off?.("data", probe);
+      const isResume =
+        data &&
+        data.t === "resume" &&
+        S.phase === "battle" &&
+        S.mode === "online" &&
+        (!S.oppPid || data.pid === S.oppPid);
+      if (isResume && S.net === net) {
+        net.replaceConn(conn);
+        handleNetMessage(data);
+      } else {
+        try {
+          conn.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    conn.on("data", probe);
+    setTimeout(() => {
+      if (S.net?.conn !== conn) {
+        conn.off?.("data", probe);
+        try {
+          conn.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 10000);
+  };
 }
 
 function beginOnlinePlacement() {
-  stopFriendListener();
+  // keep the stable-id door open during the match: it doubles as the
+  // resume door when the opponent refreshes mid-battle
+  startFriendListener();
   saveFriend(S.oppPid, S.worlds[1]);
+  renderTitleFriends();
   resetRuleState();
   S.boards = [newBoardWithFleet(), null];
   S.shadow = newShadow();
@@ -1990,7 +2135,7 @@ function handleNetMessage(msg) {
       const parts = [
         rulesSummary(S.rules),
         S.boardPreset !== "klassisch" ? boardPreset().name : "",
-        S.allowTouch ? "🤗 Kuschel-Regel" : "",
+        S.allowTouch ? "🤝 Enge Verstecke" : "",
         S.powersOn ? "💎 Schatz-Zauber" : "",
         S.cardsOn ? "🃏 Zauber-Karten" : "",
       ].filter(Boolean);
@@ -2256,6 +2401,7 @@ function handleNetMessage(msg) {
       S.inputLocked = false;
       beginTurn();
       toast("🔌 Dein Mitspieler ist zurück!");
+      startFriendListener(); // reopen the resume door for next time
       saveGame();
       break;
     }
@@ -2278,6 +2424,7 @@ function handleNetMessage(msg) {
       S.inputLocked = false;
       beginTurn();
       toast("▶️ Weiter geht's!");
+      startFriendListener(); // reopen the resume door for next time
       saveGame();
       break;
     }
@@ -3659,15 +3806,17 @@ function rematch() {
   startMode(S.mode);
 }
 
-function goHome() {
+function goHome({ keepSave = false } = {}) {
   S.phase = "title";
-  clearSave();
+  if (!keepSave) clearSave();
   SND.stopAmbient();
   stopFriendListener();
-  if (S.reconnectNet) {
-    S.reconnectNet.destroy();
-    S.reconnectNet = null;
+  if (S.reunite) {
+    S.reunite.stop = true;
+    for (const n of S.reunite.nets ?? []) n.destroy();
+    S.reunite = null;
   }
+  if (S.pendingInvite) answerInvite(false);
   S.oppPid = null;
   S.pickingWorld = false;
   if (S.net) {
@@ -3704,6 +3853,8 @@ function goHome() {
   applyUiWorld(S.worlds[0]);
   renderPowers();
   maybeShowResume();
+  renderTitleFriends();
+  startFriendListener();
   show("screen-title");
 }
 
@@ -3853,42 +4004,111 @@ function resumeSavedGame(saved) {
   }
 }
 
-// refresher side: knock on the opponent's stable id and ask to resume
+// how long both sides keep trying to find each other again
+const RECONNECT_WINDOW = 120000;
+
+// the resume pings that run once a fresh connection stands
+function beginResumePings() {
+  status("🔌 Verbinde wieder mit deinem Mitspieler …");
+  let tries = 0;
+  const ping = setInterval(() => {
+    if (S.resumeOk || S.phase !== "battle" || !S.net) {
+      clearInterval(ping);
+      return;
+    }
+    tries += 1;
+    if (tries > 15) {
+      clearInterval(ping);
+      toast("Dein Mitspieler ist gerade nicht erreichbar — probier es später nochmal!", 3600);
+      goHome({ keepSave: true });
+      return;
+    }
+    S.net.send({ t: "resume", pid: PID });
+  }, 2000);
+  S.net.send({ t: "resume", pid: PID });
+}
+
+// refresher side: hunt for the opponent on BOTH lanes — keep knocking
+// on their stable id AND hold our own door open (they may have
+// refreshed too, or their listener may reach us first)
 function reconnectAfterRefresh() {
   status("🔌 Verbinde wieder mit deinem Mitspieler …");
   S.inputLocked = true;
   S.resumeOk = false;
-  S.net = new Net();
-  wireNet();
-  S.net
-    .join(S.oppPid)
-    .then(() => {
-      let tries = 0;
-      const ping = setInterval(() => {
-        if (S.resumeOk || S.phase !== "battle" || !S.net) {
-          clearInterval(ping);
-          return;
-        }
-        tries += 1;
-        if (tries > 12) {
-          clearInterval(ping);
-          toast("Dein Mitspieler ist nicht mehr erreichbar.", 2800);
-          clearSave();
-          goHome();
-          return;
-        }
-        S.net.send({ t: "resume", pid: PID });
-      }, 2000);
-      S.net.send({ t: "resume", pid: PID });
-    })
-    .catch(() => {
-      toast("Dein Mitspieler ist nicht mehr erreichbar.", 2800);
-      clearSave();
-      goHome();
+  stopFriendListener(); // we manage the PID door ourselves for now
+  const eng = { stop: false, nets: [], deadline: Date.now() + RECONNECT_WINDOW };
+  S.reunite = eng;
+
+  const cleanup = (keep = null) => {
+    eng.stop = true;
+    if (S.reunite === eng) S.reunite = null;
+    for (const n of eng.nets) if (n !== keep) n.destroy();
+    eng.nets = keep ? [keep] : [];
+  };
+
+  const adopt = (net, resumeMsg = null) => {
+    if (eng.stop) return;
+    cleanup(net);
+    if (S.net && S.net !== net) S.net.destroy();
+    S.net = net;
+    wireNet();
+    if (resumeMsg) handleNetMessage(resumeMsg);
+    else beginResumePings();
+  };
+
+  const fail = () => {
+    if (eng.stop) return;
+    cleanup();
+    toast("Dein Mitspieler ist gerade nicht erreichbar — probier es später nochmal!", 3600);
+    goHome({ keepSave: true });
+  };
+
+  // active lane: knock on the opponent's door, again and again
+  const joinLoop = () => {
+    if (eng.stop) return;
+    if (Date.now() > eng.deadline) {
+      fail();
+      return;
+    }
+    status("🔌 Verbinde wieder mit deinem Mitspieler …");
+    const net = new Net();
+    eng.nets.push(net);
+    net.onMessage = () => {};
+    net.onClose = () => {};
+    net
+      .join(S.oppPid)
+      .then(() => adopt(net))
+      .catch(() => {
+        eng.nets = eng.nets.filter((n) => n !== net);
+        net.destroy();
+        if (!eng.stop) setTimeout(joinLoop, 4000);
+      });
+  };
+  joinLoop();
+
+  // passive lane: hold our own door open; if they connect here their
+  // first resume ping identifies them
+  const hostLoop = () => {
+    if (eng.stop || Date.now() > eng.deadline) return;
+    const net = new Net();
+    eng.nets.push(net);
+    net.onClose = () => {};
+    net.onMessage = (m) => {
+      if (m && m.t === "resume" && (!S.oppPid || m.pid === S.oppPid)) adopt(net, m);
+    };
+    net.host(PID).catch(() => {
+      eng.nets = eng.nets.filter((n) => n !== net);
+      net.destroy();
+      if (!eng.stop) setTimeout(hostLoop, 8000);
     });
+  };
+  hostLoop();
+
+  setTimeout(() => fail(), RECONNECT_WINDOW + 4000);
 }
 
-// survivor side: the line dropped mid-battle — wait for them to return
+// survivor side: the line dropped mid-battle — hold the door open (with
+// retries) until the opponent finds the way back
 function enterReconnectWait() {
   status("🔌 Verbindung verloren — warte auf deinen Mitspieler …");
   S.inputLocked = true;
@@ -3897,29 +4117,39 @@ function enterReconnectWait() {
     S.net.destroy();
     S.net = null;
   }
-  const net = new Net();
-  S.reconnectNet = net;
-  net.onMessage = (m) => handleNetMessage(m);
-  net.onClose = () => {};
-  net.onStatus = (st) => {
-    if (st === "connected" && S.reconnectNet === net) {
-      S.reconnectNet = null;
-      S.net = net;
-      wireNet();
-    }
-  };
-  net.host(PID).catch(() => {
-    if (S.reconnectNet === net) S.reconnectNet = null;
-  });
-  setTimeout(() => {
-    if (S.reconnectNet === net && S.phase === "battle" && S.mode === "online") {
+  stopFriendListener(); // free our stable id for the fresh listener
+  const eng = { stop: false, deadline: Date.now() + RECONNECT_WINDOW };
+  S.reunite = eng;
+
+  const hostLoop = () => {
+    if (eng.stop || Date.now() > eng.deadline) return;
+    const net = new Net();
+    eng.nets = [net];
+    net.onMessage = (m) => handleNetMessage(m);
+    net.onClose = () => {};
+    net.onStatus = (st) => {
+      if (st === "connected" && !eng.stop) {
+        eng.stop = true;
+        if (S.reunite === eng) S.reunite = null;
+        S.net = net;
+        wireNet();
+      }
+    };
+    net.host(PID).catch(() => {
       net.destroy();
-      S.reconnectNet = null;
-      toast("Die Verbindung ist weg.", 2600);
-      clearSave();
-      goHome();
-    }
-  }, 120000);
+      if (!eng.stop) setTimeout(hostLoop, 6000);
+    });
+  };
+  hostLoop();
+
+  setTimeout(() => {
+    if (eng.stop) return;
+    eng.stop = true;
+    if (S.reunite === eng) S.reunite = null;
+    for (const n of eng.nets ?? []) n.destroy();
+    toast("Dein Mitspieler ist gerade nicht erreichbar — probier es später nochmal!", 3600);
+    goHome({ keepSave: true });
+  }, RECONNECT_WINDOW);
 }
 
 // ------------------------------------------------------------- updates
@@ -3993,23 +4223,19 @@ function boot() {
     S.allowTouch = e.target.checked;
     saveBoardOpt();
   });
-  document.querySelector(".opt-heading").hidden = !flag("variety");
-  $("#board-presets").hidden = !flag("variety");
-  $("#rule-touch").closest(".opt-row").hidden = !flag("variety");
+  // feature flags hide whole option sections
+  $("#sect-board").hidden = !flag("variety");
+  $("#sect-zauber").hidden = !flag("powers");
+  $("#sect-rules").hidden = !flag("rules");
   syncRuleChips();
   $("#opt-cards").checked = S.cardsOn;
-  $("#opt-cards").closest(".opt-row").hidden = !flag("powers");
   $("#opt-cards").addEventListener("change", (e) => {
     SND.unlock();
     SND.tap();
     S.cardsOn = e.target.checked;
     savePowersOpt();
   });
-  for (const id of ["#rule-decoy", "#rule-sonar", "#rule-ghost"]) {
-    $(id).closest(".opt-row").hidden = !flag("rules");
-  }
   $("#opt-powers").checked = S.powersOn;
-  $("#opt-powers").closest(".opt-row").hidden = !flag("powers");
   $("#opt-powers").addEventListener("change", (e) => {
     SND.unlock();
     SND.tap();
@@ -4281,6 +4507,18 @@ function boot() {
     clearSave();
     $("#resume-banner").hidden = true;
   });
+  $("#invite-yes").addEventListener("click", () => {
+    SND.tap();
+    answerInvite(true);
+  });
+  $("#invite-no").addEventListener("click", () => {
+    SND.tap();
+    answerInvite(false);
+  });
+  // remembered friends: one tap from the title straight into a match,
+  // and the stable-id door is open so THEIR tap flashes a popup here
+  renderTitleFriends();
+  startFriendListener();
 
   // an interrupted battle is offered back, never forced — the banner
   // wins over a stale ?join= deep link still sitting in the URL
