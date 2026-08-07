@@ -419,7 +419,7 @@ test("Doppelschuss from a treasure grants two shots right away", async ({ page }
     .poll(() => page.evaluate(() => window.__FF.state.turn === 0 && !window.__FF.state.inputLocked))
     .toBe(true);
   // the forgiven-miss badge is up
-  await expect(page.locator(".power-chip.passive")).toContainText("Doppelschuss");
+  await expect(page.locator('.power-badge[data-kind="doppel"]')).toBeVisible();
 
   // shot 1 misses — still our turn (the forgiveness fires)
   const [c1] = await missCells(page, 1);
@@ -797,6 +797,27 @@ test("Knobel-Insel: stale locks never block digging; zero rows self-clear", asyn
       cell.y,
     ])
   ).toBe("hit");
+});
+
+test("Knobel-Insel: wins climb the ladder to a 10×10 expedition", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.addInitScript(() => localStorage.setItem("ff-knobel-wins", "7"));
+  await page.reload();
+  await page.waitForFunction(() => !!window.__FF);
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator("#btn-puzzle").click();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("puzzle");
+  const stage = await page.evaluate(() => {
+    const p = window.__FF.state.puzzle;
+    return { size: p.board.size, ships: p.board.ships.length, spades: p.spades };
+  });
+  expect(stage.size).toBe(10);
+  expect(stage.ships).toBe(6);
+  expect(stage.spades).toBe(5);
+  // the sneaky single-cell friend is aboard
+  expect(
+    await page.evaluate(() => window.__FF.state.puzzle.board.ships.some((s) => s.size === 1))
+  ).toBe(true);
 });
 
 test("Knobel-Insel: running out of spades reveals the layout", async ({ page }) => {

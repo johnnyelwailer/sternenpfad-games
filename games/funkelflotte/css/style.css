@@ -897,6 +897,41 @@ h1.logo {
   display: none;
 }
 
+/* passive power counters: round, airy, clearly NOT buttons */
+.power-badge {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 2px rgba(255, 212, 71, 0.55), 0 4px 10px rgba(0, 0, 0, 0.3);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.power-badge img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.badge-count {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #4a2c00;
+  font-weight: 900;
+  font-size: 0.8rem;
+  display: grid;
+  place-items: center;
+}
+
 .gain-dismiss {
   margin-top: 6px;
   font-size: 0.75rem;
