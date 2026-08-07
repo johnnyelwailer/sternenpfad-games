@@ -1012,8 +1012,13 @@ function dispatchTreasureFollowup() {
   // some chest spells mean action NOW — the turn does not pass:
   //   doppel: search twice right away (the forgiven miss covers #2)
   //   fernglas: peek, then immediately use what you learned
-  const keepTurn = { doppel: "🎯 Doppelschuss! Du darfst gleich ZWEIMAL suchen!",
-    fernglas: "🔍 Du weißt jetzt mehr — such gleich weiter!" }[kind];
+  //   trommel/kompass: follow the fresh arrow while it points
+  const keepTurn = {
+    doppel: "🎯 Doppelschuss! Du darfst gleich ZWEIMAL suchen!",
+    fernglas: "🔍 Du weißt jetzt mehr — such gleich weiter!",
+    trommel: "🥁 Folg dem Pfeil — such gleich weiter!",
+    kompass: "🧭 Folg dem Pfeil — such gleich weiter!",
+  }[kind];
   if (keepTurn) {
     setTimeout(() => {
       if (S.phase !== "battle") return;
@@ -2792,6 +2797,25 @@ function setupChaseBoard() {
   renderChips(0);
 }
 
+// parade the quarry across the middle of the board before the hunt:
+// the child SEES what they're hunting and how many cells it spans —
+// then it whooshes back into hiding (the shown spot is NOT the real one)
+function quarryIntro(ship, text, growl, done) {
+  S.inputLocked = true;
+  SCENE.clearInteraction();
+  SCENE.placeCreatures("mine", [ship], { popIn: true });
+  status(text);
+  if (growl) SND.growl();
+  else SND.plop();
+  setTimeout(() => SCENE.hopCreature("mine", ship.id), FAST ? 60 : 700);
+  setTimeout(() => {
+    SCENE.placeCreatures("mine", []);
+    SND.whoosh();
+    S.inputLocked = false;
+    done();
+  }, FAST ? 180 : 3200);
+}
+
 function startChase(kind) {
   SND.unlock();
   SND.whoosh();
@@ -2808,8 +2832,10 @@ function startChase(kind) {
   }
   setupChaseBoard();
   if (kind === "ai") {
-    chaseStatus("Ein frecher Freund hat sich versteckt.");
-    SCENE.setTapMode("mine", (x, y) => chaseSeekTap(x, y));
+    quarryIntro(fridoShip(3, 4), `Das ist ${fridoName()} — nur EIN Feld klein und ganz schön flink!`, false, () => {
+      chaseStatus("Ein frecher Freund hat sich versteckt.");
+      SCENE.setTapMode("mine", (x, y) => chaseSeekTap(x, y));
+    });
   } else {
     // hotseat: player 1 hides first
     CHASE.placeFrido(S.chase.st, 3, 4);
@@ -2852,8 +2878,10 @@ function chaseHidingDone() {
       btn: "Ich suche jetzt!",
       action: () => {
         show(null);
-        chaseStatus();
-        SCENE.setTapMode("mine", (x, y) => chaseSeekTap(x, y));
+        quarryIntro(fridoShip(4, 3), `So sieht ${fridoName()} aus — nur EIN Feld klein!`, false, () => {
+          chaseStatus();
+          SCENE.setTapMode("mine", (x, y) => chaseSeekTap(x, y));
+        });
       },
     });
   } else {
@@ -2955,7 +2983,16 @@ function chaseHiderStatus() {
   status(`🙈 Versteck dich gut! Der Sucher hat noch 🔦 ${S.chase.st.shotsLeft} Schüsse.`);
 }
 
+// let the reveal breathe: the sneak pops out, hops, THEN the win screen
 function chaseEnd(caught) {
+  S.inputLocked = true;
+  SCENE.clearInteraction();
+  status(caught ? `🎉 Hab dich, ${fridoName()}!` : `Da steckte ${fridoName()}!`);
+  setTimeout(() => SCENE.hopCreature("mine", 4), FAST ? 50 : 500);
+  setTimeout(() => chaseEndNow(caught), FAST ? 150 : 2600);
+}
+
+function chaseEndNow(caught) {
   S.phase = "over";
   S.inputLocked = false;
   SCENE.clearInteraction();
@@ -3037,8 +3074,14 @@ function beginChaseOnlineSeeker() {
   S.chase = { kind: "online", st: null, role: "seeker", marks: {}, ready: false, shotsLeft: CHASE.CHASE_SHOTS };
   setupChaseBoard();
   S.inputLocked = true;
-  status("Dein Mitspieler versteckt sich gerade … 🙈");
   SCENE.setTapMode("mine", (x, y) => chaseOnlineSeekTap(x, y));
+  quarryIntro(fridoShip(3, 4), `Das ist ${fridoName()} — nur EIN Feld klein und ganz schön flink!`, false, () => {
+    // stay locked until the hider is ready (the flag may have arrived
+    // while the intro played)
+    S.inputLocked = !S.chase.ready;
+    if (S.chase.ready) chaseStatus();
+    else status("Dein Mitspieler versteckt sich gerade … 🙈");
+  });
 }
 
 function chaseOnlineSeekTap(x, y) {
@@ -3153,6 +3196,18 @@ function bossShipOf(st) {
   return { id: bossIdx(), size: BOSS.BOSS_SIZE, x: st.boss.x, y: st.boss.y, dir: st.boss.dir, hits: [] };
 }
 
+// a fake board-centered pose for the intro parade — NEVER the real spot
+function centeredBossShip(st) {
+  return {
+    id: bossIdx(),
+    size: BOSS.BOSS_SIZE,
+    x: Math.floor((st.size - BOSS.BOSS_SIZE) / 2),
+    y: Math.floor(st.size / 2),
+    dir: "h",
+    hits: [],
+  };
+}
+
 function bossHunterStatus(wounds, shotsLeft, prefix = "") {
   const lead = prefix ? `${prefix} ` : "";
   status(`${lead}${bossName()}: ${"❤️".repeat(BOSS.BOSS_SIZE - wounds)} · 🔦 ${shotsLeft}`);
@@ -3192,8 +3247,16 @@ function startBoss(kind) {
   }
   setupBossBoard();
   if (kind === "ai") {
-    bossHunterStatus(0, S.boss.st.shotsLeft, `${bossName()} stapft irgendwo herum!`);
-    SCENE.setTapMode("mine", (x, y) => bossSeekTap(x, y));
+    const st = S.boss.st;
+    quarryIntro(
+      centeredBossShip(st),
+      `So RIESIG ist ${bossName()}: ${BOSS.BOSS_SIZE} Felder lang! Und es stapft nach jedem Schuss …`,
+      true,
+      () => {
+        bossHunterStatus(0, st.shotsLeft, `${bossName()} stapft irgendwo herum!`);
+        SCENE.setTapMode("mine", (x, y) => bossSeekTap(x, y));
+      }
+    );
   } else {
     showPass({
       title: "Spieler 1 ist das Monster — Spieler 2 schaut weg!",
@@ -3238,8 +3301,15 @@ function bossPlacingDone() {
       btn: "Auf die Jagd!",
       action: () => {
         show(null);
-        bossHunterStatus(0, S.boss.st.shotsLeft);
-        SCENE.setTapMode("mine", (x, y) => bossSeekTap(x, y));
+        quarryIntro(
+          centeredBossShip(S.boss.st),
+          `So RIESIG ist ${bossName()}: ${BOSS.BOSS_SIZE} Felder lang!`,
+          true,
+          () => {
+            bossHunterStatus(0, S.boss.st.shotsLeft);
+            SCENE.setTapMode("mine", (x, y) => bossSeekTap(x, y));
+          }
+        );
       },
     });
   } else {
@@ -3347,7 +3417,16 @@ function bossMoveTap(dx, dy) {
   toast("Da passt das Monster nicht hin!");
 }
 
+// same for the monster: show the whole beast (and its wounds) first
 function bossEnd(hunterWon) {
+  S.inputLocked = true;
+  SCENE.clearInteraction();
+  SND.growl();
+  status(hunterWon ? `🎉 ${bossName()} ist besiegt!` : `${bossName()} stapft davon …`);
+  setTimeout(() => bossEndNow(hunterWon), FAST ? 150 : 2600);
+}
+
+function bossEndNow(hunterWon) {
   S.phase = "over";
   S.inputLocked = false;
   SCENE.clearInteraction();
@@ -3428,8 +3507,17 @@ function beginBossOnlineHunter() {
   };
   setupBossBoard();
   S.inputLocked = true;
-  status("Das Monster sucht sich einen Platz … 🙈");
   SCENE.setTapMode("mine", (x, y) => bossOnlineSeekTap(x, y));
+  quarryIntro(
+    centeredBossShip(S.boss.st),
+    `So RIESIG ist das Monster: ${BOSS.BOSS_SIZE} Felder lang!`,
+    true,
+    () => {
+      S.inputLocked = !S.boss.ready;
+      if (S.boss.ready) bossHunterStatus(0, S.boss.shotsLeft);
+      else status("Das Monster sucht sich einen Platz … 🙈");
+    }
+  );
 }
 
 function bossOnlineSeekTap(x, y) {

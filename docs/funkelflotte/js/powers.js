@@ -34,8 +34,8 @@ export const POWERS = {
     name: "Urwald-Trommel",
     target: "cell",
     world: "dino",
-    desc: "Trommle auf ein Feld: Ein Pfeil zeigt von dort zum nächsten versteckten Freund.",
-    use: "Tipp ein Feld an — ein Pfeil zeigt zum nächsten Freund.",
+    desc: "Trommle auf ein Feld: Ein Pfeil zeigt von dort zum nächsten versteckten Freund — und aus der Schatztruhe darfst du ihm sofort folgen.",
+    use: "Tipp ein Feld an — der Pfeil zeigt den Weg. Folg ihm gleich!",
   },
   schild: {
     emoji: "🪷",
@@ -86,8 +86,8 @@ export const POWERS = {
     emoji: "🧭",
     name: "Magnet-Kompass",
     target: "none",
-    desc: "Ein Zauberpfeil zeigt von deinem letzten Schuss zum nächsten Versteck.",
-    use: "Wirkt sofort: Der Pfeil zeigt vom letzten Schuss zum nächsten Versteck.",
+    desc: "Ein Zauberpfeil zeigt von deinem letzten Schuss zum nächsten Versteck — und aus der Schatztruhe darfst du ihm sofort folgen.",
+    use: "Der Pfeil zeigt vom letzten Schuss zum Versteck. Folg ihm gleich!",
   },
   glocke: {
     emoji: "🔔",
