@@ -1,6 +1,6 @@
 // Funkel-Flotte service worker: stale-while-revalidate for everything
 // in this game's directory, so hot-seat and robo mode work offline.
-const CACHE = "funkelflotte-v26";
+const CACHE = "funkelflotte-v27";
 
 const PRECACHE = [
   "./",
@@ -22,6 +22,7 @@ const PRECACHE = [
   "./js/chase.js",
   "./js/boss.js",
   "./js/powers.js",
+  "./js/icons.js",
   "./vendor/three.module.min.js",
   "./vendor/three.core.min.js",
   "./vendor/peerjs.min.js",

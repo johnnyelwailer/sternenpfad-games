@@ -93,8 +93,8 @@ export const POWERS = {
     emoji: "🔔",
     name: "Zauberglocke",
     target: "none",
-    desc: "Die Glocke zeigt dir den Schatten des größten versteckten Freundes: wie lang er ist und wie herum er liegt — nur nicht wo.",
-    use: "Der goldene Schatten überm Brett hat GENAU seine Form.",
+    desc: "Die Glocke wirft einen Schatten UNGEFÄHR dorthin, wo der größte versteckte Freund lauert — er liegt sicher darunter, aber wo genau?",
+    use: "Such unter dem dunklen Schatten — da lauert der Größte!",
   },
   klee: {
     emoji: "🍀",
@@ -257,17 +257,36 @@ export function directionToNearest(board, x, y) {
   return { angle: Math.atan2(best.y - y, best.x - x), dist: bestD };
 }
 
-// shape of the largest not-yet-found creature: { dir, size } — enough
-// for a concrete ghost outline (never its position!) — or null
-export function biggestHidden(board) {
+// a ROUGH shadow region over the largest not-yet-found creature: its
+// real neighbourhood, but with a jittered center and generous padding —
+// honest ("it lurks under the shadow") yet never exact. Returns
+// { cx, cy, rx, rz, dir, size } in cell coordinates, or null.
+export function biggestHiddenRegion(board, rng = Math.random) {
   let best = null;
   for (const ship of board.ships) {
     if (E.isSunk(ship)) continue;
     if (!best || ship.size > best.size) best = ship;
   }
   if (!best) return null;
-  // a 2×2 square friend has no orientation — report it as a square
-  return { dir: best.shape === "sq" ? "sq" : best.dir, size: best.shape === "sq" ? 2 : best.size };
+  const cells = E.shipCells(best);
+  const xs = cells.map((c) => c.x);
+  const ys = cells.map((c) => c.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const clamp = (v) => Math.min(board.size - 1, Math.max(0, v));
+  const jitter = () => (rng() * 2 - 1) * 1.2; // up to ±1.2 cells of fuzz
+  // padding (2.4) always exceeds the jitter, so the creature is
+  // guaranteed to lie fully under the shadow — the mark stays honest
+  return {
+    cx: clamp((minX + maxX) / 2 + jitter()),
+    cy: clamp((minY + maxY) / 2 + jitter()),
+    rx: (maxX - minX) / 2 + 2.4,
+    rz: (maxY - minY) / 2 + 2.4,
+    dir: best.shape === "sq" ? "sq" : best.dir,
+    size: best.shape === "sq" ? 2 : best.size,
+  };
 }
 
 // the extra balloon goes exactly where the player chose: the cell must

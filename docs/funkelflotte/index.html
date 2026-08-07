@@ -21,7 +21,7 @@
 
     <!-- incoming friend invite: flashes until answered -->
     <div id="invite-pop" hidden>
-      <span class="invite-emoji">🔔</span>
+      <span class="invite-emoji"></span>
       <span id="invite-text">Ein Freund möchte mit dir spielen!</span>
       <div class="invite-actions">
         <button class="btn" id="invite-yes">🎮 Mitspielen!</button>
@@ -78,7 +78,7 @@
       <h1 class="logo">Funkel-Flotte</h1>
       <p class="subtitle">Wer findet alle Versteckten zuerst?</p>
       <div id="resume-banner" hidden>
-        <span class="resume-emoji">🕹️</span>
+        <span class="resume-emoji"></span>
         <span class="resume-text" id="resume-text">Dein Spiel wartet noch!</span>
         <button class="btn" id="btn-resume">▶️ Weiterspielen</button>
         <button class="resume-discard" id="btn-resume-discard" aria-label="Verwerfen">✕</button>
@@ -86,22 +86,29 @@
       <div id="title-friends" hidden></div>
       <p class="label">Deine Welt:</p>
       <div class="world-grid" id="world-grid"></div>
-      <button class="btn ghost options-btn" id="btn-options">⚙️ Spiel-Optionen</button>
+      <button class="btn ghost options-btn" id="btn-options">Spiel-Optionen</button>
       <div class="stack">
         <button class="btn big" data-mode="ai">Alleine gegen Robo</button>
         <button class="btn big" data-mode="hotseat">Zu zweit an einem Gerät</button>
         <button class="btn big" data-mode="online">Mit zwei Geräten</button>
       </div>
+      <button class="journey-hero" id="btn-journey">
+        <img class="jh-chest" id="jh-chest" alt="" />
+        <span class="jh-text">
+          <span class="jh-title">Weltreise</span>
+          <span class="jh-sub" id="jh-sub">Die große Abenteuer-Reise</span>
+          <span class="jh-bar"><span class="jh-fill" id="jh-fill"></span></span>
+        </span>
+      </button>
       <p class="label">Mehr Spiele:</p>
       <div class="extras-grid">
         <button class="extra-card" id="btn-puzzle"><span class="xemoji">🧩</span><span>Knobel-Insel</span></button>
         <button class="extra-card" id="btn-chase"><span class="xemoji">🙈</span><span>Fang mich!</span></button>
         <button class="extra-card" id="btn-boss"><span class="xemoji">👑</span><span>Monster-Jagd</span></button>
-        <button class="extra-card" id="btn-journey"><span class="xemoji">🗺️</span><span>Weltreise</span></button>
       </div>
       <div class="extras-row">
-        <button class="btn ghost" id="btn-album">📖 Sticker-Album</button>
-        <button class="btn ghost" id="btn-aquarium">🐠 Aquarium</button>
+        <button class="btn ghost" id="btn-album">Sticker-Album</button>
+        <button class="btn ghost" id="btn-aquarium">Aquarium</button>
       </div>
     </section>
 
@@ -109,7 +116,7 @@
     <section id="screen-journey" class="screen opaque">
       <div class="stars" aria-hidden="true"></div>
       <h2 class="h2" id="journey-title">🗺️ Deine Weltreise</h2>
-      <p class="hint">Acht Etappen durch alle Welten — jede bringt einen neuen Trick bei!</p>
+      <p class="hint">Zwölf Etappen durch alle Welten — jede bringt dir einen neuen Zauber bei!</p>
       <div id="journey-stops"></div>
       <div class="stack">
         <button class="btn big" id="btn-journey-go">Etappe spielen!</button>
@@ -134,8 +141,8 @@
       <div class="stars" aria-hidden="true"></div>
       <h2 class="h2">Gegen Robo</h2>
       <div class="stack">
-        <button class="btn big" data-robo="leicht">🐣 Robo Sanft<br /><small>sucht gemütlich, ganz ohne Zauber</small></button>
-        <button class="btn big ghost" data-robo="schlau">🤖 Robo Schlau<br /><small>jagt clever, zaubert und klaut Schätze!</small></button>
+        <button class="btn big" data-robo="leicht">Robo Sanft<br /><small>sucht gemütlich, ganz ohne Zauber</small></button>
+        <button class="btn big ghost" data-robo="schlau">Robo Schlau<br /><small>jagt clever, zaubert und klaut Schätze!</small></button>
       </div>
     </section>
 
@@ -146,27 +153,27 @@
       <p class="hint" id="options-note" hidden>Regel-Änderungen gelten ab dem nächsten Spiel.</p>
       <button class="btn ghost" id="opt-world" hidden>🌍 Welt wechseln</button>
       <details class="opt-sect" id="sect-board" open>
-        <summary>🗺️ Brett &amp; Flotte</summary>
+        <summary>Brett &amp; Flotte</summary>
         <div id="board-presets" class="board-presets"></div>
         <div class="opt-list">
           <label class="opt-row">
             <input type="checkbox" id="rule-touch" />
             <span class="opt-box"></span>
             <span class="opt-text">
-              <span class="opt-name">🤝 Enge Verstecke</span>
+              <span class="opt-name">Enge Verstecke</span>
               <span class="opt-desc">Freunde dürfen direkt nebeneinander sitzen — kein Feld Abstand nötig. Macht das Suchen kniffliger!</span>
             </span>
           </label>
         </div>
       </details>
       <details class="opt-sect" id="sect-zauber">
-        <summary>💎 Zauber</summary>
+        <summary>Zauber</summary>
         <div class="opt-list">
           <label class="opt-row">
             <input type="checkbox" id="opt-powers" />
             <span class="opt-box"></span>
             <span class="opt-text">
-              <span class="opt-name">💎 Schatz-Zauber</span>
+              <span class="opt-name">Schatz-Zauber</span>
               <span class="opt-desc">Auf jedem Brett wartet eine sichtbare Schatztruhe. Wer sie ausgräbt, entfesselt sofort einen einmaligen Zauber — kostet aber den Zug.</span>
             </span>
           </label>
@@ -174,7 +181,7 @@
             <input type="checkbox" id="opt-treasures" />
             <span class="opt-box"></span>
             <span class="opt-text">
-              <span class="opt-name">💎💎 Mehr Schätze</span>
+              <span class="opt-name">Mehr Schätze</span>
               <span class="opt-desc">Manchmal zwei, mit Glück sogar drei Truhen pro Brett — mehr Zauber, mehr Überraschungen!</span>
             </span>
           </label>
@@ -182,7 +189,7 @@
             <input type="checkbox" id="opt-cards" />
             <span class="opt-box"></span>
             <span class="opt-text">
-              <span class="opt-name">🃏 Zauber-Karten (Extra)</span>
+              <span class="opt-name">Zauber-Karten (Extra)</span>
               <span class="opt-desc">Starte mit der mächtigen Spezial-Karte deiner Welt und zieh alle 6 Züge eine neue. Karten spielst du, wann DU willst — für Profis!</span>
             </span>
           </label>
@@ -191,13 +198,13 @@
         <div id="powers-legend" hidden></div>
       </details>
       <details class="opt-sect" id="sect-rules">
-        <summary>🎲 Extra-Regeln</summary>
+        <summary>Extra-Regeln</summary>
         <div class="opt-list">
           <label class="opt-row">
             <input type="checkbox" id="rule-decoy" />
             <span class="opt-box"></span>
             <span class="opt-text">
-              <span class="opt-name">🎈 Schwindel-Ballon</span>
+              <span class="opt-name">Schwindel-Ballon</span>
               <span class="opt-desc">Jeder versteckt einen Schwindel-Ballon. Wer ihn trifft: PENG! Und der Ballon-Besitzer bekommt einen Extra-Zug.</span>
             </span>
           </label>
@@ -205,7 +212,7 @@
             <input type="checkbox" id="rule-sonar" />
             <span class="opt-box"></span>
             <span class="opt-text">
-              <span class="opt-name">🐬 Sonar</span>
+              <span class="opt-name">Sonar</span>
               <span class="opt-desc">Jedes Daneben zeigt eine Zahl: So viele Felder sind es bis zum nächsten Versteck.</span>
             </span>
           </label>
@@ -213,7 +220,7 @@
             <input type="checkbox" id="rule-ghost" />
             <span class="opt-box"></span>
             <span class="opt-text">
-              <span class="opt-name">👻 Geisterstunde</span>
+              <span class="opt-name">Geisterstunde</span>
               <span class="opt-desc">Daneben-Markierungen verschwinden nach 5 Schüssen wieder. Gut merken!</span>
             </span>
           </label>
