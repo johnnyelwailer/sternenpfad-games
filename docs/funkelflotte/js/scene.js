@@ -63,6 +63,28 @@ function defaultElevation() {
 
 // camera pose for a slot from framing + user orbit state
 function pose(slot) {
+  // the park frames a pond (or the whole park) instead of a board
+  if (slot === "mine" && dioramas.mine?.park && park) {
+    const focusedPond = park.focused != null ? park.ponds[park.focused] : null;
+    const target = focusedPond ? focusedPond.pos : new THREE.Vector3(0, 0, 0);
+    const e = clampNum(orbit.elev ?? (focusedPond ? defaultElevation() : 0.95), 0.42, 1.35);
+    const a = orbit.azim;
+    const angleZoom = 0.78 + 0.5 * ((e - 0.42) / (1.35 - 0.42));
+    const base = focusedPond ? 13 : framingDistance();
+    const dist = base * angleZoom * clampNum(orbit.zoom, 0.55, 1.5);
+    const posV = new THREE.Vector3(
+      target.x + dist * Math.cos(e) * Math.sin(a),
+      dist * Math.sin(e),
+      target.z + dist * Math.cos(e) * Math.cos(a)
+    );
+    const lookBack = focusedPond ? 1.4 : 0.5;
+    const lookV = new THREE.Vector3(
+      target.x - lookBack * Math.sin(a),
+      -0.2,
+      target.z - lookBack * Math.cos(a)
+    );
+    return { pos: posV, look: lookV, elev: e, dist };
+  }
   const cx = dioramaX(slot);
   const e = clampNum(orbit.elev ?? defaultElevation(), 0.42, 1.35);
   const a = orbit.azim; // full 360° — spin all the way around
@@ -312,6 +334,7 @@ export function setupBoard(slot, worldId, { bare = false, grid: gridSize = GRID 
 function disposeDiorama(slot) {
   const d = dioramas[slot];
   if (!d) return;
+  if (d.park) park = null;
   scene.remove(d.root);
   d.root.traverse((o) => {
     if (o.isMesh || o.isPoints || o.isLine || o.isSprite) {
@@ -436,55 +459,354 @@ export function addCreature(slot, ship, { popIn = false, found = null } = {}) {
   return entry;
 }
 
-// ------------------------------------------------------------ aquarium
-// The collection diorama: creatures from ANY world live together here.
-// Entries share the creatures map (float/blink animations come free).
+// ---------------------------------------------------------- Funkel-Park
+// The collection screen: ONE big park with a themed pond per world.
+// Every collected friend lives in its own world's pond. The camera
+// starts on an overview of the whole park; tapping a pond flies in,
+// tapping the meadow (or pinching out) returns to the overview. The
+// layout grows with the pond count, so future worlds just extend it.
 
-export function populateAquarium(slot, list) {
-  const d = dioramas[slot];
-  if (!d) return;
+const PARK_WORLD = {
+  id: "park",
+  name: "Funkel-Park",
+  colors: {
+    sky: 0x7ec8f0,
+    horizon: 0xeaf7cf,
+    fog: 0xc9ead2,
+    light: 0xfff2c9,
+    accent: 0xffd447,
+    splash: 0x9fdcff,
+  },
+};
+
+let park = null; // { ponds, picks, focused, onChange, anim }
+
+function questionTexture() {
+  const c = document.createElement("canvas");
+  c.width = 96;
+  c.height = 96;
+  const ctx = c.getContext("2d");
+  ctx.font = "bold 72px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.4)";
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = "rgba(255,255,255,0.95)";
+  ctx.fillText("?", 48, 52);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const POND_R = 4.4; // water + shore footprint of one pond
+
+export function setupPark(worldIds) {
+  disposeDiorama("mine");
+  disposeDiorama("enemy");
+  const root = new THREE.Group();
+
+  const flat = (color, extra = {}) =>
+    new THREE.MeshStandardMaterial({ color, roughness: 0.95, flatShading: true, ...extra });
+
+  // the meadow — one big soft lawn, also the "tap outside" pick target
+  const meadow = new THREE.Mesh(new THREE.CircleGeometry(42, 48), flat(0x67b96b));
+  meadow.rotation.x = -Math.PI / 2;
+  meadow.position.y = -0.02;
+  meadow.userData = { pond: null };
+  root.add(meadow);
+  const lawnRim = new THREE.Mesh(new THREE.RingGeometry(42, 52, 48), flat(0x4f9e58));
+  lawnRim.rotation.x = -Math.PI / 2;
+  lawnRim.position.y = -0.06;
+  root.add(lawnRim);
+
+  // pond layout: two columns, rows grow with the world count
+  const rows = Math.ceil(worldIds.length / 2);
+  const pondPos = (i) => {
+    const col = i % 2 === 0 ? -1 : 1;
+    const row = Math.floor(i / 2);
+    return new THREE.Vector3(col * 6.4, 0, (row - (rows - 1) / 2) * 10.2);
+  };
+
+  // central fountain plaza between the ponds
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(1.9, 24), flat(0xe9dca8));
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.y = 0.01;
+  root.add(plaza);
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.3, 0.34, 14), flat(0xcfd6ea));
+  basin.position.y = 0.17;
+  root.add(basin);
+  const basinWater = new THREE.Mesh(
+    new THREE.CircleGeometry(1.02, 14),
+    new THREE.MeshBasicMaterial({ color: 0x9fdcff })
+  );
+  basinWater.rotation.x = -Math.PI / 2;
+  basinWater.position.y = 0.35;
+  root.add(basinWater);
+  const spout = new THREE.Mesh(
+    new THREE.SphereGeometry(0.3, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xd6f2ff, transparent: true, opacity: 0.85, depthWrite: false })
+  );
+  spout.position.y = 0.7;
+  root.add(spout);
+
+  // stepping-stone main path down the middle of the park
+  const stoneM = flat(0xd9c9a3);
+  for (let z = -rows * 5 - 2; z <= rows * 5 + 2; z += 2) {
+    if (Math.abs(z) < 2.4) continue; // the plaza takes this stretch
+    const stone = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.4, 0.07, 8), stoneM);
+    stone.position.set(Math.sin(z * 1.7) * 0.4, 0.015, z);
+    root.add(stone);
+  }
+
+  const picks = [meadow];
+  const ponds = [];
+  const chests = new Map();
+  const anim = { spout, rings: [], marks: [] };
+
+  worldIds.forEach((worldId, i) => {
+    const world = getWorld(worldId);
+    const pos = pondPos(i);
+    const g = new THREE.Group();
+    g.position.copy(pos);
+
+    const shore = new THREE.Mesh(new THREE.CircleGeometry(POND_R, 28), flat(world.colors.ground));
+    shore.rotation.x = -Math.PI / 2;
+    shore.position.y = 0.005;
+    g.add(shore);
+    const water = new THREE.Mesh(new THREE.CircleGeometry(POND_R - 0.9, 28), flat(world.colors.water, { roughness: 0.5 }));
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = 0.03;
+    g.add(water);
+    const glow = new THREE.Mesh(
+      new THREE.RingGeometry(POND_R - 1.0, POND_R - 0.72, 28),
+      new THREE.MeshBasicMaterial({ color: world.colors.accent, transparent: true, opacity: 0.4, depthWrite: false })
+    );
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.y = 0.045;
+    g.add(glow);
+    anim.rings.push(glow);
+
+    // the world's chest as a landmark, big enough to spot from above
+    const chest = buildTreasureChest(worldId);
+    chest.scale.setScalar(1.5);
+    chest.position.set(POND_R - 1.4, 0.02, -(POND_R - 1.6));
+    chest.rotation.y = -0.6;
+    chest.userData.phase = i * 1.3;
+    g.add(chest);
+    chests.set(`pond-${i}`, chest);
+
+    // two accent crystals on the shore
+    for (const [dx, dz, s] of [[-(POND_R - 1.3), POND_R - 1.7, 0.3], [POND_R - 1.9, POND_R - 1.2, 0.22]]) {
+      const cr = new THREE.Mesh(
+        new THREE.OctahedronGeometry(s, 0),
+        flat(world.colors.accent, { emissive: world.colors.accent, emissiveIntensity: 0.35, roughness: 0.3 })
+      );
+      cr.position.set(dx, s * 0.8, dz);
+      cr.rotation.y = i + dx;
+      g.add(cr);
+    }
+
+    // floating "?" over ponds that hold no friends yet
+    const mark = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: questionTexture(), transparent: true, depthWrite: false, opacity: 0.85 })
+    );
+    mark.scale.setScalar(1.4);
+    mark.position.set(0, 1.5, 0);
+    mark.visible = false;
+    g.add(mark);
+    anim.marks.push(mark);
+
+    // invisible pick disc: generous, covers shore + a bit of margin
+    const pick = new THREE.Mesh(
+      new THREE.CircleGeometry(POND_R + 0.7, 20),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+    );
+    pick.rotation.x = -Math.PI / 2;
+    pick.position.y = 0.06;
+    pick.userData = { pond: i };
+    g.add(pick);
+    picks.push(pick);
+
+    root.add(g);
+    ponds.push({ worldId, world, pos, emptyMark: mark });
+  });
+
+  scene.add(root);
+  const creaturesGroup = new THREE.Group();
+  root.add(creaturesGroup);
+  dioramas.mine = {
+    slot: "mine",
+    park: true,
+    worldId: "park",
+    world: PARK_WORLD,
+    root,
+    env: {
+      userData: {
+        animate: (t) => {
+          anim.spout.position.y = 0.7 + Math.sin(t * 2.6) * 0.12;
+          anim.spout.scale.setScalar(1 + Math.sin(t * 5.2) * 0.15);
+          anim.rings.forEach((r, i) => {
+            r.material.opacity = 0.28 + Math.sin(t * 1.6 + i * 1.1) * 0.14;
+          });
+          anim.marks.forEach((m, i) => {
+            if (!m.visible) return;
+            m.position.y = 1.5 + Math.sin(t * 1.8 + i) * 0.15;
+            m.material.opacity = 0.6 + Math.sin(t * 2.4 + i) * 0.25;
+          });
+        },
+      },
+    },
+    grid: GRID,
+    span: 30, // framing target for the zoomed-out overview
+    tiles: new Map(),
+    tilesGroup: new THREE.Group(),
+    creaturesGroup,
+    marksGroup: new THREE.Group(),
+    creatures: new Map(),
+    chests,
+    bursts: [],
+  };
+  park = { ponds, picks, focused: null, onChange: null, anim };
+  return dioramas.mine;
+}
+
+// (re)place the collected friends — each into its own world's pond
+export function setParkCreatures(list) {
+  const d = dioramas.mine;
+  if (!d?.park || !park) return;
   d.creaturesGroup.clear();
   d.creatures.clear();
-  list.forEach((item, i) => {
-    const model = buildCreature(item.worldId, item.idx, 1.7, item.custom ?? null);
-    const holder = new THREE.Group();
-    holder.add(model);
-    // organic golden-angle scatter instead of a grid
-    const r = 0.9 + 2.7 * Math.sqrt((i + 0.5) / Math.max(1, list.length));
-    const a = i * 2.399963;
-    const cx = Math.cos(a) * r * 1.12;
-    const cz = Math.sin(a) * r * 0.8;
-    holder.position.set(cx, 0.1, cz);
-    holder.rotation.y = Math.random() * Math.PI * 2;
-    const blob = new THREE.Mesh(
-      new THREE.CircleGeometry(0.4, 16),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.16, depthWrite: false })
-    );
-    blob.rotation.x = -Math.PI / 2;
-    blob.position.y = -0.04;
-    blob.scale.set(1.4, 0.9, 1);
-    holder.add(blob);
-    holder.scale.setScalar(0.01);
-    const scale = 0.9 + Math.random() * 0.25;
-    tween((v) => holder.scale.setScalar(scale * v), { dur: 0.6, delay: i * 0.05, ease: Ease.outBack });
-    d.creaturesGroup.add(holder);
-    d.creatures.set(item.key, {
-      model,
-      holder,
-      baseY: 0.1,
-      phase: Math.random() * 7,
-      ship: null,
-      // everyone slowly meanders around their favourite spot
-      wander: {
-        cx,
-        cz,
-        rx: 0.6 + Math.random() * 0.9,
-        rz: 0.5 + Math.random() * 0.7,
-        sp: 0.12 + Math.random() * 0.18,
-        ph: Math.random() * 7,
-      },
+  const byPond = park.ponds.map(() => []);
+  for (const item of list) {
+    const i = park.ponds.findIndex((p) => p.worldId === item.worldId);
+    if (i >= 0) byPond[i].push(item);
+  }
+  park.ponds.forEach((pond, i) => {
+    const items = byPond[i];
+    pond.emptyMark.visible = items.length === 0;
+    items.forEach((item, j) => {
+      const model = buildCreature(item.worldId, item.idx, 1.7, item.custom ?? null);
+      const holder = new THREE.Group();
+      holder.add(model);
+      // organic golden-angle scatter inside the pond water
+      const r = 0.5 + 1.9 * Math.sqrt((j + 0.5) / Math.max(1, items.length));
+      const a = j * 2.399963 + i * 1.7;
+      const cx = pond.pos.x + Math.cos(a) * r;
+      const cz = pond.pos.z + Math.sin(a) * r * 0.85;
+      holder.position.set(cx, 0.1, cz);
+      holder.rotation.y = Math.random() * Math.PI * 2;
+      const blob = new THREE.Mesh(
+        new THREE.CircleGeometry(0.4, 16),
+        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.16, depthWrite: false })
+      );
+      blob.rotation.x = -Math.PI / 2;
+      blob.position.y = -0.04;
+      blob.scale.set(1.4, 0.9, 1);
+      holder.add(blob);
+      holder.scale.setScalar(0.01);
+      const scale = 0.9 + Math.random() * 0.25;
+      tween((v) => holder.scale.setScalar(scale * v), { dur: 0.6, delay: j * 0.05, ease: Ease.outBack });
+      d.creaturesGroup.add(holder);
+      d.creatures.set(item.key, {
+        model,
+        holder,
+        baseY: 0.1,
+        phase: Math.random() * 7,
+        ship: null,
+        // meander around the favourite spot — radii keep them in the pond
+        wander: {
+          cx,
+          cz,
+          rx: 0.45 + Math.random() * 0.5,
+          rz: 0.4 + Math.random() * 0.45,
+          sp: 0.12 + Math.random() * 0.18,
+          ph: Math.random() * 7,
+        },
+      });
     });
   });
+}
+
+export function focusPond(i, opts = {}) {
+  const d = dioramas.mine;
+  if (!d?.park || !park?.ponds[i]) return;
+  park.focused = i;
+  d.world = park.ponds[i].world; // the pond's sky/fog wash over the park
+  orbit.zoom = 1;
+  focusBoard("mine", opts);
+  park.onChange?.(i);
+}
+
+export function parkOverview(opts = {}) {
+  const d = dioramas.mine;
+  if (!d?.park || !park) return;
+  park.focused = null;
+  d.world = PARK_WORLD;
+  orbit.zoom = 1;
+  focusBoard("mine", opts);
+  park.onChange?.(null);
+}
+
+export function parkFocusedPond() {
+  return park?.focused ?? null;
+}
+
+export function parkPondCount() {
+  return park?.ponds.length ?? 0;
+}
+
+export function onParkViewChange(cb) {
+  if (park) park.onChange = cb;
+}
+
+// which park resident is closest to the tapped point?
+export function nearestParkKey(px, pz) {
+  const d = dioramas.mine;
+  if (!d?.park) return null;
+  let best = null;
+  let bestDist = 1.4;
+  for (const [key, c] of d.creatures) {
+    const dist = Math.hypot(c.holder.position.x - px, c.holder.position.z - pz);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = key;
+    }
+  }
+  return best;
+}
+
+export function parkCreaturePos(key) {
+  const d = dioramas.mine;
+  const c = d?.creatures.get(key);
+  if (!c || !park) return null;
+  let pond = null;
+  let bestDist = Infinity;
+  park.ponds.forEach((p, i) => {
+    const dist = Math.hypot(c.holder.position.x - p.pos.x, c.holder.position.z - p.pos.z);
+    if (dist < bestDist) {
+      bestDist = dist;
+      pond = i;
+    }
+  });
+  return { px: c.holder.position.x, pz: c.holder.position.z, pond };
+}
+
+// park taps resolve to { pond, px, pz } (pond null = meadow)
+export function setParkTap(handler) {
+  tapHandler = handler ? { slot: "mine", handler, park: true } : null;
+}
+
+function raycastPark(e) {
+  if (!park) return null;
+  const rect = canvas.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(park.picks, false);
+  if (!hits.length) return null;
+  // a pond disc beats the meadow beneath it
+  const hit = hits.find((h) => h.object.userData.pond != null) ?? hits[0];
+  return { pond: hit.object.userData.pond, px: hit.point.x, pz: hit.point.z };
 }
 
 function updateWander(c, dt) {
@@ -557,12 +879,13 @@ export function dropFood(slot, px, pz) {
   );
 }
 
-export function lureNearest(slot, px, pz) {
+export function lureNearest(slot, px, pz, filter = null) {
   const d = dioramas[slot];
   if (!d) return null;
   let best = null;
   let bestDist = Infinity;
   for (const [key, c] of d.creatures) {
+    if (filter && !filter(key)) continue;
     const dist = Math.hypot(c.holder.position.x - px, c.holder.position.z - pz);
     if (dist < bestDist) {
       bestDist = dist;
@@ -572,24 +895,6 @@ export function lureNearest(slot, px, pz) {
   if (!best) return null;
   const c = d.creatures.get(best);
   c.lure = { x: px, z: pz, onArrive: () => hopCreature(slot, best) };
-  return best;
-}
-
-// which aquarium resident is closest to the tapped cell?
-export function nearestAquariumKey(slot, x, y) {
-  const d = dioramas[slot];
-  if (!d) return null;
-  const px = x - d.grid / 2 + 0.5;
-  const pz = y - d.grid / 2 + 0.5;
-  let best = null;
-  let bestDist = 1.4;
-  for (const [key, c] of d.creatures) {
-    const dist = Math.hypot(c.holder.position.x - px, c.holder.position.z - pz);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = key;
-    }
-  }
   return best;
 }
 
@@ -2576,15 +2881,41 @@ function onPointerUp(e) {
   }
 
   const wasOrbit = gesture === "orbit" || gesture === "pinch";
+  const wasPinch = gesture === "pinch";
   if (pointers.size === 0) gesture = null;
   drag = null;
-  if (wasOrbit) return; // a camera gesture is never a shot
+  if (wasOrbit) {
+    // pinch-out in a pond = step back to the park overview; pinch-in on
+    // the overview = dive into the pond closest to the view center
+    if (wasPinch && pointers.size === 0 && dioramas.mine?.park && park) {
+      if (park.focused != null && orbit.zoom >= 1.45) {
+        parkOverview();
+      } else if (park.focused == null && orbit.zoom <= 0.62) {
+        let best = 0;
+        let bestDist = Infinity;
+        park.ponds.forEach((pond, i) => {
+          const dist = Math.hypot(pond.pos.x - camBase.look.x, pond.pos.z - camBase.look.z);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = i;
+          }
+        });
+        focusPond(best);
+      }
+    }
+    return; // a camera gesture is never a shot
+  }
 
   if (tapHandler && p) {
     const moved = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
     if (moved < 9) {
-      const cell = raycastTiles(e, tapHandler.slot);
-      if (cell) tapHandler.handler(cell.x, cell.y);
+      if (tapHandler.park) {
+        const hit = raycastPark(e);
+        if (hit) tapHandler.handler(hit);
+      } else {
+        const cell = raycastTiles(e, tapHandler.slot);
+        if (cell) tapHandler.handler(cell.x, cell.y);
+      }
     }
   }
 }

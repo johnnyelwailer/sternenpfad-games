@@ -213,7 +213,7 @@ function decorateIcons() {
   $("#btn-options").innerHTML = `${icon("gear", 20)} Spiel-Optionen`;
   $("#btn-opts").innerHTML = `${icon("gear", 18)} Menü`;
   $("#btn-album").innerHTML = `${icon("book", 20)} Sticker-Album`;
-  $("#btn-aquarium").innerHTML = `<img class="ui-thumb" alt="" src="${SCENE.creatureThumb("ozean", 4, 1.4, 64)}" /> Aquarium`;
+  $("#btn-aquarium").innerHTML = `<img class="ui-thumb" alt="" src="${SCENE.creatureThumb("ozean", 4, 1.4, 64)}" /> Funkel-Park`;
   const xthumb = (id, src) => {
     const span = $(id)?.querySelector(".xemoji");
     if (span) span.outerHTML = `<img class="xthumb" alt="" src="${src}" />`;
@@ -4275,9 +4275,28 @@ function journeyAdvance(won) {
 
 function refreshAquarium() {
   if (S.mode !== "aquarium" || !S.aquarium) return;
-  SCENE.populateAquarium(
-    "mine",
+  SCENE.setParkCreatures(
     S.aquarium.map((e) => ({ ...e, custom: loadCustom(e.worldId)[e.idx] ?? null }))
+  );
+}
+
+// status line for the park view: overview vs. a focused pond
+function parkStatus(pondIdx) {
+  if (S.mode !== "aquarium") return;
+  if (pondIdx == null) {
+    status(
+      S.aquarium.length
+        ? `Funkel-Park: ${S.aquarium.length} ${S.aquarium.length === 1 ? "Freund" : "Freunde"} — tipp einen Teich an!`
+        : "Der Funkel-Park ist noch leer! Gewinne Spiele und sammle Freunde."
+    );
+    return;
+  }
+  const world = getWorld(S.parkWorlds[pondIdx]);
+  const n = S.aquarium.filter((e) => e.worldId === world.id).length;
+  status(
+    n
+      ? `${world.name}: ${n} ${n === 1 ? "Freund" : "Freunde"} — antippen oder füttern!`
+      : `${world.name}: Noch niemand hier — gewinne ${world.words.boardIn}!`
   );
 }
 
@@ -4289,25 +4308,50 @@ function openAquarium() {
   S.phase = "aquarium";
   S.viewer = 0;
   applyUiWorld(S.worlds[0]);
-  // no grid, no mat — just the living world
-  SCENE.setupBoard("mine", S.worlds[0], { bare: true });
+
+  // one big park: a themed pond per world, friends live in their own pond
+  const worldIds = pickableWorldIds(flag("welten"));
+  S.parkWorlds = worldIds;
+  SCENE.setupPark(worldIds);
 
   const p = PROG.loadProgress();
   const list = [];
-  for (const world of Object.values(WORLDS)) {
-    world.creatures.forEach((c, i) => {
-      if (PROG.stickerCount(world.id, i, p) > 0) {
-        list.push({ key: `${world.id}-${i}`, worldId: world.id, idx: i, name: c.name });
+  for (const wid of worldIds) {
+    WORLDS[wid].creatures.forEach((c, i) => {
+      if (PROG.stickerCount(wid, i, p) > 0) {
+        list.push({ key: `${wid}-${i}`, worldId: wid, idx: i, name: c.name });
       }
     });
   }
   S.aquarium = list;
   S.aquariumIdx = 0;
   refreshAquarium();
-  SCENE.focusBoard("mine");
   SCENE.clearInteraction();
-  S.aquariumTap = (x, y) => {
-    const key = SCENE.nearestAquariumKey("mine", x, y);
+  SCENE.parkOverview({ immediate: true });
+  // pond flights (taps AND pinch gestures) drive sound + status
+  SCENE.onParkViewChange((pondIdx) => {
+    parkStatus(pondIdx);
+    SND.startAmbient(pondIdx == null ? "dino" : worldIds[pondIdx]);
+  });
+
+  S.aquariumTap = (hit) => {
+    const focusedPond = SCENE.parkFocusedPond();
+    if (hit.pond == null) {
+      // meadow tap: from a pond, step back out to the overview
+      if (focusedPond != null) {
+        SND.whoosh();
+        SCENE.parkOverview();
+      }
+      return;
+    }
+    if (hit.pond !== focusedPond) {
+      // fly over to the tapped pond
+      SND.tap();
+      SCENE.focusPond(hit.pond);
+      return;
+    }
+    // inside the focused pond: greet a friend …
+    const key = SCENE.nearestParkKey(hit.px, hit.pz);
     if (key) {
       SND.sparkle();
       SCENE.hopCreature("mine", key);
@@ -4324,29 +4368,24 @@ function openAquarium() {
       }
       return;
     }
-    if (!list.length) return;
-    // tap the water: drop a snack, the closest friend swims over
-    const px = x - 4 + 0.5;
-    const pz = y - 4 + 0.5;
+    // … or drop a snack; only THIS pond's friends come over
+    const pondWorld = worldIds[hit.pond];
+    if (!list.some((e) => e.worldId === pondWorld)) return;
     SND.plop();
-    SCENE.dropFood("mine", px, pz);
-    const fed = SCENE.lureNearest("mine", px, pz);
+    SCENE.dropFood("mine", hit.px, hit.pz);
+    const fed = SCENE.lureNearest("mine", hit.px, hit.pz, (k) => k.startsWith(`${pondWorld}-`));
     const item = list.find((e) => e.key === fed);
     if (item) status(`🍪 ${item.name} hat den Snack entdeckt!`);
   };
-  SCENE.setTapMode("mine", S.aquariumTap);
-  SND.startAmbient(S.worlds[0]);
+  SCENE.setParkTap((hit) => S.aquariumTap(hit));
+  SND.startAmbient("dino"); // meadow breeze + birds for the overview
   show(null);
   $("#btn-shuffle").hidden = true;
   $("#btn-opts").hidden = true;
   $("#btn-endturn").hidden = true;
   $("#btn-place-done").hidden = true;
   renderChips(0);
-  status(
-    list.length
-      ? `Dein Aquarium: ${list.length} ${list.length === 1 ? "Freund" : "Freunde"} — antippen oder füttern!`
-      : "Noch ganz leer! Gewinne Spiele und sammle Sticker-Freunde."
-  );
+  parkStatus(null);
 }
 
 // -------------------------------------------------------------- album
@@ -5237,7 +5276,10 @@ function boot() {
     chaseNetTap: (x, y) => chaseOnlineSeekTap(x, y),
     bossTap: (x, y) => bossSeekTap(x, y),
     bossNetTap: (x, y) => bossOnlineSeekTap(x, y),
-    aquariumTap: (x, y) => S.aquariumTap?.(x, y),
+    aquariumTap: (hit) => S.aquariumTap?.(hit),
+    parkPos: (key) => SCENE.parkCreaturePos(key),
+    parkFocused: () => SCENE.parkFocusedPond(),
+    parkPonds: () => SCENE.parkPondCount(),
     setStyle: (id, tint, hat) => setShipCustom(id, { tint, hat }),
     setRules: (r) => {
       Object.assign(S.rules, r);
