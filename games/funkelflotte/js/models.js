@@ -1447,26 +1447,36 @@ function feuerkaefer(size) {
 // Real ships at last — weathered wood, patched sails, cheeky faces on
 // the bow. Hulls point -X like every creature's head.
 
-// shared: a simple carvel hull with a raised bow, face included
+// shared: a chunky box hull with a pointed prow — the prow is a
+// 45°-turned cube whose side corners sit exactly flush with the hull
+// walls, so the tip reads clean from every angle. Face on the prow.
 function pirateHull(g, len, hullColor, { beam = 0.5, faceY = 0.42 } = {}) {
   const hullM = mat(hullColor, { roughness: 0.85 });
-  const hull = add(g, new THREE.CylinderGeometry(0.5, 0.34, len * 0.9, 4, 1), hullM, 0, 0.3, 0);
-  hull.rotation.z = Math.PI / 2;
-  hull.rotation.y = Math.PI / 4;
-  hull.scale.set(1, 1, beam * 2);
-  // gunwale strip + bow tip
-  add(g, new THREE.BoxGeometry(len * 0.94, 0.07, beam * 2.1), mat(0x6b4423), 0, 0.5, 0);
-  const bow = add(g, new THREE.ConeGeometry(0.26, 0.5, 5), hullM, -len * 0.5, 0.34, 0);
-  bow.rotation.z = Math.PI / 2;
-  const blinkEyes = makeEyes(g, -len * 0.46, faceY, 0, 0.16, 0.07);
-  smile(g, -len * 0.5, faceY - 0.14, 0, 0.09);
+  const w = beam * 1.9;
+  const bodyLen = len * 0.86;
+  add(g, new THREE.BoxGeometry(bodyLen, 0.34, w), hullM, 0, 0.3, 0);
+  const prow = add(g, new THREE.BoxGeometry(w * 0.71, 0.34, w * 0.71), hullM, -bodyLen / 2, 0.3, 0);
+  prow.rotation.y = Math.PI / 4;
+  // lighter deck planks + a slim dark gunwale band
+  add(g, new THREE.BoxGeometry(bodyLen, 0.05, w * 0.8), mat(0x9a6b3f, { roughness: 0.9 }), 0, 0.49, 0);
+  add(g, new THREE.BoxGeometry(bodyLen * 1.02, 0.07, w * 1.05), mat(0x6b4423), 0, 0.44, 0);
+  // cheeky face right on the prow's angled cheeks
+  const blinkEyes = makeEyes(g, -bodyLen / 2 - w * 0.16, faceY, 0, 0.2, 0.095);
+  smile(g, -bodyLen / 2 - w * 0.32, faceY - 0.16, 0, 0.11);
   return blinkEyes;
 }
 
 function pirateSail(g, x, h, w, color = 0xf3e6c8) {
   add(g, new THREE.CylinderGeometry(0.035, 0.05, h, 6), mat(0x6b4423), x, 0.45 + h / 2, 0);
-  const sail = add(g, new THREE.SphereGeometry(0.5, 10, 8), mat(color, { roughness: 0.9, side: THREE.DoubleSide }), x + 0.16, 0.5 + h * 0.55, 0);
-  sail.scale.set(0.32, h * 0.42, w);
+  // a billowing sheet: an open cylinder slice bulging toward the bow
+  const sail = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.55, 0.55, h * 0.6, 12, 1, true, Math.PI * 1.125, Math.PI * 0.75),
+    mat(color, { roughness: 0.9, side: THREE.DoubleSide })
+  );
+  sail.position.set(x + 0.1, 0.52 + h * 0.52, 0);
+  sail.scale.set(w * 1.5, 1, w * 1.5);
+  sail.userData.bx = w * 1.5; // billow animations scale around this
+  g.add(sail);
   // a friendly star flag instead of grim symbols
   const flag = add(g, new THREE.PlaneGeometry(0.26, 0.16), mat(0xffcc33, { side: THREE.DoubleSide }), x + 0.14, 0.5 + h, 0);
   flag.rotation.y = Math.PI / 2;
@@ -1487,7 +1497,7 @@ function galeone(size) {
     g.rotation.z = Math.sin(t * 1.1) * 0.03;
     g.rotation.x = Math.sin(t * 0.8 + 1) * 0.025;
     rig.forEach(({ sail, flag }, i) => {
-      sail.scale.x = 0.32 + Math.sin(t * 1.6 + i) * 0.05;
+      sail.scale.x = sail.userData.bx * (1 + Math.sin(t * 1.6 + i) * 0.1);
       flag.rotation.x = Math.sin(t * 3 + i) * 0.3;
     });
     blinkEyes(t);
@@ -1505,7 +1515,7 @@ function segler(size) {
   g.userData.animate = (t) => {
     g.rotation.z = Math.sin(t * 1.3) * 0.04;
     rig.forEach(({ sail, flag }, i) => {
-      sail.scale.x = 0.32 + Math.sin(t * 1.8 + i * 2) * 0.06;
+      sail.scale.x = sail.userData.bx * (1 + Math.sin(t * 1.8 + i * 2) * 0.12);
       flag.rotation.x = Math.sin(t * 3.4 + i) * 0.35;
     });
     blinkEyes(t);
@@ -1517,14 +1527,16 @@ function ruderboot(size) {
   const g = new THREE.Group();
   const len = size * 0.88;
   const blinkEyes = pirateHull(g, len, 0x9a6b3f, { beam: 0.4, faceY: 0.4 });
-  // two pairs of oars rowing
+  // two pairs of oars, pivoting at the gunwale, dipped toward the water
   const oars = [];
   for (const [dx, s] of [[-len * 0.15, -1], [-len * 0.15, 1], [len * 0.15, -1], [len * 0.15, 1]]) {
     const oar = new THREE.Group();
-    oar.position.set(dx, 0.5, s * 0.42);
-    const shaft = add(oar, new THREE.CylinderGeometry(0.03, 0.03, 0.9, 6), mat(0x6b4423), 0, 0, s * 0.3);
-    shaft.rotation.x = s * 1.1;
-    add(oar, new THREE.SphereGeometry(0.09, 6, 5), mat(0x6b4423), 0, -0.3, s * 0.68).scale.set(0.5, 1.4, 0.2);
+    oar.position.set(dx, 0.48, s * 0.4);
+    const shaft = add(oar, new THREE.CylinderGeometry(0.028, 0.028, 0.9, 6), mat(0x6b4423), 0, 0, s * 0.45);
+    shaft.rotation.x = Math.PI / 2; // shaft reaches straight outboard
+    const blade = add(oar, new THREE.SphereGeometry(0.09, 6, 5), mat(0x6b4423), 0, 0, s * 0.92);
+    blade.scale.set(0.45, 0.18, 1.4);
+    oar.rotation.x = s * 0.35; // resting dip into the water
     g.add(oar);
     oars.push({ oar, s });
   }
@@ -1532,7 +1544,10 @@ function ruderboot(size) {
   add(g, new THREE.BoxGeometry(0.14, 0.06, 0.7), mat(0x6b4423), 0, 0.46, 0);
   add(g, new THREE.SphereGeometry(0.08, 8, 6), mat(0xffe066, { emissive: 0xffaa00, emissiveIntensity: 0.8 }), len * 0.4, 0.6, 0);
   g.userData.animate = (t) => {
-    for (const { oar, s } of oars) oar.rotation.z = Math.sin(t * 2.6 + s) * 0.35;
+    for (const { oar, s } of oars) {
+      oar.rotation.x = s * (0.35 + Math.sin(t * 2.6 + s) * 0.18); // dip …
+      oar.rotation.y = Math.cos(t * 2.6 + s) * 0.22; // … and stroke
+    }
     g.rotation.z = Math.sin(t * 1.4) * 0.03;
     g.position.y = Math.sin(t * 1.8) * 0.03;
     blinkEyes(t);
@@ -1563,7 +1578,7 @@ function fassfloss(size) {
   g.userData.animate = (t) => {
     g.rotation.x = Math.sin(t * 1.7) * 0.05;
     g.position.y = Math.sin(t * 1.5) * 0.03;
-    rig.sail.scale.x = 0.32 + Math.sin(t * 2) * 0.06;
+    rig.sail.scale.x = rig.sail.userData.bx * (1 + Math.sin(t * 2) * 0.12);
     rig.flag.rotation.x = Math.sin(t * 3.2) * 0.35;
     blinkEyes(t);
   };
@@ -1592,15 +1607,17 @@ function beiboot(size) {
 // The harbor fleet: crisp hulls, red trim, proud little machines.
 
 function marineHull(g, len, hullColor, deckColor = 0xd8dce2) {
-  const hull = add(g, new THREE.CylinderGeometry(0.48, 0.3, len * 0.92, 4, 1), mat(hullColor, { roughness: 0.6 }), 0, 0.28, 0);
-  hull.rotation.z = Math.PI / 2;
-  hull.rotation.y = Math.PI / 4;
-  hull.scale.set(1, 1, 0.95);
-  add(g, new THREE.BoxGeometry(len * 0.9, 0.08, 0.86), mat(deckColor, { roughness: 0.55 }), 0, 0.48, 0);
-  const bow = add(g, new THREE.ConeGeometry(0.24, 0.45, 5), mat(hullColor, { roughness: 0.6 }), -len * 0.5, 0.3, 0);
-  bow.rotation.z = Math.PI / 2;
-  const blinkEyes = makeEyes(g, -len * 0.44, 0.42, 0, 0.16, 0.07);
-  smile(g, -len * 0.48, 0.28, 0, 0.09);
+  const hullM = mat(hullColor, { roughness: 0.6 });
+  const w = 0.84;
+  const bodyLen = len * 0.86;
+  add(g, new THREE.BoxGeometry(bodyLen, 0.32, w), hullM, 0, 0.28, 0);
+  const prow = add(g, new THREE.BoxGeometry(w * 0.71, 0.32, w * 0.71), hullM, -bodyLen / 2, 0.28, 0);
+  prow.rotation.y = Math.PI / 4;
+  add(g, new THREE.BoxGeometry(bodyLen, 0.07, w * 0.9), mat(deckColor, { roughness: 0.55 }), 0, 0.46, 0);
+  // crisp waterline stripe all around
+  add(g, new THREE.BoxGeometry(bodyLen * 1.01, 0.05, w * 1.03), mat(0xd8483c, { roughness: 0.55 }), 0, 0.14, 0);
+  const blinkEyes = makeEyes(g, -bodyLen / 2 - w * 0.16, 0.36, 0, 0.19, 0.09);
+  smile(g, -bodyLen / 2 - w * 0.32, 0.2, 0, 0.1);
   return blinkEyes;
 }
 
@@ -1681,7 +1698,7 @@ function uboot(size) {
   for (const px of [-len * 0.28, -len * 0.02, len * 0.24]) {
     add(g, new THREE.TorusGeometry(0.07, 0.02, 6, 10), mat(0xffd447), px, 0.4, 0.32).rotation.y = 0.35;
   }
-  add(g, new THREE.SphereGeometry(0.18, 8, 6), mat(0xd8483c), -len * 0.46, 0.34, 0).scale.set(0.8, 0.7, 0.7);
+  add(g, new THREE.SphereGeometry(0.2, 8, 6), mat(0xd8483c), -len * 0.4, 0.34, 0).scale.set(0.8, 0.75, 0.75);
   // propeller
   const prop = new THREE.Group();
   prop.position.set(len * 0.48, 0.34, 0);
@@ -1694,8 +1711,8 @@ function uboot(size) {
     prop.add(holder);
   }
   g.add(prop);
-  const blinkEyes = makeEyes(g, -len * 0.38, 0.5, 0, 0.17, 0.08);
-  smile(g, -len * 0.42, 0.34, 0, 0.09);
+  const blinkEyes = makeEyes(g, -len * 0.29, 0.5, 0, 0.17, 0.08);
+  smile(g, -len * 0.33, 0.36, 0, 0.09);
   g.userData.animate = (t) => {
     prop.rotation.x = t * 6;
     scope.rotation.y = Math.sin(t * 0.9) * 0.9;
@@ -1734,11 +1751,13 @@ function flitzer(size) {
   const g = new THREE.Group();
   const len = size * 0.85;
   const blinkEyes = marineHull(g, len, 0xe4e8ee, 0x2a4d7e);
-  // racing stripe, windshield, outboard motor with wake spray
-  add(g, new THREE.BoxGeometry(len * 0.9, 0.05, 0.2), mat(0xff5f6d), 0, 0.53, 0);
-  const shield = add(g, new THREE.PlaneGeometry(0.4, 0.22), mat(0xbfe9ff, { transparent: true, opacity: 0.65, side: THREE.DoubleSide }), -len * 0.12, 0.66, 0);
+  // racing stripes on the flanks, windshield, outboard motor with spray
+  for (const s of [-1, 1]) {
+    add(g, new THREE.BoxGeometry(len * 0.8, 0.09, 0.04), mat(0xff5f6d), 0, 0.34, s * 0.43);
+  }
+  const shield = add(g, new THREE.PlaneGeometry(0.44, 0.24), mat(0xbfe9ff, { transparent: true, opacity: 0.65, side: THREE.DoubleSide }), -len * 0.12, 0.58, 0);
   shield.rotation.y = Math.PI / 2;
-  shield.rotation.z = -0.4;
+  shield.rotation.z = -0.35;
   add(g, new THREE.BoxGeometry(0.16, 0.26, 0.14), mat(0x27303d), len * 0.44, 0.5, 0);
   const spray = [];
   for (let i = 0; i < 3; i += 1) {
