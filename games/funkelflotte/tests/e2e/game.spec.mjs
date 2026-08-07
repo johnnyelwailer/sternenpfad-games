@@ -1313,7 +1313,7 @@ test("hot-seat: two worlds, pass screens, full game to the win screen", async ({
   await page.locator("#btn-win-home").click();
   await page.locator("#btn-album").click();
   await expect(page.locator("#screen-album")).toHaveClass(/active/);
-  await expect(page.locator(".album-slot")).toHaveCount(20);
+  await expect(page.locator(".album-slot")).toHaveCount(30); // 6 worlds x 5 friends
   await expect(page.locator(".album-slot:not(.locked)")).toHaveCount(1);
   await expect(page.locator("#album-total")).toContainText("1 Sticker");
 });
