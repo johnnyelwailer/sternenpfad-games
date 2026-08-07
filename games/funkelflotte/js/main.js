@@ -580,8 +580,10 @@ function startPlacement(player) {
     blockedCells: (id) => {
       const board = S.boards[idx];
       const set = new Set();
-      // Enge Verstecke: only the occupied cells themselves are blocked
-      const reach = board.allowTouch ? 0 : 1;
+      // Enge Verstecke: only the occupied cells themselves are blocked.
+      // The balloon ignores the gap rule entirely — it may snuggle
+      // anywhere, and creatures may snuggle up to it.
+      const reach = board.allowTouch || String(id) === "decoy" ? 0 : 1;
       const markAround = (cx, cy) => {
         for (let dx = -reach; dx <= reach; dx += 1) {
           for (let dy = -reach; dy <= reach; dy += 1) {
@@ -595,7 +597,7 @@ function startPlacement(player) {
         if (String(s.id) === String(id)) continue;
         for (const c of E.shipCells(s)) markAround(c.x, c.y);
       }
-      if (board.decoy && id !== "decoy") markAround(board.decoy.x, board.decoy.y);
+      if (board.decoy && id !== "decoy") set.add(E.key(board.decoy.x, board.decoy.y));
       return [...set].map((k) => {
         const [x, y] = k.split(",").map(Number);
         return { x, y };
@@ -608,11 +610,7 @@ function startPlacement(player) {
           SND.tap();
         } else {
           SND.sad();
-          toast(
-            board.allowTouch
-              ? "Da sitzt schon jemand!"
-              : "Der Ballon braucht ein Feld Abstand zu den Freunden!"
-          );
+          toast("Da sitzt schon jemand — der Ballon braucht ein eigenes Feld!");
         }
         SCENE.moveCreature(slot, decoyShipOf(board));
         return;
@@ -1120,7 +1118,7 @@ function ownPowerTap(x, y) {
     // pick a free spot (the balloon) — invalid taps keep the aim armed
     if (!PW.canExtraBalloonAt(board, x, y)) {
       SND.sad();
-      toast("Da geht das nicht — such ein freies Feld ohne Nachbarn!");
+      toast("Da geht das nicht — such ein freies Feld!");
       return;
     }
     S.pendingPower = null;
@@ -1320,7 +1318,7 @@ function executePower(kind, target) {
     // the player chose the exact spot on their own board
     if (!PW.extraBalloonAt(S.boards[my], target.x, target.y)) {
       SND.sad();
-      toast("Da geht das nicht — such ein freies Feld ohne Nachbarn!");
+      toast("Da geht das nicht — such ein freies Feld!");
       S.pendingPower = kind; // stay armed, try another cell
       renderPowers();
       return;
@@ -1413,10 +1411,24 @@ function applySalvoResults(targetIdx, results, done) {
 
 // ------------------------------------------------------------ pass/world
 
-function showPass({ title, sub, btn, action }) {
+let storyVig = null;
+function stopStoryVignette() {
+  storyVig?.dispose();
+  storyVig = null;
+  const stage = $("#story-stage");
+  if (stage) stage.hidden = true;
+}
+
+function showPass({ title, sub, btn, action, vignette = null }) {
   $("#pass-title").textContent = title;
   $("#pass-sub").textContent = sub;
   $("#btn-pass-go").textContent = btn;
+  stopStoryVignette();
+  if (vignette) {
+    const stage = $("#story-stage");
+    stage.hidden = false;
+    storyVig = SCENE.storyVignette(stage, vignette.world, vignette.prop);
+  }
   S.passAction = action;
   show("screen-pass");
 }
@@ -3765,7 +3777,7 @@ const JOURNEY = [
     emoji: "🌊",
     label: "Die erste Suche",
     story:
-      "Ein Sturm hat alle Meeresfreunde durcheinandergewirbelt! Such sie, bevor Robo sie findet — tippe Feld für Feld und merk dir, wo es nur Wasser gab.",
+      "Ein Sturm hat alle Freunde versteckt! Find sie, bevor Robo sie findet.",
   },
   {
     world: "ozean",
@@ -3775,7 +3787,7 @@ const JOURNEY = [
     emoji: "🔍",
     label: "Die glitzernde Truhe",
     story:
-      "Vor der Küste funkelt eine Schatztruhe! Grab sie aus (tipp einfach ihr Feld an) — darin wartet ein Fernglas, mit dem du heimlich unter ein Feld schauen kannst.",
+      "In der Truhe glitzert ein Fernglas — grab sie aus und schau heimlich unter ein Feld!",
   },
   {
     world: "teich",
@@ -3784,7 +3796,7 @@ const JOURNEY = [
     emoji: "🎈",
     label: "Das Ballon-Fest",
     story:
-      "Am Angelteich ist Ballon-Fest! Jeder versteckt einen Schwindel-Ballon. Wer ihn trifft — PENG! — schenkt dem anderen einen Extra-Zug. Lass dich nicht reinlegen!",
+      "Ballon-Fest! Wer den Schwindel-Ballon trifft — PENG! — schenkt dem anderen einen Extra-Zug.",
   },
   {
     world: "weltraum",
@@ -3794,7 +3806,7 @@ const JOURNEY = [
     emoji: "🎯",
     label: "Der Doppelstern",
     story:
-      "Im Weltraum leuchtet ein Doppelstern über einer Truhe. Sein Zauber: Du darfst gleich ZWEIMAL suchen! Grab ihn aus und leg los.",
+      "Der Doppelstern schenkt dir ZWEI Schüsse auf einmal. Grab ihn aus!",
   },
   {
     world: "teich",
@@ -3802,7 +3814,7 @@ const JOURNEY = [
     emoji: "🧩",
     label: "Die Knobel-Insel",
     story:
-      "Eine kleine Insel voller Rätsel! Die Zahlen am Rand verraten, wie viele Freunde in jeder Reihe stecken. Denk nach, bevor du gräbst — die Schaufeln sind knapp.",
+      "Die Knobel-Insel! Die Zahlen am Rand verraten, wo die Freunde stecken.",
   },
   {
     world: "dino",
@@ -3812,7 +3824,7 @@ const JOURNEY = [
     emoji: "🥁",
     label: "Trommeln im Dschungel",
     story:
-      "Tief im Dino-Dschungel schlägt eine Urwald-Trommel. Ihr Zauber zeigt dir mit einem Pfeil den Weg zum nächsten Versteck — der Pfeil bleibt stehen, bis du schießt!",
+      "Die Urwald-Trommel zeigt dir mit einem Pfeil den Weg. Trommel los!",
   },
   {
     world: "dino",
@@ -3820,7 +3832,7 @@ const JOURNEY = [
     emoji: "🙈",
     label: "Der freche Keksdieb",
     story:
-      "Ein Frechdachs hat die Expeditions-Kekse stibitzt und flitzt übers Feld! Nach jedem Schuss huscht er weiter. Die Zahlen verraten, wie nah du ihm bist.",
+      "Der Frechdachs hat die Kekse geklaut — schnapp ihn, bevor er entwischt!",
   },
   {
     world: "ozean",
@@ -3830,7 +3842,7 @@ const JOURNEY = [
     emoji: "🔔",
     label: "Die singende Glocke",
     story:
-      "Aus der Tiefe klingt eine Zauberglocke. Sie verrät dir, ob der größte versteckte Freund QUER oder HOCHKANT liegt — ein leuchtender Schatten zeigt es dir.",
+      "Die Zauberglocke zeigt den Schatten des größten Freundes. Lausch gut!",
   },
   {
     world: "teich",
@@ -3840,7 +3852,7 @@ const JOURNEY = [
     emoji: "🍀",
     label: "Das Glücksklee-Feld",
     story:
-      "Am Teichufer wächst Glücksklee! Wer ihn findet, sieht bei den nächsten 4 Fehlschüssen eine Zahl: so viele Felder bis zum nächsten Freund. Zähl mit!",
+      "Glücksklee! Viermal zeigt dir ein Daneben, wie nah der nächste Freund ist.",
   },
   {
     world: "weltraum",
@@ -3850,7 +3862,7 @@ const JOURNEY = [
     emoji: "⏳",
     label: "Der Zeitkristall",
     story:
-      "Ein Zeitkristall schwebt zwischen den Sternen. Sein Zauber schenkt dir einen Extra-Zug: Nach deinem nächsten Daneben darfst du einfach weitersuchen.",
+      "Der Zeitkristall schenkt dir nach einem Daneben einen Extra-Zug.",
   },
   {
     world: "weltraum",
@@ -3858,7 +3870,7 @@ const JOURNEY = [
     emoji: "👑",
     label: "Das König-Monster",
     story:
-      "Ein riesiges Monster stapft durchs Sternenmeer — und es LÄUFT nach jedem Schuss weiter! Die Zahlen zeigen, wie nah du dran bist. Triff jeden Körperteil einmal!",
+      "Ein riesiges Monster stapft übers Feld — triff jeden Körperteil einmal!",
   },
   {
     world: "dino",
@@ -3868,7 +3880,7 @@ const JOURNEY = [
     emoji: "🏆",
     label: "Die große Prüfung",
     story:
-      "Die letzte Etappe! Robo hat trainiert und sucht diesmal richtig schlau. Zum Glück wartet ein Seerosen-Schild in der Truhe: Der nächste Treffer auf deine Freunde prallt ab!",
+      "Die letzte Prüfung: Robo sucht richtig schlau. Dein Seerosen-Schild hilft!",
     robo: "schlau",
   },
 ];
@@ -3918,11 +3930,24 @@ function startJourneyStop(i) {
     return;
   }
   const stop = JOURNEY[i];
-  // every stop begins with its piece of the story — then the adventure
+  // every stop begins with its piece of the story, ACTED OUT: the hero
+  // creature meets the stop's prop in a little animated vignette
+  const prop =
+    stop.teach ??
+    (stop.type === "boss"
+      ? "monster"
+      : stop.type === "chase"
+        ? "frido"
+        : stop.type === "puzzle"
+          ? "chest"
+          : stop.rules?.decoy
+            ? "decoy"
+            : null);
   showPass({
     title: `${stop.emoji} Etappe ${i + 1}: ${stop.label}`,
     sub: stop.story,
     btn: "Los geht's!",
+    vignette: { world: stop.world, prop },
     action: () => launchJourneyStop(i),
   });
 }
@@ -4806,6 +4831,7 @@ function boot() {
   $("#btn-place-done").addEventListener("click", placementDone);
   $("#btn-pass-go").addEventListener("click", () => {
     SND.tap();
+    stopStoryVignette();
     const action = S.passAction;
     S.passAction = null;
     if (action) action();

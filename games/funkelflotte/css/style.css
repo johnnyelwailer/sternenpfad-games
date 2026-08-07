@@ -883,6 +883,20 @@ h1.logo {
   max-width: 260px;
 }
 
+#story-stage {
+  display: block;
+  width: min(78vw, 340px);
+  height: 200px;
+  margin: 4px auto 8px;
+  border-radius: 18px;
+  background: radial-gradient(ellipse at 50% 80%, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.22));
+  border: 1.5px solid rgba(255, 255, 255, 0.14);
+}
+
+#story-stage[hidden] {
+  display: none;
+}
+
 .gain-dismiss {
   margin-top: 6px;
   font-size: 0.75rem;

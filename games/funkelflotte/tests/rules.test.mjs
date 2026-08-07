@@ -10,14 +10,28 @@ function boardWith(ships) {
   return b;
 }
 
-test("decoy: placement respects no-touch in both directions", () => {
+test("decoy: may snuggle right beside creatures — only overlap is out", () => {
   const b = boardWith([{ id: 0, size: 3, x: 0, y: 0, dir: "h" }]);
-  assert.equal(E.canPlaceDecoy(b, 1, 1), false); // touches the ship
-  assert.equal(E.canPlaceDecoy(b, 3, 1), false); // diagonal touch
+  assert.equal(E.canPlaceDecoy(b, 1, 0), false); // ON the ship: never
+  assert.equal(E.canPlaceDecoy(b, 1, 1), true); // directly below: fine!
+  assert.equal(E.canPlaceDecoy(b, 3, 1), true); // diagonal: fine!
   assert.equal(E.placeDecoy(b, 5, 5), true);
-  // now ships must keep away from the decoy
-  assert.equal(E.canPlace(b, { id: 1, size: 2, x: 4, y: 4, dir: "h" }, 1), false);
-  assert.equal(E.canPlace(b, { id: 1, size: 2, x: 0, y: 7, dir: "h" }, 1), true);
+  // ships may cuddle up to the balloon too — just not sit on it
+  assert.equal(E.canPlace(b, { id: 1, size: 2, x: 4, y: 5, dir: "h" }, 1), false); // overlaps
+  assert.equal(E.canPlace(b, { id: 1, size: 2, x: 4, y: 4, dir: "h" }, 1), true); // adjacent
+});
+
+test("decoy: auto-reveal skips the balloon cell (the honest gap trap)", () => {
+  const b = boardWith([{ id: 0, size: 2, x: 2, y: 2, dir: "h" }]);
+  E.placeDecoy(b, 2, 3); // right below the creature
+  E.fire(b, 2, 2);
+  const res = E.fire(b, 3, 2);
+  assert.equal(res.result, E.SUNK);
+  // the ring is revealed as water — except the balloon's cell
+  assert.equal(b.shots[E.key(2, 3)], undefined);
+  assert.ok(!res.revealed.some((c) => c.x === 2 && c.y === 3));
+  // popping it later still works
+  assert.equal(E.fire(b, 2, 3).result, E.DECOY);
 });
 
 test("decoy: firing pops it without ending the game", () => {

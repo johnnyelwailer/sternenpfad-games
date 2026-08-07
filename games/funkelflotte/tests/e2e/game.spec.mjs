@@ -868,10 +868,12 @@ test("Weltreise: story screens, winning unlocks, spells get taught", async ({ pa
   await expect(page.locator(".journey-stop.current")).toHaveCount(1);
   await expect(page.locator("#btn-journey-go")).toContainText("Etappe 5");
 
-  // every stop starts with its slice of the story
+  // every stop starts with its slice of the story — acted out on the
+  // little animated stage
   await page.locator("#btn-journey-go").click();
   await expect(page.locator("#screen-pass")).toHaveClass(/active/);
   await expect(page.locator("#pass-sub")).toContainText("Insel");
+  await expect(page.locator("#story-stage")).toBeVisible();
   await page.locator("#btn-pass-go").click();
 
   // stop 5 is the Knobel-Insel puzzle

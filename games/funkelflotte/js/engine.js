@@ -75,10 +75,11 @@ export function canPlace(board, ship, ignoreId = null) {
       }
     }
   }
-  // the decoy balloon counts as occupied space too
+  // the decoy balloon only blocks its own cell — snuggling next to it
+  // is allowed (that ambiguity is the whole point of the bluff)
   if (board.decoy) {
     for (const c of cells) {
-      if (conflict(c, board.decoy)) return false;
+      if (c.x === board.decoy.x && c.y === board.decoy.y) return false;
     }
   }
   return true;
@@ -86,14 +87,13 @@ export function canPlace(board, ship, ignoreId = null) {
 
 // ------------------------------------------------------- decoy (Schwindler)
 
+// The balloon may sit ANYWHERE free — even directly beside a creature.
+// A balloon next to a hit trail is prime bluff real estate.
 export function canPlaceDecoy(board, x, y) {
   if (!inBounds(board, x, y)) return false;
-  const conflict = board.allowTouch
-    ? (a, b) => a.x === b.x && a.y === b.y
-    : cellsTouch;
   for (const s of board.ships) {
     for (const c of shipCells(s)) {
-      if (conflict({ x, y }, c)) return false;
+      if (c.x === x && c.y === y) return false;
     }
   }
   return true;
@@ -237,6 +237,9 @@ export function fire(board, x, y) {
     const revealed = [];
     if (!board.allowTouch) {
       for (const c of surroundCells(board, ship)) {
+        // never auto-reveal the balloon's cell — it isn't water, and the
+        // conspicuous gap in the ring makes a delicious trap
+        if (board.decoy && board.decoy.x === c.x && board.decoy.y === c.y) continue;
         const ck = key(c.x, c.y);
         if (!board.shots[ck]) {
           board.shots[ck] = MISS;

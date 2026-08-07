@@ -129,8 +129,10 @@ test("extra balloon goes exactly where chosen, respecting the rules", () => {
   E.placeShip(b, { id: 0, size: 2, x: 0, y: 0, dir: "h" });
   b.treasures = [{ x: 6, y: 6 }];
   E.fire(b, 4, 4); // a known miss mark
-  // illegal spots: touching the creature, on a mark, on a treasure
-  assert.equal(P.canExtraBalloonAt(b, 1, 1), false);
+  // illegal spots: ON a creature, on a mark, on a treasure — but
+  // snuggling right beside a creature is allowed (prime bluff estate)
+  assert.equal(P.canExtraBalloonAt(b, 1, 0), false);
+  assert.equal(P.canExtraBalloonAt(b, 1, 1), true);
   assert.equal(P.canExtraBalloonAt(b, 4, 4), false);
   assert.equal(P.canExtraBalloonAt(b, 6, 6), false);
   // a legal free cell works — once
