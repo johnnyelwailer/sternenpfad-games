@@ -77,10 +77,10 @@ export const POWERS = {
   ballon: {
     emoji: "🎈",
     name: "Extra-Ballon",
-    target: "none",
+    target: "own-cell",
     cardsOnly: true,
-    desc: "Versteck einen neuen Schwindel-Ballon auf deinem Brett. Peng!",
-    use: "Versteckt sofort einen neuen Schwindel-Ballon bei dir.",
+    desc: "Such dir selbst ein freies Feld auf deinem Brett aus und versteck dort einen neuen Schwindel-Ballon. Peng!",
+    use: "Tipp ein freies Feld auf DEINEM Brett — da sitzt der Ballon.",
   },
   kompass: {
     emoji: "🧭",
@@ -93,8 +93,8 @@ export const POWERS = {
     emoji: "🔔",
     name: "Zauberglocke",
     target: "none",
-    desc: "Die Glocke flüstert dir zu, ob der größte versteckte Freund quer oder hochkant liegt.",
-    use: "Wirkt sofort: Die Glocke verrät, wie der größte Freund liegt.",
+    desc: "Die Glocke zeigt dir den Schatten des größten versteckten Freundes: wie lang er ist und wie herum er liegt — nur nicht wo.",
+    use: "Der goldene Schatten überm Brett hat GENAU seine Form.",
   },
   klee: {
     emoji: "🍀",
@@ -257,14 +257,33 @@ export function directionToNearest(board, x, y) {
   return { angle: Math.atan2(best.y - y, best.x - x), dist: bestD };
 }
 
-// orientation of the largest not-yet-found creature ("h" | "v" | null)
-export function biggestHiddenDir(board) {
+// shape of the largest not-yet-found creature: { dir, size } — enough
+// for a concrete ghost outline (never its position!) — or null
+export function biggestHidden(board) {
   let best = null;
   for (const ship of board.ships) {
     if (E.isSunk(ship)) continue;
     if (!best || ship.size > best.size) best = ship;
   }
-  return best ? best.dir : null;
+  if (!best) return null;
+  // a 2×2 square friend has no orientation — report it as a square
+  return { dir: best.shape === "sq" ? "sq" : best.dir, size: best.shape === "sq" ? 2 : best.size };
+}
+
+// the extra balloon goes exactly where the player chose: the cell must
+// be free of marks and treasures, hold no creature contact, and there
+// may be no live balloon yet
+export function canExtraBalloonAt(board, x, y) {
+  if (!canExtraBalloon(board)) return false;
+  if (board.shots[E.key(x, y)]) return false;
+  if ((board.treasures ?? []).some((t) => t.x === x && t.y === y)) return false;
+  return E.canPlaceDecoy(board, x, y);
+}
+
+export function extraBalloonAt(board, x, y) {
+  if (!canExtraBalloonAt(board, x, y)) return false;
+  board.decoy = { x, y };
+  return true;
 }
 
 // Wirbelwind: move a not-yet-sunk creature (the chosen one, or a random
@@ -323,16 +342,3 @@ export function canExtraBalloon(board) {
   return board.shots[E.key(board.decoy.x, board.decoy.y)] === E.DECOY;
 }
 
-export function extraBalloon(board, rng = Math.random) {
-  if (!canExtraBalloon(board)) return false;
-  for (let tries = 0; tries < 300; tries += 1) {
-    const x = Math.floor(rng() * board.size);
-    const y = Math.floor(rng() * board.size);
-    if (board.shots[E.key(x, y)]) continue;
-    if ((board.treasures ?? []).some((t) => t.x === x && t.y === y)) continue;
-    if (!E.canPlaceDecoy(board, x, y)) continue;
-    board.decoy = { x, y };
-    return true;
-  }
-  return false;
-}

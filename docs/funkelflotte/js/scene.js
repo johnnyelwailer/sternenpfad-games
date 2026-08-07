@@ -1373,38 +1373,59 @@ export function arrowMarker(slot, x, y, angle) {
   tween((v) => holder.scale.setScalar(v), { dur: 0.45, ease: Ease.outBack });
 }
 
-// Zauberglocke: a glowing ghost silhouette hovers over the board —
-// lying flat (h) or standing tall (v) like the biggest hidden friend.
-// It lingers (as the current hint) until the next shot.
-export function orientationGhost(slot, dir) {
+// Zauberglocke: a golden GHOST OUTLINE hovers over the board — one pad
+// per body cell of the biggest hidden friend, laid out exactly like it
+// (flat ↔, upright ↕, or a 2×2 square). Length + orientation, never
+// position. It lingers (as the current hint) until the next shot.
+export function orientationGhost(slot, dir, size = 4) {
   const d = dioramas[slot];
   if (!d) return;
   clearHintArrow(slot);
   const holder = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xffe27a,
-    emissive: 0xffc94d,
-    emissiveIntensity: 1.1,
-    transparent: true,
-    opacity: 0.55,
-    flatShading: true,
-    depthWrite: false,
-  });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 2.2, 4, 10), mat);
-  if (dir === "v") {
-    // standing tall: upright above the board
-    holder.add(body);
-  } else {
-    body.rotation.z = Math.PI / 2; // lying flat along X
-    holder.add(body);
+  const padTex = padTexture();
+  const offsets =
+    dir === "sq"
+      ? [
+          [-0.55, -0.55],
+          [0.55, -0.55],
+          [-0.55, 0.55],
+          [0.55, 0.55],
+        ]
+      : Array.from({ length: size }, (_, i) => {
+          const o = (i - (size - 1) / 2) * 1.1;
+          return dir === "v" ? [0, o] : [o, 0];
+        });
+  for (const [ox, oz] of offsets) {
+    const pad = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.95, 0.95),
+      new THREE.MeshBasicMaterial({
+        map: padTex,
+        color: 0xffd447,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(ox, 0, oz);
+    holder.add(pad);
   }
-  holder.position.set(0, dir === "v" ? 1.9 : 1.3, 0);
-  holder.userData.baseY = holder.position.y;
+  // a soft golden frame so the pads read as ONE creature-shaped shadow
+  const qMark = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: textTexture("?"), transparent: true, depthWrite: false })
+  );
+  qMark.scale.setScalar(0.8);
+  qMark.position.set(0, 0.55, 0);
+  holder.add(qMark);
+  holder.position.set(0, 1.1, 0);
+  holder.userData.baseY = 1.1;
   d.root.add(holder);
   d.hintArrow = holder;
   flash(d, { x: 0, z: 0 }, 0xffc94d);
+  for (const [ox, oz] of offsets) ringWave(d, { x: ox, z: oz }, 0xffd447);
   holder.scale.setScalar(0.01);
-  tween((v) => holder.scale.setScalar(v), { dur: 0.55, ease: Ease.outBack });
+  tween((v) => holder.scale.setScalar(v), { dur: 0.6, ease: Ease.outBack });
 }
 
 // Wirbelwind: a HIT mark spins up into the air and vanishes — the

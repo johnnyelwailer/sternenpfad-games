@@ -1050,7 +1050,7 @@ function onPowerTap(kind) {
   if (S.phase !== "battle" || S.turn !== S.viewer || S.inputLocked) return;
   if (S.pendingPower === kind) {
     S.pendingPower = null;
-    if (PW.POWERS[kind].target === "own") resumeBattleView();
+    if (["own", "own-cell"].includes(PW.POWERS[kind].target)) resumeBattleView();
     else beginTurnStatus();
     renderPowers();
     return;
@@ -1069,13 +1069,17 @@ function onPowerTap(kind) {
   SND.tap();
   if (p.target === "none") {
     executePower(kind, null);
-  } else if (p.target === "own") {
-    // pick one of YOUR friends: fly home so you see who you're choosing
+  } else if (p.target === "own" || p.target === "own-cell") {
+    // aim on YOUR OWN board: fly home so you see what you're choosing
     S.pendingPower = kind;
     const mySlot = slotFor(me());
     SCENE.focusBoard(mySlot);
     SCENE.setTapMode(mySlot, (x, y) => ownPowerTap(x, y));
-    status(`${p.emoji} ${p.name}: Tipp den Freund an, der umziehen soll!`);
+    status(
+      p.target === "own"
+        ? `${p.emoji} ${p.name}: Tipp den Freund an, der umziehen soll!`
+        : `${p.emoji} ${p.name}: Tipp ein freies Feld — da versteckt sich der Ballon!`
+    );
     renderPowers();
   } else {
     S.pendingPower = kind;
@@ -1102,8 +1106,21 @@ function resumeBattleView() {
 function ownPowerTap(x, y) {
   if (S.phase !== "battle" || S.inputLocked || S.turn !== S.viewer) return;
   const kind = S.pendingPower;
-  if (!kind || PW.POWERS[kind].target !== "own") return;
+  if (!kind) return;
+  const target = PW.POWERS[kind].target;
   const board = S.boards[me()];
+  if (target === "own-cell") {
+    // pick a free spot (the balloon) — invalid taps keep the aim armed
+    if (!PW.canExtraBalloonAt(board, x, y)) {
+      SND.sad();
+      toast("Da geht das nicht — such ein freies Feld ohne Nachbarn!");
+      return;
+    }
+    S.pendingPower = null;
+    executePower(kind, { x, y });
+    return;
+  }
+  if (target !== "own") return;
   const ship = E.shipAt(board, x, y);
   if (!ship) {
     SND.tap();
@@ -1140,7 +1157,7 @@ function resolveInfo(kind, payload, apply) {
   else if (kind === "radar") apply({ cells: PW.scanCells(board, PW.squareCells(board, payload.x, payload.y)) });
   else if (kind === "fernglas") apply({ cells: PW.scanCells(board, [{ x: payload.x, y: payload.y }]) });
   else if (kind === "trommel" || kind === "kompass") apply({ dir: PW.directionToNearest(board, payload.x, payload.y) });
-  else if (kind === "glocke") apply({ big: PW.biggestHiddenDir(board) });
+  else if (kind === "glocke") apply({ big: PW.biggestHidden(board) });
 }
 
 function executePower(kind, target) {
@@ -1192,12 +1209,16 @@ function executePower(kind, target) {
     SCENE.bellToll(enemySlot);
     resolveInfo(kind, {}, ({ big }) => {
       SND.sparkle();
-      // a glowing ghost silhouette floats over the board — lying flat or
-      // standing tall — and stays until the next shot
-      if (big) SCENE.orientationGhost(enemySlot, big);
+      // the biggest hidden friend's SHADOW appears over the board: its
+      // exact length and orientation, hovering until the next shot
+      if (big?.dir && big?.size) SCENE.orientationGhost(enemySlot, big.dir, big.size);
       status(
         big
-          ? `🔔 Die Glocke flüstert: Der größte Freund liegt ${big === "h" ? "QUER ↔" : "HOCHKANT ↕"}!`
+          ? big.dir === "sq"
+            ? "🔔 Die Glocke zeigt den Schatten: Der größte Freund ist ein 2×2-Brocken!"
+            : `🔔 Die Glocke zeigt den Schatten: ${big.size} Felder lang, ${
+                big.dir === "h" ? "QUER ↔" : "HOCHKANT ↕"
+              } — such so eine Reihe!`
           : "🔔 Die Glocke schweigt — alle sind gefunden!"
       );
     });
@@ -1289,25 +1310,22 @@ function executePower(kind, target) {
       resumeBattleView();
     }, FAST ? 120 : 2200);
   } else if (kind === "ballon") {
-    if (!PW.extraBalloon(S.boards[my])) {
+    // the player chose the exact spot on their own board
+    if (!PW.extraBalloonAt(S.boards[my], target.x, target.y)) {
       SND.sad();
-      toast("Kein freies Plätzchen für den Ballon!");
-      S.pendingPower = null;
+      toast("Da geht das nicht — such ein freies Feld ohne Nachbarn!");
+      S.pendingPower = kind; // stay armed, try another cell
       renderPowers();
-      dispatchTreasureFollowup();
       return;
     }
     consumePower(kind);
     syncCreatureVisibility();
     if (S.mode === "online") S.net.send({ t: "pw", kind: "ballon" });
     SND.plop();
-    // show the owner WHERE it landed: quick hop to the own board, a
-    // spotlight on the new balloon, then back to the hunt
-    const meSlot = slotFor(my);
-    const dc = S.boards[my].decoy;
-    SCENE.focusBoard(meSlot);
-    if (dc) SCENE.spotlight(meSlot, dc.x, dc.y);
-    status("🎈 Dein neuer Schwindel-Ballon sitzt HIER — pssst!");
+    // the camera is already on the own board from aiming — celebrate the
+    // chosen spot, then back to the hunt
+    SCENE.spotlight(slotFor(my), target.x, target.y);
+    status("🎈 Dein neuer Schwindel-Ballon sitzt genau DA — pssst!");
     S.inputLocked = true;
     setTimeout(() => {
       S.inputLocked = false;
@@ -2511,7 +2529,7 @@ function handleNetMessage(msg) {
       } else if (msg.kind === "trommel" || msg.kind === "kompass") {
         S.net.send({ t: "pwr", kind: msg.kind, dir: PW.directionToNearest(b, msg.x, msg.y) });
       } else if (msg.kind === "glocke") {
-        S.net.send({ t: "pwr", kind: "glocke", big: PW.biggestHiddenDir(b) });
+        S.net.send({ t: "pwr", kind: "glocke", big: PW.biggestHidden(b) });
       } else if (msg.kind === "zeit") {
         S.extraTurn = 1;
         toast("⏳ Dein Mitspieler hat einen Zeitzauber gewirkt!");
