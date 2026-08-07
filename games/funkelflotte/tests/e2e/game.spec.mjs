@@ -237,13 +237,17 @@ test("customizer opens by tapping a friend in the aquarium", async ({ page }) =>
   await page.evaluate(() => window.__FF.setFast());
   await page.locator("#btn-aquarium").click();
 
-  // tap around until we hit the (wandering) friend — that opens styling
-  for (let y = 0; y < 8; y += 1) {
-    for (let x = 0; x < 8; x += 1) {
-      if (!(await page.locator("#customizer").isHidden())) break;
-      await page.evaluate(([tx, ty]) => window.__FF.aquariumTap(tx, ty), [x, y]);
-      await page.waitForTimeout(90);
-    }
+  // the park: fly to the friend's pond first, then tap the friend itself
+  await page.waitForFunction(() => window.__FF.state.aquarium?.length === 1);
+  const key = await page.evaluate(() => window.__FF.state.aquarium[0].key);
+  const pond = await page.evaluate((k) => window.__FF.parkPos(k), key);
+  await page.evaluate((p) => window.__FF.aquariumTap({ pond: p.pond, px: p.px, pz: p.pz }), pond);
+  await expect.poll(() => page.evaluate(() => window.__FF.parkFocused())).toBe(pond.pond);
+  // re-read the position — the friend wanders — and greet it
+  for (let tries = 0; tries < 10 && (await page.locator("#customizer").isHidden()); tries += 1) {
+    const at = await page.evaluate((k) => window.__FF.parkPos(k), key);
+    await page.evaluate((p) => window.__FF.aquariumTap({ pond: p.pond, px: p.px, pz: p.pz }), at);
+    await page.waitForTimeout(150);
   }
   await expect(page.locator("#customizer")).toBeVisible();
   await expect(page.locator("#cust-count")).toContainText("1 / 1");
@@ -1225,38 +1229,47 @@ test("Weltreise: story screens, winning unlocks, spells get taught", async ({ pa
   ).toBe(true);
 });
 
-test("Aquarium: collected creatures live together and hop on tap", async ({ page }) => {
+test("Funkel-Park: every friend lives in its own world's pond", async ({ page }) => {
   await page.addInitScript(() =>
     localStorage.setItem(
       "ff-progress",
-      JSON.stringify({ stickers: { "ozean-0": 1, "dino-2": 3 }, wins: 4 })
+      JSON.stringify({ stickers: { "ozean-0": 1, "eis-2": 3 }, wins: 4 })
     )
   );
   await page.reload();
   await page.waitForFunction(() => !!window.__FF);
   await page.locator("#btn-aquarium").click();
+  await expect(page.locator("#status")).toContainText("Funkel-Park");
   await expect(page.locator("#status")).toContainText("2 Freunde");
-  const count = await page.evaluate(() => window.__FF.state.aquarium.length);
-  expect(count).toBe(2);
-  // tapping near a wandering resident makes it hop and greet by name
-  const hit = await page.evaluate(() => {
-    // aim at the current position of the first resident
-    const tapped = [];
-    for (let y = 0; y < 8; y += 1) {
-      for (let x = 0; x < 8; x += 1) tapped.push([x, y]);
-    }
-    return tapped;
-  });
+
+  // one pond per pickable world, overview first
+  expect(await page.evaluate(() => window.__FF.parkPonds())).toBe(6);
+  expect(await page.evaluate(() => window.__FF.parkFocused())).toBe(null);
+
+  // the two friends sit in DIFFERENT ponds — each in its own world's
+  const ozean = await page.evaluate(() => window.__FF.parkPos("ozean-0"));
+  const eis = await page.evaluate(() => window.__FF.parkPos("eis-2"));
+  expect(ozean.pond).not.toBe(eis.pond);
+
+  // tap the ice pond: the camera flies in and the pond status appears
+  await page.evaluate((p) => window.__FF.aquariumTap({ pond: p.pond, px: p.px, pz: p.pz }), eis);
+  await expect.poll(() => page.evaluate(() => window.__FF.parkFocused())).toBe(eis.pond);
+  await expect(page.locator("#status")).toContainText("Eisberg-Bucht");
+
+  // greet the ice friend by name (re-aim while it wanders)
   let greeted = false;
-  for (const [x, y] of hit) {
-    await page.evaluate(([tx, ty]) => window.__FF.aquariumTap(tx, ty), [x, y]);
-    const toastText = await page.locator("#toast").textContent();
-    if (/freut sich/.test(toastText || "")) {
-      greeted = true;
-      break;
-    }
+  for (let tries = 0; tries < 10 && !greeted; tries += 1) {
+    const at = await page.evaluate(() => window.__FF.parkPos("eis-2"));
+    await page.evaluate((p) => window.__FF.aquariumTap({ pond: p.pond, px: p.px, pz: p.pz }), at);
+    greeted = /freut sich/.test((await page.locator("#toast").textContent()) || "");
+    if (!greeted) await page.waitForTimeout(150);
   }
   expect(greeted).toBe(true);
+
+  // a meadow tap steps back out to the overview
+  await page.evaluate(() => window.__FF.aquariumTap({ pond: null, px: 0, pz: 0 }));
+  await expect.poll(() => page.evaluate(() => window.__FF.parkFocused())).toBe(null);
+  await expect(page.locator("#status")).toContainText("Funkel-Park");
 });
 
 test("Monster-Jagd: wounding every segment defeats the prowling boss", async ({ page }) => {
