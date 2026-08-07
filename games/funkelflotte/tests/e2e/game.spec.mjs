@@ -725,29 +725,75 @@ test("Knobel-Insel: solve the puzzle by digging all creature cells", async ({ pa
   expect(await page.evaluate(() => window.__FF.state.puzzle.spades)).toBeGreaterThan(0);
 });
 
+test("Knobel-Insel: stale locks never block digging; zero rows self-clear", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  // simulate the state a just-won battle leaves behind
+  await page.evaluate(() => {
+    window.__FF.state.inputLocked = true;
+  });
+  await page.locator("#btn-puzzle").click();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("puzzle");
+  expect(await page.evaluate(() => window.__FF.state.inputLocked)).toBe(false);
+
+  // rows/cols with a 0 clue are already revealed as water (aha moment)
+  const zeroChecked = await page.evaluate(() => {
+    const { board, rows, cols } = window.__FF.state.puzzle;
+    let ok = true;
+    rows.forEach((n, y) => {
+      if (n === 0) {
+        for (let x = 0; x < board.size; x += 1) if (!board.shots[`${x},${y}`]) ok = false;
+      }
+    });
+    cols.forEach((n, x) => {
+      if (n === 0) {
+        for (let y = 0; y < board.size; y += 1) if (!board.shots[`${x},${y}`]) ok = false;
+      }
+    });
+    return ok;
+  });
+  expect(zeroChecked).toBe(true);
+
+  // and digging works right away
+  const cell = await page.evaluate(() => {
+    const { board } = window.__FF.state.puzzle;
+    const E = window.__FF.engine;
+    const fresh = board.ships.find((s) => s.hits.length === 0) ?? board.ships[0];
+    return E.shipCells(fresh).find((c) => !board.shots[`${c.x},${c.y}`]) ?? null;
+  });
+  await page.evaluate(([x, y]) => window.__FF.puzzleTap(x, y), [cell.x, cell.y]);
+  expect(
+    await page.evaluate(([x, y]) => window.__FF.state.puzzle.board.shots[`${x},${y}`], [
+      cell.x,
+      cell.y,
+    ])
+  ).toBe("hit");
+});
+
 test("Knobel-Insel: running out of spades reveals the layout", async ({ page }) => {
   test.setTimeout(120000);
   await page.evaluate(() => window.__FF.setFast());
   await page.locator("#btn-puzzle").click();
   await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("puzzle");
 
-  // dig water cells until the spades run out
-  const water = await page.evaluate(() => {
-    const { board } = window.__FF.state.puzzle;
-    const E = window.__FF.engine;
-    const occupied = new Set();
-    for (const s of board.ships) for (const c of E.shipCells(s)) occupied.add(`${c.x},${c.y}`);
-    const out = [];
-    for (let y = 0; y < 8; y += 1) {
-      for (let x = 0; x < 8; x += 1) {
-        if (!occupied.has(`${x},${y}`) && !board.shots[`${x},${y}`]) out.push({ x, y });
-      }
-    }
-    return out;
-  });
-  for (const c of water.slice(0, 10)) {
+  // dig water cells until the spades run out — pick a FRESH cell each
+  // time (satisfied clues auto-water lines, so a snapshot goes stale)
+  for (let i = 0; i < 12; i += 1) {
     const over = await page.evaluate(() => window.__FF.state.phase !== "puzzle");
     if (over) break;
+    const c = await page.evaluate(() => {
+      const { board } = window.__FF.state.puzzle;
+      const E = window.__FF.engine;
+      const occupied = new Set();
+      for (const s of board.ships) for (const cc of E.shipCells(s)) occupied.add(`${cc.x},${cc.y}`);
+      for (let y = 0; y < board.size; y += 1) {
+        for (let x = 0; x < board.size; x += 1) {
+          if (!occupied.has(`${x},${y}`) && !board.shots[`${x},${y}`]) return { x, y };
+        }
+      }
+      return null;
+    });
+    if (!c) break;
     await page.evaluate(([x, y]) => window.__FF.puzzleTap(x, y), [c.x, c.y]);
     await page.waitForTimeout(60);
   }

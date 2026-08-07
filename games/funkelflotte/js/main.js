@@ -2800,6 +2800,7 @@ function startChase(kind) {
   S.phase = "chase";
   S.gameMode = "chase";
   S.journey = null;
+  S.inputLocked = false; // a won battle may have left the lock on
   S.chase = { kind, st: CHASE.createChase(), role: "seeker", waiting: false, marks: {} };
   if (kind === "online") {
     show("screen-online");
@@ -3183,6 +3184,7 @@ function startBoss(kind) {
   S.phase = "boss";
   S.gameMode = "boss";
   S.journey = null;
+  S.inputLocked = false; // a won battle may have left the lock on
   S.boss = { kind, st: BOSS.createBoss(), role: "hunter", marks: {}, shotsLeft: BOSS.BOSS_SHOTS, wounds: 0 };
   if (kind === "online") {
     show("screen-online");
@@ -3552,6 +3554,7 @@ function startPuzzle() {
   S.phase = "puzzle";
   S.viewer = 0;
   S.journey = null;
+  S.inputLocked = false; // a won battle may have left the lock on
   const worldId = S.worlds[0];
   applyUiWorld(worldId);
 
@@ -3587,15 +3590,18 @@ function startPuzzle() {
   $("#btn-place-done").hidden = true;
   puzzleStatus();
   renderChips(0);
-  toast("⭐⭐⭐ gibt es für höchstens 1 Fehlgrabung!", 2600);
+  toast("Jede Zahl zählt die Freund-Felder in ihrer Reihe — bei 0 ist alles schon Wasser!", 3400);
+  if (!FAST) setTimeout(() => toast("⭐⭐⭐ gibt es für höchstens 1 Fehlgrabung!", 2600), 3800);
 }
 
 function puzzleStatus(prefix = "") {
   const lead = prefix ? `${prefix} ` : "";
-  status(`${lead}Die Zahlen verraten die Verstecke! ${"⛏️".repeat(S.puzzle.spades)}`);
+  status(`${lead}Zahl am Rand = Freund-Felder in der Reihe. ${"⛏️".repeat(S.puzzle.spades)}`);
 }
 
-// dim row/col clues that are fully found
+// dim satisfied row/col clues — and reveal the REST of a satisfied line
+// as water for free: the deduction becomes visible, guessing pointless.
+// (Rows with a 0 clear themselves at the start — instant aha moment.)
 function updatePuzzleClues() {
   const { board, rows, cols } = S.puzzle;
   const foundRows = Array(board.size).fill(0);
@@ -3606,11 +3612,23 @@ function updatePuzzleClues() {
       foundCols[h.x] += 1;
     }
   }
+  const water = (x, y) => {
+    const k = E.key(x, y);
+    if (board.shots[k]) return;
+    board.shots[k] = E.MISS;
+    SCENE.applyShotQuiet("mine", x, y, "miss");
+  };
   rows.forEach((n, y) => {
-    if (foundRows[y] >= n) SCENE.dimEdgeCount("mine", "rows", y);
+    if (foundRows[y] >= n) {
+      SCENE.dimEdgeCount("mine", "rows", y);
+      for (let x = 0; x < board.size; x += 1) water(x, y);
+    }
   });
   cols.forEach((n, x) => {
-    if (foundCols[x] >= n) SCENE.dimEdgeCount("mine", "cols", x);
+    if (foundCols[x] >= n) {
+      SCENE.dimEdgeCount("mine", "cols", x);
+      for (let y = 0; y < board.size; y += 1) water(x, y);
+    }
   });
 }
 
