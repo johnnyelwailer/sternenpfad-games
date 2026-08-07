@@ -53,6 +53,12 @@ A treasure should feel great the second it opens. Doppelschuss from a
 chest means "you search TWICE right now", not "some future miss will be
 forgiven". Prefer effects that act in the current moment.
 
+Concretely: chest spells whose value depends on acting on fresh
+knowledge keep the digger's turn (Doppelschuss, Fernglas, Trommel,
+Kompass — peek or follow the arrow, then shoot). Big-info spells
+(Welle, Radar, Glocke) leave persistent marks instead and pass the
+turn, so treasures stay balanced.
+
 ## 5. Kid-fit language and naming
 
 - German UI, short sentences, no jargon, no cutesy filler names that

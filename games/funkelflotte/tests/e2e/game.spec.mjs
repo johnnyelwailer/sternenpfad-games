@@ -470,6 +470,35 @@ test("Fernglas from a treasure: peek, then keep searching immediately", async ({
     .toBe("hit");
 });
 
+test("Trommel from a treasure: the arrow points and the turn stays", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  await page.evaluate(() => window.__FF.forceTreasure("trommel"));
+  const chest = await page.evaluate(() => {
+    const t = window.__FF.state.boards[1].treasures[0];
+    t.revealed = true;
+    return { x: t.x, y: t.y };
+  });
+  await tapWhenMyTurn(page, chest.x, chest.y);
+
+  // aim the drum at a free cell
+  await expect(page.locator("#status")).toContainText("Schatz-Zauber wartet", { timeout: 15000 });
+  const [cell] = await missCells(page, 1);
+  await page.evaluate(([x, y]) => window.__FF.tap(x, y), [cell.x, cell.y]);
+
+  // the arrow points — and we keep the turn to follow it
+  await expect(page.locator("#status")).toContainText("Folg dem Pfeil", { timeout: 15000 });
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.turn === 0 && !window.__FF.state.inputLocked))
+    .toBe(true);
+  const [next] = await missCells(page, 1);
+  await tapWhenMyTurn(page, next.x, next.y);
+});
+
 test("Glocke shows a shaped shadow; Ballon is placed where YOU tap", async ({ page }) => {
   test.setTimeout(120000);
   await page.locator("#btn-options").click();
@@ -807,6 +836,8 @@ test("Fang mich: catching the sneak wins, letting it escape loses", async ({ pag
   await page.locator("#btn-chase").click();
   await page.locator('[data-chase="ai"]').click();
   await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("chase");
+  // the quarry intro parades first — wait until taps are live
+  await expect.poll(() => page.evaluate(() => !window.__FF.state.inputLocked)).toBe(true);
 
   // cheat: read the hidden position and pounce
   const frido = await page.evaluate(() => window.__FF.state.chase.st.frido);
@@ -817,6 +848,7 @@ test("Fang mich: catching the sneak wins, letting it escape loses", async ({ pag
   // round 2: always shoot far away until the budget runs out
   await page.locator("#btn-rematch").click();
   await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("chase");
+  await expect.poll(() => page.evaluate(() => !window.__FF.state.inputLocked)).toBe(true);
   for (let i = 0; i < 12; i += 1) {
     const done = await page.evaluate(() => window.__FF.state.phase !== "chase");
     if (done) break;
@@ -872,9 +904,13 @@ test("Fang mich online: hide, sneak-move, and get caught across devices", async 
   });
   await host.locator("#btn-place-done").click();
 
-  // guest gets the go signal, misses once → host must sneak-move
+  // guest gets the go signal (and the intro parade finishes), misses
+  // once → host must sneak-move
   await expect
     .poll(() => guest.evaluate(() => window.__FF.state.chase?.ready), { timeout: 20000 })
+    .toBe(true);
+  await expect
+    .poll(() => guest.evaluate(() => !window.__FF.state.inputLocked), { timeout: 15000 })
     .toBe(true);
   await guest.evaluate(() => window.__FF.chaseNetTap(0, 0));
   await expect(host.locator("#chase-move")).toBeVisible({ timeout: 15000 });
