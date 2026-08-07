@@ -49,8 +49,8 @@ export const POWERS = {
     emoji: "🔍",
     name: "Fernglas",
     target: "cell",
-    desc: "Schau heimlich unter ein Feld, ohne zu schießen.",
-    use: "Tipp ein Feld an und schau heimlich darunter.",
+    desc: "Schau heimlich unter ein Feld, ohne zu schießen — aus der Schatztruhe darfst du danach sofort weitersuchen.",
+    use: "Tipp ein Feld, schau darunter — und such gleich weiter!",
   },
   doppel: {
     emoji: "🎯",

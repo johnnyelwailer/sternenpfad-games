@@ -435,6 +435,41 @@ test("Doppelschuss from a treasure grants two shots right away", async ({ page }
   await expect.poll(() => page.evaluate(() => window.__FF.state.turn), { timeout: 15000 }).toBe(1);
 });
 
+test("Fernglas from a treasure: peek, then keep searching immediately", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  await page.evaluate(() => window.__FF.forceTreasure("fernglas"));
+  const chest = await page.evaluate(() => {
+    const t = window.__FF.state.boards[1].treasures[0];
+    t.revealed = true;
+    return { x: t.x, y: t.y };
+  });
+  await tapWhenMyTurn(page, chest.x, chest.y);
+
+  // the spell waits for its peek target
+  await expect(page.locator("#status")).toContainText("Schatz-Zauber wartet", { timeout: 15000 });
+  const shipCell = await page.evaluate(() => {
+    const b = window.__FF.state.boards[1];
+    return window.__FF.engine.shipCells(b.ships[0])[0];
+  });
+  await page.evaluate(([x, y]) => window.__FF.tap(x, y), [shipCell.x, shipCell.y]);
+
+  // peek done — and the turn STAYS with us for an informed shot
+  await expect(page.locator("#status")).toContainText("such gleich weiter", { timeout: 15000 });
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.turn === 0 && !window.__FF.state.inputLocked))
+    .toBe(true);
+  // the peeked cell is unmarked (no shot) but we can now hit it for real
+  await tapWhenMyTurn(page, shipCell.x, shipCell.y);
+  await expect
+    .poll(() => page.evaluate((k) => window.__FF.marksOn(1)[k], `${shipCell.x},${shipCell.y}`))
+    .toBe("hit");
+});
+
 test("Glocke shows a shaped shadow; Ballon is placed where YOU tap", async ({ page }) => {
   test.setTimeout(120000);
   await page.locator("#btn-options").click();
