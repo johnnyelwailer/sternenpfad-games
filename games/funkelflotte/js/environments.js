@@ -856,7 +856,360 @@ function teich(boardSpan) {
   return g;
 }
 
-const BUILDERS = { ozean, weltraum, dino, teich };
+// ------------------------------------------------------------------ Eis
+
+// gently falling snow (particleField drifts up — snow needs to sink)
+function snowfall(count, radius, height) {
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(count * 3);
+  const seed = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    pos[i * 3] = (Math.random() - 0.5) * radius * 2;
+    pos[i * 3 + 1] = Math.random() * height;
+    pos[i * 3 + 2] = (Math.random() - 0.5) * radius * 2;
+    seed[i] = Math.random() * 10;
+  }
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const points = new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({
+      color: 0xffffff,
+      size: 0.16,
+      transparent: true,
+      opacity: 0.85,
+      sizeAttenuation: true,
+      map: radialTexture(),
+      depthWrite: false,
+    })
+  );
+  points.userData.update = (t) => {
+    const p = geo.attributes.position.array;
+    for (let i = 0; i < count; i += 1) {
+      p[i * 3 + 1] -= 0.012 + Math.sin(seed[i]) * 0.004;
+      if (p[i * 3 + 1] < 0) p[i * 3 + 1] = height;
+      p[i * 3] += Math.sin(t * 0.7 + seed[i]) * 0.006;
+    }
+    geo.attributes.position.needsUpdate = true;
+  };
+  return points;
+}
+
+function iceberg(scale, tall = 1) {
+  const g = new THREE.Group();
+  const iceM = mat(0xdff2fc, { roughness: 0.35, metalness: 0.05 });
+  const core = new THREE.Mesh(new THREE.ConeGeometry(1, 2.2 * tall, 6), iceM);
+  core.position.y = 1.1 * tall - 0.3;
+  core.rotation.y = Math.random() * Math.PI;
+  g.add(core);
+  const side = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.1 * tall, 5), mat(0xbfe6f5, { roughness: 0.4 }));
+  side.position.set(0.7, 0.55 * tall - 0.3, 0.3);
+  g.add(side);
+  g.scale.setScalar(scale);
+  return g;
+}
+
+function frozenTree(scale) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 0.5, 6), mat(0x7a6a5a));
+  trunk.position.y = 0.25;
+  g.add(trunk);
+  for (let i = 0; i < 3; i += 1) {
+    const tier = new THREE.Mesh(new THREE.ConeGeometry(0.55 - i * 0.14, 0.6, 7), mat(0xe8f6fc, { roughness: 0.8 }));
+    tier.position.y = 0.65 + i * 0.42;
+    g.add(tier);
+  }
+  g.scale.setScalar(scale);
+  return g;
+}
+
+function eis(boardSpan) {
+  const g = new THREE.Group();
+  const lagoonR = boardSpan * 1.0;
+  const beachR = boardSpan * 1.28;
+
+  // icy sea with pale glacial water
+  const water = makeWater(lagoonR, beachR, { shallow: 0xa8e2f5, deep: 0x2a6a9a, fog: 0xd8ecf7 });
+  g.add(water);
+
+  // snow shelf ring around the bay
+  const shelf = new THREE.Mesh(
+    new THREE.RingGeometry(lagoonR + 0.15, beachR + 1.6, 44),
+    mat(0xf4fbff, { roughness: 0.95 })
+  );
+  shelf.rotation.x = -Math.PI / 2;
+  shelf.position.y = 0.02;
+  g.add(shelf);
+  const shelfOuter = new THREE.Mesh(
+    new THREE.RingGeometry(beachR + 1.55, beachR + 2.6, 44),
+    mat(0xdceef7, { roughness: 1 })
+  );
+  shelfOuter.rotation.x = -Math.PI / 2;
+  shelfOuter.position.y = -0.03;
+  g.add(shelfOuter);
+
+  // igloo on the shelf
+  const igloo = new THREE.Group();
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(0.9, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    mat(0xf8fdff, { roughness: 0.85 })
+  );
+  igloo.add(dome);
+  const door = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.7, 10, 1, false, 0, Math.PI), mat(0xe4f2fa));
+  door.rotation.z = Math.PI / 2;
+  door.rotation.y = Math.PI / 2;
+  door.position.set(0, 0.1, 0.8);
+  igloo.add(door);
+  igloo.position.set(-boardSpan * 1.12, 0.02, -boardSpan * 0.6);
+  g.add(igloo);
+
+  // frozen trees + ice crystals on the shelf
+  const tree1 = frozenTree(1.2);
+  tree1.position.set(boardSpan * 1.18, 0.02, -boardSpan * 0.42);
+  g.add(tree1);
+  const tree2 = frozenTree(0.8);
+  tree2.position.set(boardSpan * 1.05, 0.02, boardSpan * 0.75);
+  tree2.rotation.y = 1.9;
+  g.add(tree2);
+  const crystals = [];
+  for (const [x, z, s] of [[-boardSpan * 0.95, boardSpan * 0.9, 0.22], [boardSpan * 1.3, boardSpan * 0.15, 0.16], [-boardSpan * 1.25, boardSpan * 0.3, 0.18]]) {
+    const c = new THREE.Mesh(
+      new THREE.OctahedronGeometry(s, 0),
+      mat(0x9fe8ff, { emissive: 0x4dd2ff, emissiveIntensity: 0.5, roughness: 0.2 })
+    );
+    c.position.set(x, 0.2, z);
+    crystals.push(c);
+    g.add(c);
+  }
+
+  // mid: drifting icebergs
+  const bergs = [];
+  for (const [x, z, sc, tall] of [[-9, -14, 1.6, 1.2], [10, -13, 1.2, 0.9], [14, 6, 2.0, 1.4], [-14, 8, 1.1, 1]]) {
+    const b = iceberg(sc, tall);
+    b.position.set(x, -0.2, z);
+    bergs.push(b);
+    g.add(b);
+  }
+
+  const clouds = [];
+  for (const [x, y, z, sc] of [[-10, 7.5, -16, 1.8], [11, 8.5, -12, 1.3], [2, 9.5, -21, 2.1]]) {
+    const c = cloud(sc);
+    c.position.set(x, y, z);
+    clouds.push(c);
+    g.add(c);
+  }
+
+  // far glacier walls
+  for (const [x, z, sc, h] of [[-18, -34, 10, 7], [18, -32, 12, 9], [1, -46, 11, 8], [-32, -20, 8, 6]]) {
+    const wall = new THREE.Mesh(new THREE.ConeGeometry(sc, h, 6), mat(0xcfe9f6, { roughness: 0.9 }));
+    wall.position.set(x, h / 2 - 1.4, z);
+    g.add(wall);
+  }
+
+  // aurora ribbons shimmering high in the sky
+  const auroras = [];
+  for (const [x, y, z, w, hue] of [[-6, 13, -30, 22, 0x7dffc8], [8, 15, -34, 18, 0x9fb8ff]]) {
+    const ribbon = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, 3.5, 16, 1),
+      basic(hue, { transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ribbon.position.set(x, y, z);
+    auroras.push(ribbon);
+    g.add(ribbon);
+  }
+
+  // snow petrels circling
+  const petrels = [];
+  for (let i = 0; i < 2; i += 1) {
+    const p = flyer(0xffffff, 1.0, "round");
+    p.userData.orbit = { r: 8.5 + i * 2.6, h: 6 + i * 1.3, speed: 0.13 + i * 0.03, phase: i * 2.4 };
+    petrels.push(p);
+    g.add(p);
+  }
+
+  const snow = snowfall(70, 14, 9);
+  g.add(snow);
+
+  g.userData.animate = (t) => {
+    water.material.uniforms.uTime.value = t;
+    bergs.forEach((b, i) => {
+      b.position.y = -0.2 + Math.sin(t * 0.7 + i * 1.7) * 0.09;
+      b.rotation.z = Math.sin(t * 0.5 + i) * 0.02;
+    });
+    crystals.forEach((c, i) => {
+      c.rotation.y = t * 0.4 + i;
+    });
+    auroras.forEach((rb, i) => {
+      rb.material.opacity = 0.16 + Math.sin(t * 0.6 + i * 2.2) * 0.08;
+      rb.position.x += Math.sin(t * 0.05 + i) * 0.002;
+    });
+    clouds.forEach((c, i) => {
+      c.position.x += Math.sin(t * 0.07 + i) * 0.003;
+    });
+    for (const p of petrels) {
+      const o = p.userData.orbit;
+      const a = t * o.speed + o.phase;
+      p.position.set(Math.cos(a) * o.r, o.h + Math.sin(t * 0.9 + o.phase) * 0.5, Math.sin(a) * o.r);
+      p.rotation.y = -a - Math.PI / 2;
+      p.userData.flap(t + o.phase, 6);
+    }
+    snow.userData.update(t);
+  };
+  return g;
+}
+
+// --------------------------------------------------------------- Vulkan
+
+function basaltColumn(scale) {
+  const g = new THREE.Group();
+  for (const [dx, dz, h] of [[0, 0, 1], [0.28, 0.1, 0.7], [-0.22, 0.18, 0.55]]) {
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, h, 6), mat(0x2e1c22, { roughness: 0.95 }));
+    col.position.set(dx, h / 2, dz);
+    g.add(col);
+  }
+  g.scale.setScalar(scale);
+  return g;
+}
+
+function vulkan(boardSpan) {
+  const g = new THREE.Group();
+  const lagoonR = boardSpan * 1.0;
+  const beachR = boardSpan * 1.28;
+
+  // a glowing lava moat instead of water — the same shader, hot colors
+  // (its white "foam" ring reads as the molten hot edge)
+  const lava = makeWater(lagoonR, beachR, { shallow: 0xff9d3a, deep: 0x6e2413, fog: 0x4a2430 });
+  g.add(lava);
+
+  // scorched rock ring around the board
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(lagoonR + 0.15, beachR + 1.6, 44),
+    mat(0x4a2c30, { roughness: 0.95 })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.02;
+  g.add(ring);
+  const ringOuter = new THREE.Mesh(
+    new THREE.RingGeometry(beachR + 1.55, beachR + 2.6, 44),
+    mat(0x35201f, { roughness: 1 })
+  );
+  ringOuter.rotation.x = -Math.PI / 2;
+  ringOuter.position.y = -0.03;
+  g.add(ringOuter);
+
+  // glowing cracks across the rock ring
+  const cracks = [];
+  for (let i = 0; i < 7; i += 1) {
+    const a = (i / 7) * Math.PI * 2 + 0.4;
+    const crack = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.1, 0.14),
+      basic(0xff8c42, { transparent: true, opacity: 0.85, depthWrite: false })
+    );
+    crack.rotation.x = -Math.PI / 2;
+    crack.rotation.z = a + 1.2;
+    crack.position.set(Math.cos(a) * (beachR + 0.5), 0.04, Math.sin(a) * (beachR + 0.5));
+    cracks.push(crack);
+    g.add(crack);
+  }
+
+  // basalt columns + dark rocks on the ring
+  const col1 = basaltColumn(1.4);
+  col1.position.set(-boardSpan * 1.12, 0.02, -boardSpan * 0.58);
+  g.add(col1);
+  const col2 = basaltColumn(0.9);
+  col2.position.set(boardSpan * 1.2, 0.02, boardSpan * 0.6);
+  col2.rotation.y = 2.1;
+  g.add(col2);
+  for (const [x, z, sc] of [[boardSpan * 1.15, -boardSpan * 0.4, 0.5], [-boardSpan * 1.0, boardSpan * 0.9, 0.4]]) {
+    const rk = rock(sc, 0x3a2228);
+    rk.position.set(x, 0.05, z);
+    g.add(rk);
+  }
+
+  // mid: lava bubbles popping out in the moat
+  const bubbles = [];
+  for (const [x, z, s] of [[-8, -12, 0.3], [9, -13, 0.24], [12, 6, 0.34], [-12, 8, 0.26]]) {
+    const b = new THREE.Mesh(
+      new THREE.SphereGeometry(s, 8, 6),
+      mat(0xffb347, { emissive: 0xff5a2a, emissiveIntensity: 0.9, roughness: 0.4 })
+    );
+    b.position.set(x, -0.1, z);
+    b.userData.phase = Math.random() * 6;
+    bubbles.push(b);
+    g.add(b);
+  }
+
+  // the big volcano on the horizon, crater glowing, smoke rising
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(13, 12, 9), mat(0x40262c, { roughness: 1 }));
+  cone.position.set(2, 4.6, -38);
+  g.add(cone);
+  const crater = new THREE.Mesh(
+    new THREE.CylinderGeometry(3.2, 4.2, 1.2, 9),
+    mat(0xff8c42, { emissive: 0xff5a2a, emissiveIntensity: 1 })
+  );
+  crater.position.set(2, 10.6, -38);
+  g.add(crater);
+  const plumes = [];
+  for (let i = 0; i < 3; i += 1) {
+    const p = cloud(1.3 + i * 0.4);
+    p.children.forEach((m) => {
+      m.material = mat(0x574049, { roughness: 1, transparent: true, opacity: 0.8 });
+    });
+    p.position.set(2 + i * 1.2, 12 + i * 2, -38);
+    plumes.push(p);
+    g.add(p);
+  }
+  // smaller side volcanoes
+  for (const [x, z, sc, h] of [[-22, -28, 7, 6], [22, -26, 9, 8]]) {
+    const side = new THREE.Mesh(new THREE.ConeGeometry(sc, h, 8), mat(0x35201f, { roughness: 1 }));
+    side.position.set(x, h / 2 - 1.4, z);
+    g.add(side);
+  }
+
+  // fire moths fluttering
+  const moths = [];
+  for (let i = 0; i < 2; i += 1) {
+    const m = flyer(0xffb347, 0.8, "plane");
+    m.userData.orbit = { r: 7.5 + i * 2.4, h: 5.5 + i, speed: 0.18 + i * 0.05, phase: i * 2.8 };
+    moths.push(m);
+    g.add(m);
+  }
+
+  // embers drifting up (particleField already floats upward)
+  const embers = particleField(60, 0xffb347, 0.13, 12, 7);
+  g.add(embers);
+
+  g.userData.animate = (t) => {
+    lava.material.uniforms.uTime.value = t * 0.5; // lava flows slow and heavy
+    bubbles.forEach((b) => {
+      const k = Math.max(0, Math.sin(t * 1.3 + b.userData.phase));
+      b.position.y = -0.35 + k * 0.5;
+      b.scale.setScalar(0.7 + k * 0.5);
+    });
+    cracks.forEach((c, i) => {
+      c.material.opacity = 0.55 + Math.sin(t * 1.8 + i * 1.4) * 0.3;
+    });
+    crater.material.emissiveIntensity = 0.8 + Math.sin(t * 1.1) * 0.3;
+    plumes.forEach((p, i) => {
+      p.position.y = 12 + i * 2 + Math.sin(t * 0.4 + i) * 0.6;
+      p.position.x = 2 + i * 1.2 + Math.sin(t * 0.25 + i * 2) * 0.5;
+    });
+    for (const m of moths) {
+      const o = m.userData.orbit;
+      const a = t * o.speed + o.phase;
+      m.position.set(
+        Math.cos(a) * o.r + Math.sin(t * 2.1 + o.phase) * 0.7,
+        o.h + Math.sin(t * 2.6 + o.phase) * 0.5,
+        Math.sin(a) * o.r
+      );
+      m.rotation.y = -a - Math.PI / 2;
+      m.userData.flap(t + o.phase, 12);
+    }
+    embers.userData.update(t);
+  };
+  return g;
+}
+
+const BUILDERS = { ozean, weltraum, dino, teich, eis, vulkan };
 
 export function buildEnvironment(worldId, boardSpan) {
   return (BUILDERS[worldId] || ozean)(boardSpan);

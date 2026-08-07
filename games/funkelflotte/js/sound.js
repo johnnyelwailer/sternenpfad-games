@@ -95,6 +95,16 @@ export function hitEnemy(worldId) {
     tone(jit(340), 0, 0.14, "sine", 0.16, 520);
     noise(0.03, 0.2, 0.08, 900);
     tone(jit(660), 0.14, 0.1, "sawtooth", 0.05, 880);
+  } else if (worldId === "eis") {
+    // glassy ice chime + crackle
+    tone(jit(1180), 0, 0.16, "triangle", 0.12, 1500);
+    tone(jit(1760), 0.08, 0.18, "sine", 0.08);
+    noise(0.02, 0.1, 0.06, 3200); // ice crackle
+  } else if (worldId === "vulkan") {
+    // hot hiss + deep rumble pop
+    noise(0, 0.16, 0.1, 2000); // steam hiss
+    tone(jit(140), 0.04, 0.2, "sawtooth", 0.14, 90);
+    tone(jit(720), 0.12, 0.1, "square", 0.05, 950);
   } else {
     // ozean: bubbly rising double-plop
     tone(jit(300), 0, 0.12, "sine", 0.16, 480);
@@ -117,6 +127,12 @@ export function missWorld(worldId) {
   } else if (worldId === "dino") {
     noise(0, 0.16, 0.07, 2600); // leaves rustle
     tone(jit(240), 0.04, 0.1, "sine", 0.06, 180);
+  } else if (worldId === "eis") {
+    noise(0, 0.14, 0.08, 1800); // crunching snow
+    tone(jit(880), 0.05, 0.1, "triangle", 0.05, 660);
+  } else if (worldId === "vulkan") {
+    noise(0, 0.22, 0.08, 1400); // ash puff
+    tone(jit(180), 0.03, 0.14, "sine", 0.06, 120);
   } else {
     // watery worlds: classic plop
     tone(jit(360), 0, 0.18, "sine", 0.16, 120);
@@ -137,6 +153,18 @@ export function sunkEnemy(worldId) {
     tone(jit(300), 0, 0.2, "sine", 0.18, 640);
     noise(0.06, 0.35, 0.12, 800); // big splash
     for (let i = 0; i < 3; i += 1) tone(150 + i * 30, 0.3 + i * 0.14, 0.12, "sawtooth", 0.05, 110);
+  } else if (worldId === "eis") {
+    // big ice crack, then a sparkling bell cascade
+    noise(0, 0.2, 0.14, 2600);
+    tone(90, 0.02, 0.35, "sine", 0.16, 55);
+    const bells = [1047, 1319, 1568, 2093];
+    bells.forEach((f, i) => tone(f, 0.2 + i * 0.09, 0.22, "triangle", 0.1));
+  } else if (worldId === "vulkan") {
+    // eruption: riser, boom, sizzling embers
+    tone(110, 0, 0.3, "sawtooth", 0.12, 440);
+    noise(0.26, 0.5, 0.16, 400); // boom
+    tone(70, 0.28, 0.5, "sine", 0.18, 40);
+    for (let i = 0; i < 4; i += 1) noise(0.5 + i * 0.09, 0.06, 0.05, 2800 + i * 400); // sizzle
   } else {
     // ozean: harp-like rising arpeggio on a wave
     const notes = [392, 494, 587, 784];
@@ -311,6 +339,25 @@ export function startAmbient(worldId) {
       nodes.push(osc);
     }
     addNoise(900, 2.5, 0.006, 0.08, 0.004); // solar wind shimmer
+  } else if (worldId === "eis") {
+    addNoise(320, 0.5, 0.03, 0.11, 0.02); // cold wind
+    addNoise(2400, 3, 0.005, 0.3, 0.003); // icy whistle
+    const tinkle = () => {
+      if (muted || !ambient) return;
+      const base = 1600 + Math.random() * 800;
+      for (let i = 0; i < 2; i += 1) tone(base + i * 300, i * 0.16, 0.2, "triangle", 0.015);
+      timers.push(setTimeout(tinkle, 4000 + Math.random() * 6000));
+    };
+    timers.push(setTimeout(tinkle, 2000));
+  } else if (worldId === "vulkan") {
+    addNoise(120, 0.4, 0.05, 0.09, 0.03); // deep magma rumble
+    addNoise(1800, 1.5, 0.006, 0.5, 0.004); // hissing vents
+    const blub = () => {
+      if (muted || !ambient) return;
+      tone(90 + Math.random() * 50, 0, 0.18, "sine", 0.04, 60);
+      timers.push(setTimeout(blub, 2500 + Math.random() * 5000));
+    };
+    timers.push(setTimeout(blub, 1800));
   } else {
     addNoise(700, 0.8, 0.02, 0.19, 0.012); // breeze in the leaves
     // occasional bird chirps

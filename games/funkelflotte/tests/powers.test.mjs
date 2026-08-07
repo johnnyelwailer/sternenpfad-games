@@ -26,9 +26,39 @@ test("every power has complete metadata and a sane target", () => {
     assert.ok(["none", "cell", "row", "cell3", "own", "own-cell"].includes(p.target), `${kind} target`);
   }
   // each world has a signature power
-  for (const w of ["ozean", "weltraum", "dino", "teich"]) {
+  for (const w of ["ozean", "weltraum", "dino", "teich", "eis", "vulkan"]) {
     assert.ok(P.POWERS[P.worldPower(w)], `world power for ${w}`);
   }
+  // the new worlds bring their own spells, not hand-me-downs
+  assert.equal(P.worldPower("eis"), "frost");
+  assert.equal(P.worldPower("vulkan"), "funke");
+});
+
+test("frost cross and funke plus scans stay in bounds and report ships", () => {
+  const b = E.createBoard();
+  E.placeShip(b, { id: 0, size: 3, x: 2, y: 4, dir: "h" });
+  // mid-board: full 5-cell patterns
+  const cross = P.crossCells(b, 3, 3);
+  assert.equal(cross.length, 5);
+  assert.deepEqual(
+    cross.map((c) => `${c.x},${c.y}`).sort(),
+    ["2,2", "2,4", "3,3", "4,2", "4,4"]
+  );
+  const plus = P.plusCells(b, 3, 3);
+  assert.equal(plus.length, 5);
+  assert.deepEqual(
+    plus.map((c) => `${c.x},${c.y}`).sort(),
+    ["2,3", "3,2", "3,3", "3,4", "4,3"]
+  );
+  // corners clamp + dedupe, never leave the board
+  for (const cells of [P.crossCells(b, 0, 0), P.plusCells(b, 0, 0), P.crossCells(b, 7, 7), P.plusCells(b, 7, 7)]) {
+    assert.ok(cells.length >= 3);
+    assert.ok(cells.every((c) => c.x >= 0 && c.y >= 0 && c.x < 8 && c.y < 8));
+    assert.equal(new Set(cells.map((c) => `${c.x},${c.y}`)).size, cells.length, "no duplicate cells");
+  }
+  // scans see the hidden creature
+  const seen = P.scanCells(b, P.plusCells(b, 3, 4));
+  assert.ok(seen.some((c) => c.ship), "plus scan over the ship reports it");
 });
 
 test("treasure defaults are scarce", () => {

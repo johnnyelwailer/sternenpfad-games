@@ -32,7 +32,7 @@ async function firstUnknownCell(page, boardIdx) {
 
 test("title screen shows worlds and modes, world picking re-themes", async ({ page }) => {
   await expect(page.locator("h1.logo")).toContainText("Funkel-Flotte");
-  await expect(page.locator("#world-grid .world-card")).toHaveCount(4);
+  await expect(page.locator("#world-grid .world-card")).toHaveCount(6);
   await expect(page.locator('[data-mode="ai"]')).toBeVisible();
   const before = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue("--ui").trim()
@@ -53,6 +53,48 @@ test("title screen shows worlds and modes, world picking re-themes", async ({ pa
   // ...but toasts still appear when they carry a message
   await page.evaluate(() => document.getElementById("toast").classList.add("show"));
   await expect(page.locator("#toast")).toBeVisible();
+});
+
+test("new worlds: Eisberg-Bucht plays a battle, Frost-Stern scans its cross", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  // pick the new ice world and check it themes the UI
+  await page.locator('#world-grid [data-world="eis"]').click();
+  await expect(page.locator('#world-grid [data-world="eis"]')).toHaveClass(/selected/);
+  expect(
+    await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--ui").trim())
+  ).toBe("#0d3550");
+
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+  expect(await page.evaluate(() => window.__FF.state.worlds[0])).toBe("eis");
+
+  // dig up the ice world's signature spell from the chest
+  await page.evaluate(() => window.__FF.forceTreasure("frost"));
+  const chest = await page.evaluate(() => {
+    const t = window.__FF.state.boards[1].treasures[0];
+    t.revealed = true;
+    return { x: t.x, y: t.y };
+  });
+  await tapWhenMyTurn(page, chest.x, chest.y);
+  await expect(page.locator("#status")).toContainText("Schatz-Zauber wartet", { timeout: 15000 });
+
+  // aim at a creature cell: the star must report it without firing
+  const shipCell = await page.evaluate(() => {
+    const b = window.__FF.state.boards[1];
+    return window.__FF.engine.shipCells(b.ships[0])[0];
+  });
+  // offline the scan resolves synchronously — grab the status in the same tick
+  // (in FAST mode it is replaced ~140ms later when the turn passes)
+  const statusText = await page.evaluate(([x, y]) => {
+    window.__FF.tap(x, y);
+    return document.getElementById("status").textContent;
+  }, [shipCell.x, shipCell.y]);
+  expect(statusText).toContain("Eisstern");
+  // an info scan is not a shot — the cell carries no mark and the turn passes
+  expect(await page.evaluate((k) => window.__FF.marksOn(1)[k], `${shipCell.x},${shipCell.y}`)).toBeFalsy();
+  await expect.poll(() => page.evaluate(() => window.__FF.state.turn), { timeout: 15000 }).toBe(1);
 });
 
 test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async ({ page }) => {
@@ -983,6 +1025,43 @@ test("Fang mich online: hide, sneak-move, and get caught across devices", async 
 
   await ctxA.close();
   await ctxB.close();
+});
+
+test("Weltreise: starts tiny, ends wild", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+
+  // stop 1: a small 6×6 bay with a small crew, no spells yet
+  await page.locator("#btn-journey").click();
+  await page.locator("#btn-journey-go").click();
+  await page.locator("#btn-pass-go").click();
+  await expect(page.locator("#btn-place-done")).toBeVisible({ timeout: 15000 });
+  const first = await page.evaluate(() => ({
+    size: window.__FF.state.boards[0].size,
+    ships: window.__FF.state.boards[0].ships.length,
+    powers: window.__FF.state.powersOn,
+  }));
+  expect(first.size).toBe(6);
+  expect(first.ships).toBe(4);
+  expect(first.powers).toBe(false);
+
+  // the finale: the biggest sea, snuggling friends, chest festival, schlau robo
+  await page.locator("#btn-home").click();
+  await page.evaluate(() => localStorage.setItem("ff-weltreise", "11"));
+  await page.locator("#btn-journey").click();
+  await page.locator("#btn-journey-go").click();
+  await page.locator("#btn-pass-go").click();
+  await expect(page.locator("#btn-place-done")).toBeVisible({ timeout: 15000 });
+  const finale = await page.evaluate(() => ({
+    size: window.__FF.state.boards[0].size,
+    touch: !!window.__FF.state.boards[0].allowTouch,
+    more: window.__FF.state.moreTreasures,
+    teach: window.__FF.state.forceTreasureKind,
+  }));
+  expect(finale.size).toBe(10);
+  expect(finale.touch).toBe(true);
+  expect(finale.more).toBe(true);
+  expect(finale.teach).toBe("schild");
 });
 
 test("Weltreise: story screens, winning unlocks, spells get taught", async ({ page }) => {

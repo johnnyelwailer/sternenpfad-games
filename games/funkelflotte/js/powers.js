@@ -111,6 +111,22 @@ export const POWERS = {
     desc: "Drei Sternschnuppen sausen auf drei Felder nebeneinander! Danach ist der andere dran.",
     use: "Tipp ein Feld an — drei Sternschnuppen sausen los.",
   },
+  frost: {
+    emoji: "❄️",
+    name: "Frost-Stern",
+    target: "cell",
+    world: "eis",
+    desc: "Ein Eisstern wächst über ein Feld und seine vier Ecken — überall, wo es glitzert, versteckt sich jemand.",
+    use: "Tipp ein Feld an — der Eisstern prüft es und seine 4 Ecken.",
+  },
+  funke: {
+    emoji: "🎆",
+    name: "Funkenflug",
+    target: "cell",
+    world: "vulkan",
+    desc: "Ein Funke springt auf ein Feld und sprüht nach oben, unten, links und rechts — wo es Feuer fängt, lauert ein Glutfreund.",
+    use: "Tipp ein Feld an — der Funke sprüht in alle 4 Richtungen.",
+  },
 };
 
 // random pool for treasures/recharges — world powers are start gifts,
@@ -138,7 +154,10 @@ const POOL = [
 ];
 
 export function worldPower(worldId) {
-  return { ozean: "welle", weltraum: "radar", dino: "trommel", teich: "schild" }[worldId] ?? "fernglas";
+  return (
+    { ozean: "welle", weltraum: "radar", dino: "trommel", teich: "schild", eis: "frost", vulkan: "funke" }[worldId] ??
+    "fernglas"
+  );
 }
 
 export function drawPower(rng = Math.random, hand = [], { instant = false } = {}) {
@@ -222,6 +241,28 @@ export function rowCells(board, y) {
 export function squareCells(board, x, y) {
   const out = [];
   for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+    const cx = Math.min(board.size - 1, Math.max(0, x + dx));
+    const cy = Math.min(board.size - 1, Math.max(0, y + dy));
+    if (!out.some((c) => c.x === cx && c.y === cy)) out.push({ x: cx, y: cy });
+  }
+  return out;
+}
+
+// Frost-Stern: a cell plus its four diagonal corners (clamped, deduped)
+export function crossCells(board, x, y) {
+  const out = [];
+  for (const [dx, dy] of [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const cx = Math.min(board.size - 1, Math.max(0, x + dx));
+    const cy = Math.min(board.size - 1, Math.max(0, y + dy));
+    if (!out.some((c) => c.x === cx && c.y === cy)) out.push({ x: cx, y: cy });
+  }
+  return out;
+}
+
+// Funkenflug: a cell plus its four orthogonal neighbours (clamped, deduped)
+export function plusCells(board, x, y) {
+  const out = [];
+  for (const [dx, dy] of [[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0]]) {
     const cx = Math.min(board.size - 1, Math.max(0, x + dx));
     const cy = Math.min(board.size - 1, Math.max(0, y + dy));
     if (!out.some((c) => c.x === cx && c.y === cy)) out.push({ x: cx, y: cy });

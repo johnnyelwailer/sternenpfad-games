@@ -4,7 +4,7 @@
 
 import * as E from "./engine.js";
 import { createAiState, noteResult, nextShot } from "./ai.js";
-import { WORLDS, getWorld, randomOtherWorld } from "./worlds.js";
+import { WORLDS, getWorld, randomOtherWorld, pickableWorldIds } from "./worlds.js";
 import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
 import * as PROG from "./progress.js";
 import { flag, setFlag, allFlags } from "./flags.js";
@@ -176,7 +176,7 @@ function creatureThumb(worldId, idx, custom = null) {
 
 function buildWorldPicker(gridEl, onPick, selected) {
   gridEl.innerHTML = "";
-  for (const world of Object.values(WORLDS)) {
+  for (const world of pickableWorldIds(flag("welten")).map((id) => WORLDS[id])) {
     const card = document.createElement("button");
     card.className = `world-card${world.id === selected ? " selected" : ""}`;
     card.dataset.world = world.id;
@@ -579,10 +579,12 @@ function startMode(mode) {
   const bo = loadBoardOpt();
   S.boardPreset = bo.preset;
   S.allowTouch = bo.touch;
-  if (S.forceClassicBoard) {
-    S.boardPreset = "klassisch";
-    S.allowTouch = false;
-    S.forceClassicBoard = false;
+  if (S.nextBoardOverride) {
+    // the story journey stages each stop's board explicitly
+    S.boardPreset = BOARD_PRESETS[S.nextBoardOverride.preset] ? S.nextBoardOverride.preset : "klassisch";
+    S.allowTouch = !!S.nextBoardOverride.touch;
+    S.moreTreasures = !!S.nextBoardOverride.moreTreasures;
+    S.nextBoardOverride = null;
   }
   S.setupToastShown = false;
   // the story journey plants a specific spell in the chest (nextTeachKind
@@ -600,7 +602,7 @@ function startMode(mode) {
   resetRuleState();
 
   if (mode === "ai") {
-    S.worlds[1] = randomOtherWorld(S.worlds[0]);
+    S.worlds[1] = randomOtherWorld(S.worlds[0], flag("welten"));
     S.boards = [newBoardWithFleet(), newBoardWithFleet()];
     S.aiState = createAiState(S.forceRoboLevel ?? S.roboLevel ?? "leicht");
     S.forceRoboLevel = null;
@@ -1241,6 +1243,8 @@ function resolveInfo(kind, payload, apply) {
   const board = S.boards[other(me())];
   if (kind === "welle") apply({ cells: PW.scanCells(board, PW.rowCells(board, payload.y)) });
   else if (kind === "radar") apply({ cells: PW.scanCells(board, PW.squareCells(board, payload.x, payload.y)) });
+  else if (kind === "frost") apply({ cells: PW.scanCells(board, PW.crossCells(board, payload.x, payload.y)) });
+  else if (kind === "funke") apply({ cells: PW.scanCells(board, PW.plusCells(board, payload.x, payload.y)) });
   else if (kind === "fernglas") apply({ cells: PW.scanCells(board, [{ x: payload.x, y: payload.y }]) });
   else if (kind === "trommel" || kind === "kompass") apply({ dir: PW.directionToNearest(board, payload.x, payload.y) });
   else if (kind === "glocke") apply({ big: PW.biggestHiddenRegion(board) });
@@ -1269,6 +1273,22 @@ function executePower(kind, target) {
       SND.sparkle();
       cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 400 + i * 140));
       status("🛰️ Der Satellit hat alles durchleuchtet!");
+    });
+  } else if (kind === "frost") {
+    consumePower(kind);
+    SCENE.frostStar(enemySlot, target.x, target.y);
+    resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
+      SND.sparkle();
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 400 + i * 140));
+      status("❄️ Der Eisstern hat alles glitzern lassen!");
+    });
+  } else if (kind === "funke") {
+    consumePower(kind);
+    SCENE.sparkFly(enemySlot, target.x, target.y);
+    resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
+      SND.sparkle();
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 400 + i * 140));
+      status("🎆 Der Funke hat in alle Richtungen gesprüht!");
     });
   } else if (kind === "fernglas") {
     consumePower(kind);
@@ -1432,6 +1452,8 @@ function executePower(kind, target) {
 const CAST_SOUND = {
   welle: "info",
   radar: "info",
+  frost: "info",
+  funke: "info",
   fernglas: "info",
   trommel: "info",
   kompass: "info",
@@ -1665,6 +1687,7 @@ function handleTap(x, y) {
     SCENE.openTreasure(slotFor(targetIdx), x, y);
     SND.treasure();
     const kind = S.forceTreasureKind ?? PW.drawPower(Math.random, [], { instant: true });
+    S.forceTreasureKind = null; // the taught spell fills only the first chest
     S.treasureFollowup = () => afterMyShot({ result: E.MISS, gameOver: false });
     setTimeout(
       () => powerFlyOut(kind, slotFor(targetIdx), x, y, () => autoUsePower(kind)),
@@ -2626,6 +2649,12 @@ function handleNetMessage(msg) {
       } else if (msg.kind === "radar") {
         S.net.send({ t: "pwr", kind: "radar", cells: PW.scanCells(b, PW.squareCells(b, msg.x, msg.y)) });
         toast("🛰️ Ein Satellit funkt über deinem Brett …");
+      } else if (msg.kind === "frost") {
+        S.net.send({ t: "pwr", kind: "frost", cells: PW.scanCells(b, PW.crossCells(b, msg.x, msg.y)) });
+        toast("❄️ Ein Eisstern glitzert über deinem Brett …");
+      } else if (msg.kind === "funke") {
+        S.net.send({ t: "pwr", kind: "funke", cells: PW.scanCells(b, PW.plusCells(b, msg.x, msg.y)) });
+        toast("🎆 Funken sprühen über deinem Brett …");
       } else if (msg.kind === "fernglas") {
         S.net.send({ t: "pwr", kind: "fernglas", cells: PW.scanCells(b, [{ x: msg.x, y: msg.y }]) });
       } else if (msg.kind === "trommel" || msg.kind === "kompass") {
@@ -3990,15 +4019,17 @@ const JOURNEY = [
     world: "ozean",
     type: "classic",
     rules: {},
+    board: "flink",
     emoji: "🌊",
     label: "Die erste Suche",
     story:
-      "Ein Sturm hat alle Freunde versteckt! Find sie, bevor Robo sie findet.",
+      "Ein Sturm hat die Freunde in einer kleinen Bucht versteckt! Find sie, bevor Robo sie findet.",
   },
   {
     world: "ozean",
     type: "classic",
     rules: {},
+    board: "flink",
     teach: "fernglas",
     emoji: "🔍",
     label: "Die glitzernde Truhe",
@@ -4054,31 +4085,35 @@ const JOURNEY = [
     world: "ozean",
     type: "classic",
     rules: {},
+    board: "grossklein",
     teach: "glocke",
     emoji: "🔔",
     label: "Die singende Glocke",
     story:
-      "Die Zauberglocke zeigt den Schatten des größten Freundes. Lausch gut!",
+      "Die Zauberglocke zeigt den Schatten des Größten — und diesmal lauert ein RIESIGER 2×2-Brocken!",
   },
   {
     world: "teich",
     type: "classic",
     rules: {},
+    board: "grossklein",
+    touch: true,
     teach: "klee",
     emoji: "🍀",
     label: "Das Glücksklee-Feld",
     story:
-      "Glücksklee! Viermal zeigt dir ein Daneben, wie nah der nächste Freund ist.",
+      "Glücksklee zeigt dir viermal die Entfernung — und die Freunde kuscheln diesmal GANZ eng zusammen!",
   },
   {
     world: "weltraum",
     type: "classic",
     rules: {},
+    board: "riesig",
     teach: "zeit",
     emoji: "⏳",
     label: "Der Zeitkristall",
     story:
-      "Der Zeitkristall schenkt dir nach einem Daneben einen Extra-Zug.",
+      "Der Zeitkristall schwebt über dem größten Meer der Reise — 10×10 Felder voller Verstecke!",
   },
   {
     world: "weltraum",
@@ -4092,11 +4127,14 @@ const JOURNEY = [
     world: "dino",
     type: "classic",
     rules: {},
+    board: "riesig",
+    touch: true,
+    moreTreasures: true,
     teach: "schild",
     emoji: "🏆",
     label: "Die große Prüfung",
     story:
-      "Die letzte Prüfung: Robo sucht richtig schlau. Dein Seerosen-Schild hilft!",
+      "Die letzte Prüfung: das größte Meer, eng kuschelnde Freunde, überall Truhen — und Robo sucht richtig schlau!",
     robo: "schlau",
   },
 ];
@@ -4180,12 +4218,16 @@ function launchJourneyStop(i) {
     };
     syncRuleChips();
     S.forceRoboLevel = stop.robo ?? "leicht"; // the journey stays kind (finale excepted)
-    S.forceClassicBoard = true; // curated stops play on the classic board
+    // each stop stages its own board: tiny seas first, wild waters last
+    S.nextBoardOverride = {
+      preset: stop.board ?? "klassisch",
+      touch: !!stop.touch,
+      moreTreasures: !!stop.moreTreasures,
+    };
     // the teaching spell waits in a chest that is visible from the start
     S.nextTeachKind = stop.teach ?? null;
     S.powersOn = flag("powers") && !!stop.teach;
     S.cardsOn = false;
-    S.moreTreasures = false;
     startMode("ai");
   } else if (stop.type === "puzzle") {
     S.forcePuzzleStage = 0; // the journey teaches on the gentle board

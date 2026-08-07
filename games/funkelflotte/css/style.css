@@ -225,9 +225,10 @@ h1.logo {
 
 .world-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  width: min(88vw, 380px);
+  /* six worlds: three per row keeps the picker two rows tall */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: min(92vw, 420px);
   margin-bottom: 2vh;
 }
 
@@ -235,8 +236,9 @@ h1.logo {
   position: relative;
   border: 3px solid rgba(255, 255, 255, 0.25);
   border-radius: var(--radius);
-  padding: 10px 6px 12px;
+  padding: 8px 4px 10px;
   text-align: center;
+  font-size: 0.82rem;
   cursor: pointer;
   color: #fff;
   font-family: inherit;

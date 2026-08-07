@@ -1126,6 +1126,127 @@ export function spotlight(slot, x, y) {
   );
 }
 
+// Frost-Stern: an ice star blooms on the cell and shoots four glinting
+// shards to the diagonal corners — exactly the cells it will reveal
+export function frostStar(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  const c = { x: tile.position.x, z: tile.position.z };
+  flash(d, c, 0xbdefff);
+  ringWave(d, c, 0x4dd2ff);
+  // six-pointed crystal star spinning up from the cell
+  const star = new THREE.Group();
+  for (let i = 0; i < 6; i += 1) {
+    const arm = new THREE.Mesh(
+      new THREE.ConeGeometry(0.07, 0.5, 4),
+      new THREE.MeshBasicMaterial({ color: 0xdff6ff, transparent: true, opacity: 0.95, depthWrite: false })
+    );
+    arm.position.y = 0.25;
+    const holder = new THREE.Group();
+    holder.add(arm);
+    holder.rotation.z = (i / 6) * Math.PI * 2;
+    star.add(holder);
+  }
+  star.position.set(c.x, 0.45, c.z);
+  star.scale.setScalar(0.01);
+  d.root.add(star);
+  // four shards fly to the diagonal corners and splash there
+  for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const t2 = d.tiles.get(`${x + dx},${y + dz}`);
+    if (!t2) continue;
+    const shard = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.12),
+      new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.95, depthWrite: false })
+    );
+    shard.position.set(c.x, 0.5, c.z);
+    d.root.add(shard);
+    tween(
+      (v) => {
+        shard.position.x = c.x + (t2.position.x - c.x) * v;
+        shard.position.z = c.z + (t2.position.z - c.z) * v;
+        shard.position.y = 0.5 + Math.sin(v * Math.PI) * 0.6;
+        shard.rotation.x = v * 7;
+        shard.rotation.y = v * 5;
+      },
+      {
+        dur: 0.6,
+        ease: Ease.outCubic,
+        onDone: () => {
+          d.root.remove(shard);
+          shard.geometry.dispose();
+          shard.material.dispose();
+          splashColumn(d, t2.position, 0xd6f2ff);
+        },
+      }
+    );
+  }
+  tween(
+    (v) => {
+      star.scale.setScalar(v < 0.3 ? (v / 0.3) * 1.1 : 1.1);
+      star.rotation.y = v * Math.PI * 2;
+      star.children.forEach((h) =>
+        h.children.forEach((m) => {
+          m.material.opacity = v < 0.75 ? 0.95 : 0.95 * (1 - (v - 0.75) / 0.25);
+        })
+      );
+    },
+    {
+      dur: 1.2,
+      ease: Ease.linear,
+      onDone: () => {
+        d.root.remove(star);
+        star.traverse((o) => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) o.material.dispose();
+        });
+      },
+    }
+  );
+}
+
+// Funkenflug: a spark lands on the cell and sprays four ember trails
+// up/down/left/right — exactly the cells it will reveal
+export function sparkFly(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  const c = { x: tile.position.x, z: tile.position.z };
+  flash(d, c, 0xffb347);
+  starburst(d, c);
+  for (const [dx, dz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+    const t2 = d.tiles.get(`${x + dx},${y + dz}`);
+    if (!t2) continue;
+    const ember = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: padTexture(), color: 0xff8c42, transparent: true, depthWrite: false })
+    );
+    ember.scale.setScalar(0.4);
+    ember.position.set(c.x, 0.35, c.z);
+    d.root.add(ember);
+    tween(
+      (v) => {
+        ember.position.x = c.x + (t2.position.x - c.x) * v;
+        ember.position.z = c.z + (t2.position.z - c.z) * v;
+        ember.position.y = 0.35 + Math.sin(v * Math.PI) * 0.9;
+        ember.material.color.setHex(v < 0.5 ? 0xffe066 : 0xff8c42);
+      },
+      {
+        dur: 0.55,
+        ease: Ease.outCubic,
+        onDone: () => {
+          d.root.remove(ember);
+          ember.material.dispose();
+          splashColumn(d, t2.position, 0xffb347);
+          ringWave(d, t2.position, 0xffd447);
+        },
+      }
+    );
+  }
+  camKick = 0.25;
+}
+
 export function clockRipple(slot) {
   const d = dioramas[slot];
   if (!d) return;
@@ -1788,6 +1909,24 @@ export function revealShip(slot, ship) {
     burst(d, worldPos, 0xffe066, { count: 40 });
     burst(d, worldPos, 0x8a8f9a, { count: 26, up: true }); // smoke
     camKick = 0.7;
+  } else if (w === "eis") {
+    // frost friends emerge in a puff of snow and glittering ice shards
+    flash(d, center, 0xdff6ff);
+    ringWave(d, center, 0xffffff);
+    ringWave(d, center, 0x4dd2ff);
+    burst(d, worldPos, 0xffffff, { count: 55, up: true }); // snow puff
+    burst(d, worldPos, 0x9fe8ff, { count: 35 }); // ice glitter
+    burst(d, worldPos, 0x4dd2ff, { count: 20 });
+    camKick = 0.5;
+  } else if (w === "vulkan") {
+    // glow friends erupt: lava sparks, embers, a smoke plume
+    flash(d, center, 0xff8c42);
+    ringWave(d, center, 0xffe066);
+    ringWave(d, center, 0xff5a2a);
+    burst(d, worldPos, 0xffe066, { count: 50, up: true }); // sparks
+    burst(d, worldPos, 0xff5a2a, { count: 40 }); // lava bits
+    burst(d, worldPos, 0x4a3038, { count: 24, up: true }); // smoke
+    camKick = 0.65;
   } else if (w === "ozean" || w === "teich") {
     // sea friends burst out of a big fountain
     flash(d, center, d.world.colors.accent);

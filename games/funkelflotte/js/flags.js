@@ -19,6 +19,7 @@ export const DEFAULT_FLAGS = {
   aquarium: true, // collected-creatures aquarium
   weltreise: true, // campaign across the worlds
   variety: true, // board presets (size/fleet) + Enge-Verstecke-Regel
+  welten: true, // extra worlds: Eisberg-Bucht + Glut-Insel
 };
 
 function stored() {
