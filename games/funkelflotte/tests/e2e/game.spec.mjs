@@ -1341,14 +1341,9 @@ test("Monster-Jagd: wounding every segment defeats the prowling boss", async ({ 
             : { x: st.boss.x, y: st.boss.y + s, s }
         );
       }
-      // never aim at your own fleet — those taps are friendly-fire-blocked
-      const fleetCells = new Set();
-      for (const s of st.fleet ?? []) {
-        for (let i = 0; i < s.size; i += 1) {
-          fleetCells.add(s.dir === "h" ? `${s.x + i},${s.y}` : `${s.x},${s.y + i}`);
-        }
-      }
-      const fresh = cells.find((c) => !st.wounds.includes(c.s) && !fleetCells.has(`${c.x},${c.y}`));
+      // monster cells are always shootable — even over your own fleet
+      // (the beast on top takes the hit, never the friend beneath)
+      const fresh = cells.find((c) => !st.wounds.includes(c.s));
       if (fresh) window.__FF.bossTap(fresh.x, fresh.y);
     });
     await page.waitForTimeout(120);

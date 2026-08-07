@@ -3506,8 +3506,9 @@ function bossSeekTap(x, y) {
   const st = S.boss.st;
 
   if (st.hunt) {
-    // no friendly fire — your own creature stands here
-    if (BOSS.fleetShipAt(st, x, y)) {
+    // no friendly fire — unless the monster is stomping RIGHT ON your
+    // friend: then the tap hits the beast, never the friend
+    if (BOSS.fleetShipAt(st, x, y) && BOSS.segmentAt(st, x, y) < 0) {
       SND.tap();
       toast("Da steht doch dein eigener Freund!");
       return;
