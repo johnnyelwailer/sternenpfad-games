@@ -1,14 +1,14 @@
-// Monster gegen Flotte: one huge 5-cell monster prowls the board while
-// the hunter tries to land five wounds with a limited shot budget and
+// Monster gegen Flotte: one huge 6-cell monster prowls the board while
+// the hunter tries to wound every segment with a limited shot budget and
 // distance clues. Wounds belong to the monster's BODY segments, so
 // they travel along when it moves. Pure logic — the full state lives
 // with the monster's owner.
 
 import { key } from "./engine.js";
 
-export const BOSS_SHOTS = 18;
-export const BOSS_SIZE = 5;
-export const BOSS_FADE = 3; // distance marks fade after this many shots
+export const BOSS_SHOTS = 20;
+export const BOSS_SIZE = 6; // a big, unmissable beast
+export const BOSS_FADE = 4; // distance marks fade after this many shots
 
 export function bossCells(st) {
   const out = [];
@@ -56,6 +56,14 @@ export function bossLimps(st) {
   if (st.wounds.length < 3) return false;
   st.limp = !st.limp;
   return st.limp;
+}
+
+// the robo monster is heavy and unhurried: it rests every second chance
+// (its wounded limp comes on top) — solo hunts stay winnable for kids
+export function bossRests(st) {
+  st.rest = !st.rest;
+  if (st.rest) return true;
+  return bossLimps(st);
 }
 
 // clamp-place the monster during setup; tapping its body rotates it

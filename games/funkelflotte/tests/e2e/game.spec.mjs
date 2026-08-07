@@ -397,6 +397,44 @@ test("cards are off by default: empty hand, treasures still work", async ({ page
   expect(await page.evaluate(() => window.__FF.state.boards[1].treasures.length)).toBe(1);
 });
 
+test("Doppelschuss from a treasure grants two shots right away", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  // plant a Doppelschuss in the chest, surface it, and dig it up
+  await page.evaluate(() => window.__FF.forceTreasure("doppel"));
+  const chest = await page.evaluate(() => {
+    const t = window.__FF.state.boards[1].treasures[0];
+    t.revealed = true;
+    return { x: t.x, y: t.y };
+  });
+  await tapWhenMyTurn(page, chest.x, chest.y);
+
+  // the turn does NOT pass: we may search immediately
+  await expect(page.locator("#status")).toContainText("ZWEIMAL", { timeout: 15000 });
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.turn === 0 && !window.__FF.state.inputLocked))
+    .toBe(true);
+  // the forgiven-miss badge is up
+  await expect(page.locator(".power-chip.passive")).toContainText("Doppelschuss");
+
+  // shot 1 misses — still our turn (the forgiveness fires)
+  const [c1] = await missCells(page, 1);
+  await tapWhenMyTurn(page, c1.x, c1.y);
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.turn === 0 && !window.__FF.state.inputLocked), {
+      timeout: 15000,
+    })
+    .toBe(true);
+  // shot 2 misses — now the turn passes to robo
+  const [c2] = await missCells(page, 1);
+  await tapWhenMyTurn(page, c2.x, c2.y);
+  await expect.poll(() => page.evaluate(() => window.__FF.state.turn), { timeout: 15000 }).toBe(1);
+});
+
 test("Wirbelwind: choose your own friend and watch it move", async ({ page }) => {
   test.setTimeout(120000);
   await page.locator("#btn-options").click();
@@ -741,20 +779,25 @@ test("Fang mich online: hide, sneak-move, and get caught across devices", async 
   await ctxB.close();
 });
 
-test("Weltreise: winning a stop unlocks the next one", async ({ page }) => {
+test("Weltreise: story screens, winning unlocks, spells get taught", async ({ page }) => {
   test.setTimeout(120000);
-  await page.addInitScript(() => localStorage.setItem("ff-weltreise", "2"));
+  await page.addInitScript(() => localStorage.setItem("ff-weltreise", "4"));
   await page.reload();
   await page.waitForFunction(() => !!window.__FF);
   await page.evaluate(() => window.__FF.setFast());
 
   await page.locator("#btn-journey").click();
-  await expect(page.locator(".journey-stop.done")).toHaveCount(2);
+  await expect(page.locator(".journey-stop.done")).toHaveCount(4);
   await expect(page.locator(".journey-stop.current")).toHaveCount(1);
-  await expect(page.locator("#btn-journey-go")).toContainText("Etappe 3");
+  await expect(page.locator("#btn-journey-go")).toContainText("Etappe 5");
 
-  // stop 3 is the Knobel-Teich puzzle
+  // every stop starts with its slice of the story
   await page.locator("#btn-journey-go").click();
+  await expect(page.locator("#screen-pass")).toHaveClass(/active/);
+  await expect(page.locator("#pass-sub")).toContainText("Insel");
+  await page.locator("#btn-pass-go").click();
+
+  // stop 5 is the Knobel-Insel puzzle
   await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("puzzle");
   expect(await page.evaluate(() => window.__FF.state.worlds[0])).toBe("teich");
 
@@ -770,15 +813,23 @@ test("Weltreise: winning a stop unlocks the next one", async ({ page }) => {
     await page.waitForTimeout(60);
   }
   await expect(page.locator("#screen-win")).toHaveClass(/active/, { timeout: 15000 });
-  await expect(page.locator("#win-sub")).toContainText("Etappe 3");
+  await expect(page.locator("#win-sub")).toContainText("Etappe 5");
   await expect(page.locator("#btn-rematch")).toContainText("Nächste Etappe");
-  expect(await page.evaluate(() => localStorage.getItem("ff-weltreise"))).toBe("3");
+  expect(await page.evaluate(() => localStorage.getItem("ff-weltreise"))).toBe("5");
 
-  // next stop: classic with the balloon rule, still in teich
+  // next stop teaches the Urwald-Trommel: story first, then a chest
+  // that is visible from the very first second with THAT spell inside
   await page.locator("#btn-rematch").click();
+  await expect(page.locator("#screen-pass")).toHaveClass(/active/);
+  await expect(page.locator("#pass-sub")).toContainText("Trommel");
+  await page.locator("#btn-pass-go").click();
   await expect(page.locator("#btn-place-done")).toBeVisible({ timeout: 15000 });
-  expect(await page.evaluate(() => window.__FF.state.rules.decoy)).toBe(true);
-  expect(await page.evaluate(() => !!window.__FF.placementBoard().decoy)).toBe(true);
+  expect(await page.evaluate(() => window.__FF.state.forceTreasureKind)).toBe("trommel");
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+  expect(
+    await page.evaluate(() => window.__FF.state.boards[1].treasures.every((t) => t.revealed))
+  ).toBe(true);
 });
 
 test("Aquarium: collected creatures live together and hop on tap", async ({ page }) => {
@@ -815,7 +866,7 @@ test("Aquarium: collected creatures live together and hop on tap", async ({ page
   expect(greeted).toBe(true);
 });
 
-test("Monster-Jagd: five wounds defeat the prowling boss", async ({ page }) => {
+test("Monster-Jagd: wounding every segment defeats the prowling boss", async ({ page }) => {
   test.setTimeout(120000);
   await page.evaluate(() => window.__FF.setFast());
   await page.locator("#btn-boss").click();
@@ -829,7 +880,8 @@ test("Monster-Jagd: five wounds defeat the prowling boss", async ({ page }) => {
     await page.evaluate(() => {
       const st = window.__FF.state.boss.st;
       const cells = [];
-      for (let s = 0; s < 5; s += 1) {
+      for (let s = 0; s < 6; s += 1) {
+        // BOSS_SIZE segments
         cells.push(
           st.boss.dir === "h"
             ? { x: st.boss.x + s, y: st.boss.y, s }
@@ -895,7 +947,7 @@ test("Monster-Jagd online: monster places, moves, and is defeated", async ({ bro
     }
     const target = await host.evaluate(() => {
       const st = window.__FF.state.boss.st;
-      for (let s = 0; s < 5; s += 1) {
+      for (let s = 0; s < 6; s += 1) {
         if (st.wounds.includes(s)) continue;
         return st.boss.dir === "h"
           ? { x: st.boss.x + s, y: st.boss.y }

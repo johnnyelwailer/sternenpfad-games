@@ -21,9 +21,9 @@ const rngOf = (...vals) => {
 test("boss placement clamps to the board and rotation fits", () => {
   const st = createBoss(rngOf(0.1));
   assert.equal(placeBoss(st, 7, 7, "h"), true);
-  assert.deepEqual(st.boss, { x: 3, y: 7, dir: "h" });
+  assert.deepEqual(st.boss, { x: 8 - BOSS_SIZE, y: 7, dir: "h" });
   assert.equal(placeBoss(st, 7, 7, "v"), true);
-  assert.deepEqual(st.boss, { x: 7, y: 3, dir: "v" });
+  assert.deepEqual(st.boss, { x: 7, y: 8 - BOSS_SIZE, dir: "v" });
   assert.equal(bossCells(st).length, BOSS_SIZE);
 });
 
@@ -75,7 +75,8 @@ test("distance marks fade and walls constrain moves", () => {
   assert.ok(st.marks["7,7"]);
   bossShoot(st, 6, 7);
   bossShoot(st, 5, 7);
-  const r = bossShoot(st, 4, 7);
+  bossShoot(st, 4, 7);
+  const r = bossShoot(st, 3, 7);
   assert.ok(r.faded.includes("7,7"));
 });
 

@@ -22,6 +22,7 @@ test("every power has complete metadata and a sane target", () => {
   assert.ok(kinds.length >= 13, `expected >= 13 powers, got ${kinds.length}`);
   for (const [kind, p] of Object.entries(P.POWERS)) {
     assert.ok(p.emoji && p.name && p.desc, `${kind} needs emoji/name/desc`);
+    assert.ok(p.use && p.use.length > 8, `${kind} needs a one-line how-to (use)`);
     assert.ok(["none", "cell", "row", "cell3", "own"].includes(p.target), `${kind} target`);
   }
   // each world has a signature power
@@ -86,21 +87,41 @@ test("direction and bell helpers describe the hidden fleet", () => {
   assert.equal(P.biggestHiddenDir(b), null);
 });
 
-test("whirlwind relocates only unharmed creatures onto unshot cells", () => {
+test("whirlwind relocates creatures onto unshot cells only", () => {
   const rng = seeded(31);
   const b = fullBoard(rng);
   P.seedTreasures(b, 3, rng);
-  const wounded = b.ships[0];
-  E.fire(b, wounded.dir === "h" ? wounded.x : wounded.x, wounded.y);
   for (let i = 0; i < 10; i += 1) {
-    const moved = P.whirlwindMove(b, rng);
-    assert.ok(moved, "should find a spot");
-    assert.notEqual(moved.id, wounded.id, "wounded stay put");
-    for (const c of E.shipCells(moved)) {
+    const res = P.whirlwindMove(b, rng);
+    assert.ok(res, "should find a spot");
+    for (const c of E.shipCells(res.ship)) {
       assert.equal(b.shots[E.key(c.x, c.y)], undefined, "moved onto a shot cell");
     }
-    assert.equal(E.canPlace(b, moved, moved.id), true);
+    assert.equal(E.canPlace(b, res.ship, res.ship.id), true);
   }
+});
+
+test("whirlwind lets a WOUNDED creature flee: wounds travel, marks wipe", () => {
+  const rng = seeded(13);
+  const b = E.createBoard(8);
+  E.placeShip(b, { id: 0, size: 3, x: 2, y: 2, dir: "h" });
+  // the enemy hits the middle segment
+  assert.equal(E.fire(b, 3, 2).result, "hit");
+  assert.equal(b.shots[E.key(3, 2)], "hit");
+  const res = P.whirlwindMove(b, rng, 0);
+  assert.ok(res, "wounded creature can still flee");
+  const { ship, cleared } = res;
+  // the enemy's hit mark on the abandoned cell is wiped...
+  assert.deepEqual(cleared, [{ x: 3, y: 2 }]);
+  assert.equal(b.shots[E.key(3, 2)], undefined);
+  // ...and the SAME segment (the middle) stays wounded at the new spot
+  assert.equal(ship.hits.length, 1);
+  const cells = E.shipCells(ship);
+  assert.deepEqual(ship.hits[0], { x: cells[1].x, y: cells[1].y });
+  // finishing it needs only the two unwounded segments
+  E.fire(b, cells[0].x, cells[0].y);
+  const last = E.fire(b, cells[2].x, cells[2].y);
+  assert.equal(last.result, "sunk");
 });
 
 test("extra balloon respects live balloons and unshot cells", () => {
@@ -121,7 +142,7 @@ test("hand starts empty by default; card mode adds the world signature", () => {
   const carded = P.newPowerState("dino", { cards: true });
   assert.deepEqual(carded.hand, ["trommel"]);
   assert.equal(carded.shield, false);
-  assert.equal(carded.clover, false);
+  assert.equal(carded.clover, 0);
 });
 
 test("treasure draws never contain world signature cards or the salvo", () => {
@@ -144,26 +165,24 @@ test("treasure draws never contain world signature cards or the salvo", () => {
   }
 });
 
-test("whirlwindMove honors the chosen creature and refuses hit ones", () => {
-  const rng = (() => {
-    let s = 5;
-    return () => {
-      s = (s * 16807) % 2147483647;
-      return s / 2147483647;
-    };
-  })();
+test("whirlwindMove honors the chosen creature and refuses sunk ones", () => {
+  const rng = seeded(5);
   const b = E.createBoard(8);
   E.placeShip(b, { id: 0, size: 2, x: 0, y: 0, dir: "h" });
   E.placeShip(b, { id: 1, size: 2, x: 5, y: 5, dir: "h" });
   // choosing ship 1 moves exactly ship 1
   const before = { x: b.ships[1].x, y: b.ships[1].y, dir: b.ships[1].dir };
-  const moved = P.whirlwindMove(b, rng, 1);
-  assert.equal(moved.id, 1);
-  assert.ok(moved.x !== before.x || moved.y !== before.y || moved.dir !== before.dir);
+  const res = P.whirlwindMove(b, rng, 1);
+  assert.equal(res.ship.id, 1);
+  assert.ok(
+    res.ship.x !== before.x || res.ship.y !== before.y || res.ship.dir !== before.dir
+  );
+  assert.deepEqual(res.cleared, []);
   // ship 0 stayed put
   assert.equal(b.ships[0].x, 0);
   assert.equal(b.ships[0].y, 0);
-  // a creature that was already hit cannot whirl
-  E.fire(b, b.ships[0].x, b.ships[0].y);
+  // a fully found creature cannot flee anymore
+  E.fire(b, 0, 0);
+  E.fire(b, 1, 0);
   assert.equal(P.whirlwindMove(b, rng, 0), null);
 });

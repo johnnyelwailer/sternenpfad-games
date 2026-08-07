@@ -7,6 +7,7 @@ import * as E from "./engine.js";
 export const HAND_MAX = 2; // powers stay scarce and precious
 export const TREASURES_PER_BOARD = 1; // one visible chest per board
 export const RECHARGE_EVERY = 6; // own turns between free powers
+export const CLOVER_USES = 4; // misses that show a distance number
 
 // target: what a power needs before it fires
 //   none  — instant | cell — one enemy cell | row — one enemy row
@@ -18,6 +19,7 @@ export const POWERS = {
     target: "row",
     world: "ozean",
     desc: "Eine Riesenwelle rollt über eine Reihe und verrät alle Verstecke darin — ganz ohne Schuss.",
+    use: "Tipp eine Reihe an — die Welle verrät alle Verstecke darin.",
   },
   radar: {
     emoji: "🛰️",
@@ -25,6 +27,7 @@ export const POWERS = {
     target: "cell",
     world: "weltraum",
     desc: "Dein Satellit durchleuchtet ein 2×2-Feld und zeigt, wo sich jemand versteckt.",
+    use: "Tipp ein Feld an — das Radar durchleuchtet 2×2 Felder.",
   },
   trommel: {
     emoji: "🥁",
@@ -32,6 +35,7 @@ export const POWERS = {
     target: "cell",
     world: "dino",
     desc: "Trommle auf ein Feld: Ein Pfeil zeigt von dort zum nächsten versteckten Freund.",
+    use: "Tipp ein Feld an — ein Pfeil zeigt zum nächsten Freund.",
   },
   schild: {
     emoji: "🪷",
@@ -39,31 +43,36 @@ export const POWERS = {
     target: "none",
     world: "teich",
     desc: "Der nächste Treffer auf deine Freunde prallt einfach ab. Das Feld bleibt geheim!",
+    use: "Wirkt von allein: Der nächste Treffer prallt einfach ab.",
   },
   fernglas: {
     emoji: "🔍",
     name: "Fernglas",
     target: "cell",
     desc: "Schau heimlich unter ein Feld, ohne zu schießen.",
+    use: "Tipp ein Feld an und schau heimlich darunter.",
   },
   doppel: {
     emoji: "🎯",
     name: "Doppelschuss",
     target: "none",
-    desc: "Wenn du in dieser Runde danebenschießt, darfst du trotzdem gleich nochmal.",
+    desc: "Doppeltes Suchglück: Dein nächstes Daneben beendet deinen Zug nicht. Aus der Schatztruhe heißt das — sofort zwei Schüsse!",
+    use: "Du darfst gleich ZWEIMAL suchen!",
   },
   zeit: {
     emoji: "⏳",
     name: "Zeitzauber",
     target: "none",
     desc: "Schenkt dir einen Extra-Zug: Nach deinem nächsten Daneben suchst du einfach weiter.",
+    use: "Nach deinem nächsten Daneben suchst du einfach weiter.",
   },
   wirbel: {
     emoji: "🌪️",
     name: "Wirbelwind",
     target: "own",
     cardsOnly: true,
-    desc: "Tipp einen deiner ganz versteckten Freunde an — der Wirbelwind trägt ihn vor deinen Augen an ein neues Versteck.",
+    desc: "Tipp einen deiner Freunde an — der Wirbelwind trägt ihn an ein neues Versteck. Sogar Verletzte fliehen, und die Treffer des Gegners verschwinden dabei!",
+    use: "Tipp deinen Freund an — er flieht mitsamt seinen Wunden.",
   },
   ballon: {
     emoji: "🎈",
@@ -71,25 +80,28 @@ export const POWERS = {
     target: "none",
     cardsOnly: true,
     desc: "Versteck einen neuen Schwindel-Ballon auf deinem Brett. Peng!",
+    use: "Versteckt sofort einen neuen Schwindel-Ballon bei dir.",
   },
   kompass: {
     emoji: "🧭",
     name: "Magnet-Kompass",
     target: "none",
     desc: "Ein Zauberpfeil zeigt von deinem letzten Schuss zum nächsten Versteck.",
+    use: "Wirkt sofort: Der Pfeil zeigt vom letzten Schuss zum nächsten Versteck.",
   },
   glocke: {
     emoji: "🔔",
     name: "Zauberglocke",
     target: "none",
     desc: "Die Glocke flüstert dir zu, ob der größte versteckte Freund quer oder hochkant liegt.",
+    use: "Wirkt sofort: Die Glocke verrät, wie der größte Freund liegt.",
   },
   klee: {
     emoji: "🍀",
     name: "Glücksklee",
     target: "none",
-    permanent: true,
-    desc: "Für immer Glück: Jedes Daneben zeigt ab jetzt, wie weit der nächste Freund entfernt ist.",
+    desc: "Glück für eine Weile: Deine nächsten 4 Daneben zeigen, wie weit der nächste Freund entfernt ist.",
+    use: "Deine nächsten 4 Daneben zeigen die Entfernung.",
   },
   salve: {
     emoji: "⭐",
@@ -97,6 +109,7 @@ export const POWERS = {
     target: "cell3",
     cardsOnly: true,
     desc: "Drei Sternschnuppen sausen auf drei Felder nebeneinander! Danach ist der andere dran.",
+    use: "Tipp ein Feld an — drei Sternschnuppen sausen los.",
   },
 };
 
@@ -145,8 +158,8 @@ export function newPowerState(worldId, { cards = false } = {}) {
   return {
     hand: cards ? [worldPower(worldId)] : [],
     shield: false, // set when "schild" is activated, eaten by next hit
-    clover: false, // permanent personal sonar
-    doubleShot: false, // this-turn miss forgiveness
+    clover: 0, // remaining misses that show a distance (Glücksklee)
+    doubleShot: false, // one forgiven miss — keeps until it fires
     turns: 0, // own turns taken (for recharges)
   };
 }
@@ -254,14 +267,22 @@ export function biggestHiddenDir(board) {
   return best ? best.dir : null;
 }
 
-// Wirbelwind: move an unharmed creature (the chosen one, or a random
+// Wirbelwind: move a not-yet-sunk creature (the chosen one, or a random
 // one) to a fresh legal spot whose cells were never shot at (marks must
-// stay truthful). Returns the moved ship or null.
+// stay truthful). Wounds travel along: the wounded segments stay
+// wounded at the new place, and the enemy's HIT marks on the old cells
+// are wiped — all they learn is that the creature escaped.
+// Returns { ship, cleared } (cleared = the wiped mark cells) or null.
 export function whirlwindMove(board, rng = Math.random, shipId = null) {
-  let candidates = board.ships.filter((s) => s.hits.length === 0);
+  let candidates = board.ships.filter((s) => !E.isSunk(s));
   if (shipId !== null) candidates = candidates.filter((s) => s.id === shipId);
   if (!candidates.length) return null;
   const ship = candidates[Math.floor(rng() * candidates.length)];
+  // remember which SEGMENTS are wounded (relative to the ship origin)
+  const oldCells = E.shipCells(ship);
+  const woundedIdx = ship.hits
+    .map((h) => oldCells.findIndex((c) => c.x === h.x && c.y === h.y))
+    .filter((i) => i >= 0);
   for (let tries = 0; tries < 300; tries += 1) {
     const dir = rng() < 0.5 ? "h" : "v";
     const w = ship.shape === "sq" ? 2 : dir === "h" ? ship.size : 1;
@@ -276,10 +297,21 @@ export function whirlwindMove(board, rng = Math.random, shipId = null) {
     const cells = E.shipCells(candidate);
     if (cells.some((c) => board.shots[E.key(c.x, c.y)])) continue;
     if ((board.treasures ?? []).some((t) => cells.some((c) => c.x === t.x && c.y === t.y))) continue;
+    // wipe the enemy's HIT marks on the abandoned cells
+    const cleared = [];
+    for (const hc of ship.hits) {
+      const k = E.key(hc.x, hc.y);
+      if (board.shots[k] === E.HIT) {
+        delete board.shots[k];
+        cleared.push({ x: hc.x, y: hc.y });
+      }
+    }
     ship.x = x;
     ship.y = y;
     ship.dir = dir;
-    return ship;
+    // the same segments stay wounded at the new address
+    ship.hits = woundedIdx.map((i) => ({ x: cells[i].x, y: cells[i].y }));
+    return { ship, cleared };
   }
   return null;
 }
