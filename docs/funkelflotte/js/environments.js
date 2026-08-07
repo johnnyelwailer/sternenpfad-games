@@ -1209,7 +1209,297 @@ function vulkan(boardSpan) {
   return g;
 }
 
-const BUILDERS = { ozean, weltraum, dino, teich, eis, vulkan };
+// -------------------------------------------------------------- Piraten
+
+function wreckShip(scale) {
+  const g = new THREE.Group();
+  const woodM = mat(0x6b4423, { roughness: 0.95 });
+  // a beached hull, listing to one side, mast snapped
+  const hull = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.6, 3.4, 5, 1), woodM);
+  hull.rotation.z = Math.PI / 2;
+  hull.rotation.x = 0.35;
+  hull.position.y = 0.5;
+  g.add(hull);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 2.2, 6), woodM);
+  mast.position.set(0.3, 1.4, -0.2);
+  mast.rotation.z = 0.7;
+  g.add(mast);
+  const sail = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.2, 0.9),
+    mat(0xd8c8a8, { roughness: 1, side: THREE.DoubleSide, transparent: true, opacity: 0.92 })
+  );
+  sail.position.set(0.9, 1.6, -0.2);
+  sail.rotation.z = 0.5;
+  sail.rotation.y = 0.4;
+  g.add(sail);
+  g.scale.setScalar(scale);
+  return g;
+}
+
+function piraten(boardSpan) {
+  const g = new THREE.Group();
+  const lagoonR = boardSpan * 1.0;
+  const beachR = boardSpan * 1.28;
+
+  const water = makeWater(lagoonR, beachR, { shallow: 0x4fb0c8, deep: 0x14506b, fog: 0xcfe3d8 });
+  g.add(water);
+
+  // golden cove sand
+  const beach = new THREE.Mesh(new THREE.RingGeometry(lagoonR + 0.15, beachR + 1.6, 44), mat(0xe8cd90, { roughness: 0.95 }));
+  beach.rotation.x = -Math.PI / 2;
+  beach.position.y = 0.02;
+  g.add(beach);
+  const beachOuter = new THREE.Mesh(new THREE.RingGeometry(beachR + 1.55, beachR + 2.6, 44), mat(0xd8b878, { roughness: 1 }));
+  beachOuter.rotation.x = -Math.PI / 2;
+  beachOuter.position.y = -0.03;
+  g.add(beachOuter);
+
+  // shipwreck, palms, barrels and a half-buried chest on the beach
+  const wreck = wreckShip(1.1);
+  wreck.position.set(-boardSpan * 1.16, 0.02, -boardSpan * 0.55);
+  wreck.rotation.y = 0.7;
+  g.add(wreck);
+  const palm = palmTree(1.1);
+  palm.position.set(boardSpan * 1.18, 0.02, -boardSpan * 0.45);
+  g.add(palm);
+  const palm2 = palmTree(0.8);
+  palm2.position.set(boardSpan * 1.05, 0.02, boardSpan * 0.8);
+  palm2.rotation.y = 2.1;
+  g.add(palm2);
+  const barrelM = mat(0x8a5a2b, { roughness: 0.9 });
+  for (const [bx, bz, tip] of [[-boardSpan * 0.95, boardSpan * 0.9, 0], [-boardSpan * 1.1, boardSpan * 0.75, Math.PI / 2], [boardSpan * 1.3, boardSpan * 0.2, 0]]) {
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.6, 10), barrelM);
+    barrel.position.set(bx, 0.3, bz);
+    barrel.rotation.z = tip;
+    g.add(barrel);
+  }
+  const chestGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 8, 6),
+    basic(0xffcc33, { transparent: true, opacity: 0.9, depthWrite: false })
+  );
+  chestGlow.position.set(boardSpan * 1.22, 0.28, boardSpan * 0.55);
+  g.add(chestGlow);
+
+  // mid: reef rocks + drifting barrels
+  for (const [x, z, sc] of [[-9, -13, 1.5], [10, -14, 1.1], [13, 7, 1.6]]) {
+    const rk = rock(sc, 0x6e7a86);
+    rk.position.set(x, -0.25, z);
+    g.add(rk);
+  }
+  const floaters = [];
+  for (const [x, z] of [[-12, 8], [8, 12], [-7, -16]]) {
+    const fb = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.55, 8), barrelM);
+    fb.rotation.z = Math.PI / 2;
+    fb.position.set(x, 0.05, z);
+    floaters.push(fb);
+    g.add(fb);
+  }
+
+  const clouds = [];
+  for (const [x, y, z, sc] of [[-10, 7, -15, 1.6], [11, 8, -11, 1.2], [3, 9.5, -20, 2.0]]) {
+    const c = cloud(sc);
+    c.position.set(x, y, z);
+    clouds.push(c);
+    g.add(c);
+  }
+
+  // far: skull-free pirate isles with a watchtower
+  for (const [x, z, sc, h] of [[-18, -34, 9, 6], [19, -30, 11, 8], [1, -45, 10, 7]]) {
+    const isle = new THREE.Mesh(new THREE.ConeGeometry(sc, h, 7), mat(0x74a88f, { roughness: 1 }));
+    isle.position.set(x, h / 2 - 1.4, z);
+    g.add(isle);
+  }
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, 6, 8), mat(0x8a7a5a, { roughness: 1 }));
+  tower.position.set(19, 8.5, -30);
+  g.add(tower);
+
+  const gulls = [];
+  for (let i = 0; i < 3; i += 1) {
+    const gull = flyer(0xffffff, 1.0, "round");
+    gull.userData.orbit = { r: 8 + i * 2.4, h: 6 + i, speed: 0.14 + i * 0.03, phase: i * 2.2 };
+    gulls.push(gull);
+    g.add(gull);
+  }
+  const sparkles = particleField(40, 0xffe066, 0.12, 12, 5); // gold dust in the air
+
+  g.add(sparkles);
+  g.userData.animate = (t) => {
+    water.material.uniforms.uTime.value = t;
+    floaters.forEach((fb, i) => {
+      fb.position.y = 0.05 + Math.sin(t * 1.3 + i * 2) * 0.1;
+      fb.rotation.x = Math.sin(t * 0.8 + i) * 0.2;
+    });
+    chestGlow.scale.setScalar(1 + Math.sin(t * 2.2) * 0.25);
+    palm.userData.sway(t);
+    palm2.userData.sway(t + 2);
+    clouds.forEach((c, i) => {
+      c.position.x += Math.sin(t * 0.08 + i) * 0.003;
+    });
+    for (const gull of gulls) {
+      const o = gull.userData.orbit;
+      const a = t * o.speed + o.phase;
+      gull.position.set(Math.cos(a) * o.r, o.h + Math.sin(t * 0.9 + o.phase) * 0.5, Math.sin(a) * o.r);
+      gull.rotation.y = -a - Math.PI / 2;
+      gull.userData.flap(t + o.phase, 6);
+    }
+    sparkles.userData.update(t);
+  };
+  return g;
+}
+
+// --------------------------------------------------------------- Marine
+
+function lighthouse(scale) {
+  const g = new THREE.Group();
+  for (let i = 0; i < 4; i += 1) {
+    const seg = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.5 - i * 0.07, 0.56 - i * 0.07, 0.8, 10),
+      mat(i % 2 === 0 ? 0xd8483c : 0xf0f4f8, { roughness: 0.6 })
+    );
+    seg.position.y = 0.4 + i * 0.8;
+    g.add(seg);
+  }
+  const lantern = new THREE.Mesh(
+    new THREE.SphereGeometry(0.3, 10, 8),
+    mat(0xffe066, { emissive: 0xffcc33, emissiveIntensity: 1 })
+  );
+  lantern.position.y = 3.5;
+  g.add(lantern);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.5, 10), mat(0x2a4d7e));
+  cap.position.y = 3.95;
+  g.add(cap);
+  // the rotating beam
+  const beam = new THREE.Mesh(
+    new THREE.PlaneGeometry(5, 0.8),
+    basic(0xffec96, { transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide })
+  );
+  beam.position.set(2.5, 0, 0);
+  const pivot = new THREE.Group();
+  pivot.position.y = 3.5;
+  pivot.add(beam);
+  g.add(pivot);
+  g.userData.pivot = pivot;
+  g.userData.lantern = lantern;
+  g.scale.setScalar(scale);
+  return g;
+}
+
+function marine(boardSpan) {
+  const g = new THREE.Group();
+  const lagoonR = boardSpan * 1.0;
+  const beachR = boardSpan * 1.28;
+
+  const water = makeWater(lagoonR, beachR, { shallow: 0x6aa8cc, deep: 0x1e4a72, fog: 0xd8e6f2 });
+  g.add(water);
+
+  // stone quay ring with bollards
+  const quay = new THREE.Mesh(new THREE.RingGeometry(lagoonR + 0.15, beachR + 1.6, 44), mat(0x9aa4b0, { roughness: 0.85 }));
+  quay.rotation.x = -Math.PI / 2;
+  quay.position.y = 0.02;
+  g.add(quay);
+  const quayOuter = new THREE.Mesh(new THREE.RingGeometry(beachR + 1.55, beachR + 2.6, 44), mat(0x7e8894, { roughness: 1 }));
+  quayOuter.rotation.x = -Math.PI / 2;
+  quayOuter.position.y = -0.03;
+  g.add(quayOuter);
+  for (let i = 0; i < 10; i += 1) {
+    const a = (i / 10) * Math.PI * 2 + 0.3;
+    const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.3, 8), mat(0x2a3440, { metalness: 0.3 }));
+    bollard.position.set(Math.cos(a) * (lagoonR + 0.7), 0.18, Math.sin(a) * (lagoonR + 0.7));
+    g.add(bollard);
+  }
+
+  // the lighthouse — its beam sweeps the whole harbor
+  const turm = lighthouse(1.15);
+  turm.position.set(-boardSpan * 1.18, 0.02, -boardSpan * 0.55);
+  g.add(turm);
+
+  // stacked cargo containers + a little crane
+  const stack = [[0xd8483c, 0, 0], [0x2a4d7e, 0, 0.62], [0xf2a83c, 0.9, 0]];
+  for (const [color, ox, oy] of stack) {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 0.7), mat(color, { roughness: 0.6 }));
+    box.position.set(boardSpan * 1.15 + ox, 0.32 + oy, boardSpan * 0.7);
+    box.rotation.y = 0.3;
+    g.add(box);
+  }
+  const craneM = mat(0xf2c83c, { roughness: 0.6 });
+  const craneLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 2.6, 6), craneM);
+  craneLeg.position.set(boardSpan * 1.25, 1.3, -boardSpan * 0.2);
+  g.add(craneLeg);
+  const craneArm = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.12, 0.12), craneM);
+  craneArm.position.set(boardSpan * 1.25 - 0.8, 2.6, -boardSpan * 0.2);
+  g.add(craneArm);
+
+  // buoys bobbing in the fairway, lamps blinking
+  const buoys = [];
+  for (const [x, z, hue] of [[-9, -13, 0xd8483c], [10, -14, 0x3fae6a], [13, 7, 0xd8483c], [-13, 8, 0x3fae6a]]) {
+    const buoy = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.9, 8), mat(hue, { roughness: 0.6 }));
+    body.position.y = 0.35;
+    buoy.add(body);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), mat(0xffe066, { emissive: 0xffcc33, emissiveIntensity: 1 }));
+    lamp.position.y = 0.9;
+    buoy.add(lamp);
+    buoy.position.set(x, -0.05, z);
+    buoy.userData.lamp = lamp;
+    buoys.push(buoy);
+    g.add(buoy);
+  }
+
+  const clouds = [];
+  for (const [x, y, z, sc] of [[-10, 7.5, -16, 1.7], [11, 8.5, -12, 1.3], [2, 9.5, -21, 2.1]]) {
+    const c = cloud(sc);
+    c.position.set(x, y, z);
+    clouds.push(c);
+    g.add(c);
+  }
+
+  // far: harbor skyline — cranes and warehouse silhouettes
+  for (const [x, z, w, h] of [[-16, -34, 7, 4], [18, -32, 9, 5], [0, -44, 12, 6]]) {
+    const hall = new THREE.Mesh(new THREE.BoxGeometry(w, h, 4), mat(0x6a7684, { roughness: 1 }));
+    hall.position.set(x, h / 2 - 1.2, z);
+    g.add(hall);
+    const roof = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, w, 3, 1), mat(0x5a6674, { roughness: 1 }));
+    roof.rotation.z = Math.PI / 2;
+    roof.scale.set(1, 1, 0.5);
+    roof.position.set(x, h - 1.2, z);
+    g.add(roof);
+  }
+
+  const gulls = [];
+  for (let i = 0; i < 3; i += 1) {
+    const gull = flyer(0xffffff, 1.05, "round");
+    gull.userData.orbit = { r: 8.5 + i * 2.4, h: 6 + i, speed: 0.13 + i * 0.03, phase: i * 2.3 };
+    gulls.push(gull);
+    g.add(gull);
+  }
+  const spray = particleField(40, 0xffffff, 0.1, 12, 4);
+  g.add(spray);
+
+  g.userData.animate = (t) => {
+    water.material.uniforms.uTime.value = t;
+    turm.userData.pivot.rotation.y = t * 0.9;
+    turm.userData.lantern.material.emissiveIntensity = 0.7 + Math.sin(t * 0.9) * 0.3;
+    buoys.forEach((b, i) => {
+      b.position.y = -0.05 + Math.sin(t * 1.4 + i * 1.8) * 0.12;
+      b.rotation.z = Math.sin(t * 1.1 + i) * 0.1;
+      b.userData.lamp.material.emissiveIntensity = 0.4 + Math.max(0, Math.sin(t * 2 + i * 2.5)) * 0.9;
+    });
+    clouds.forEach((c, i) => {
+      c.position.x += Math.sin(t * 0.07 + i) * 0.003;
+    });
+    for (const gull of gulls) {
+      const o = gull.userData.orbit;
+      const a = t * o.speed + o.phase;
+      gull.position.set(Math.cos(a) * o.r, o.h + Math.sin(t * 0.9 + o.phase) * 0.5, Math.sin(a) * o.r);
+      gull.rotation.y = -a - Math.PI / 2;
+      gull.userData.flap(t + o.phase, 6);
+    }
+    spray.userData.update(t);
+  };
+  return g;
+}
+
+const BUILDERS = { ozean, weltraum, dino, teich, eis, vulkan, piraten, marine };
 
 export function buildEnvironment(worldId, boardSpan) {
   return (BUILDERS[worldId] || ozean)(boardSpan);

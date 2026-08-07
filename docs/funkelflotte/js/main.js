@@ -1183,7 +1183,9 @@ function onPowerTap(kind) {
     status(
       p.target === "row"
         ? `${p.emoji} ${p.name}: Tipp eine Reihe auf dem Suchbrett an!`
-        : `${p.emoji} ${p.name}: Tipp ein Feld auf dem Suchbrett an!`
+        : p.target === "col"
+          ? `${p.emoji} ${p.name}: Tipp eine Spalte auf dem Suchbrett an!`
+          : `${p.emoji} ${p.name}: Tipp ein Feld auf dem Suchbrett an!`
     );
     renderPowers();
   }
@@ -1254,6 +1256,8 @@ function resolveInfo(kind, payload, apply) {
   else if (kind === "radar") apply({ cells: PW.scanCells(board, PW.squareCells(board, payload.x, payload.y)) });
   else if (kind === "frost") apply({ cells: PW.scanCells(board, PW.crossCells(board, payload.x, payload.y)) });
   else if (kind === "funke") apply({ cells: PW.scanCells(board, PW.plusCells(board, payload.x, payload.y)) });
+  else if (kind === "enterhaken") apply({ cells: PW.scanCells(board, PW.hookCells(board, payload.x, payload.y)) });
+  else if (kind === "leuchtfeuer") apply({ cells: PW.scanCells(board, PW.columnCells(board, payload.x)) });
   else if (kind === "fernglas") apply({ cells: PW.scanCells(board, [{ x: payload.x, y: payload.y }]) });
   else if (kind === "trommel" || kind === "kompass") apply({ dir: PW.directionToNearest(board, payload.x, payload.y) });
   else if (kind === "glocke") apply({ big: PW.biggestHiddenRegion(board) });
@@ -1298,6 +1302,24 @@ function executePower(kind, target) {
       SND.sparkle();
       cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 400 + i * 140));
       status("🎆 Der Funke hat in alle Richtungen gesprüht!");
+    });
+  } else if (kind === "enterhaken") {
+    consumePower(kind);
+    SCENE.hookDrag(enemySlot, target.x, target.y);
+    SND.whoosh();
+    resolveInfo(kind, { x: target.x, y: target.y }, ({ cells }) => {
+      SND.sparkle();
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 500 + i * 180));
+      status("🪝 Der Enterhaken hat alles abgetastet!");
+    });
+  } else if (kind === "leuchtfeuer") {
+    consumePower(kind);
+    SCENE.lightSweep(enemySlot, target.x);
+    SND.whoosh();
+    resolveInfo(kind, { x: target.x }, ({ cells }) => {
+      SND.sparkle();
+      cells.forEach((c, i) => setTimeout(() => SCENE.peekMarker(enemySlot, c.x, c.y, c.ship), 300 + i * 90));
+      status("🚨 Das Leuchtfeuer verrät seine Geheimnisse!");
     });
   } else if (kind === "fernglas") {
     consumePower(kind);
@@ -1492,6 +1514,8 @@ const CAST_SOUND = {
   radar: "info",
   frost: "info",
   funke: "info",
+  enterhaken: "info",
+  leuchtfeuer: "info",
   fernglas: "info",
   trommel: "info",
   kompass: "info",
@@ -2700,6 +2724,12 @@ function handleNetMessage(msg) {
       } else if (msg.kind === "frost") {
         S.net.send({ t: "pwr", kind: "frost", cells: PW.scanCells(b, PW.crossCells(b, msg.x, msg.y)) });
         toast("❄️ Ein Eisstern glitzert über deinem Brett …");
+      } else if (msg.kind === "enterhaken") {
+        S.net.send({ t: "pwr", kind: "enterhaken", cells: PW.scanCells(b, PW.hookCells(b, msg.x, msg.y)) });
+        toast("🪝 Ein Enterhaken kratzt über dein Brett …");
+      } else if (msg.kind === "leuchtfeuer") {
+        S.net.send({ t: "pwr", kind: "leuchtfeuer", cells: PW.scanCells(b, PW.columnCells(b, msg.x)) });
+        toast("🚨 Ein Lichtstrahl wandert über dein Brett …");
       } else if (msg.kind === "funke") {
         S.net.send({ t: "pwr", kind: "funke", cells: PW.scanCells(b, PW.plusCells(b, msg.x, msg.y)) });
         toast("🎆 Funken sprühen über deinem Brett …");
@@ -3345,8 +3375,8 @@ function handleChaseMessage(msg) {
 
 // ---------------------------------------------------------------- boss
 
-// Oktopus, UFO, Rexi, Frosch, Eisbär, Drache
-const BOSS_IDX = { ozean: 1, weltraum: 2, dino: 1, teich: 3, eis: 2, vulkan: 0 };
+// Oktopus, UFO, Rexi, Frosch, Eisbär, Drache, Galeone, U-Boot
+const BOSS_IDX = { ozean: 1, weltraum: 2, dino: 1, teich: 3, eis: 2, vulkan: 0, piraten: 0, marine: 2 };
 
 function bossIdx() {
   return BOSS_IDX[S.worlds[0]] ?? 1;

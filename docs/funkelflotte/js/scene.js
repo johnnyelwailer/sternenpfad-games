@@ -657,7 +657,7 @@ export function setupPark(worldIds) {
       },
     },
     grid: GRID,
-    span: 30, // framing target for the zoomed-out overview
+    span: Math.max(30, rows * 10.2 + 10), // overview framing grows with the park
     tiles: new Map(),
     tilesGroup: new THREE.Group(),
     creaturesGroup,
@@ -1552,6 +1552,113 @@ export function sparkFly(slot, x, y) {
   camKick = 0.25;
 }
 
+// Enterhaken: a hook drops onto the cell and drags down across the
+// three cells it scans, splashing on each one
+export function hookDrag(slot, x, y) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const tile = d.tiles.get(`${x},${y}`);
+  if (!tile) return;
+  const c = { x: tile.position.x, z: tile.position.z };
+  flash(d, c, 0xffcc33);
+  const ironM = new THREE.MeshBasicMaterial({ color: 0x3a3f4a, transparent: true, opacity: 0.95, depthWrite: false });
+  const hook = new THREE.Group();
+  for (let i = 0; i < 3; i += 1) {
+    const claw = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.04, 6, 10, Math.PI * 0.9), ironM);
+    claw.rotation.y = (i / 3) * Math.PI * 2;
+    claw.rotation.z = Math.PI * 0.75;
+    hook.add(claw);
+  }
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 6), ironM);
+  shaft.position.y = 0.28;
+  hook.add(shaft);
+  hook.position.set(c.x, 3.2, c.z);
+  d.root.add(hook);
+  const endTile = d.tiles.get(`${x},${Math.min(d.grid - 1, y + 2)}`);
+  const endZ = endTile ? endTile.position.z : c.z;
+  tween(
+    (v) => {
+      if (v < 0.35) {
+        // drop from the sky onto the first cell
+        hook.position.y = 3.2 - (v / 0.35) * 2.9;
+      } else {
+        // drag down the column, kicking up spray
+        const k = (v - 0.35) / 0.65;
+        hook.position.y = 0.3 + Math.sin(k * Math.PI * 3) * 0.08;
+        hook.position.z = c.z + (endZ - c.z) * k;
+        hook.rotation.y = k * 2.4;
+      }
+      ironM.opacity = v < 0.9 ? 0.95 : 0.95 * (1 - (v - 0.9) / 0.1);
+    },
+    {
+      dur: 1.1,
+      ease: Ease.linear,
+      onDone: () => {
+        d.root.remove(hook);
+        hook.traverse((o) => o.geometry?.dispose?.());
+        ironM.dispose();
+      },
+    }
+  );
+  for (let i = 0; i < 3; i += 1) {
+    const t2 = d.tiles.get(`${x},${Math.min(d.grid - 1, y + i)}`);
+    if (!t2) continue;
+    setTimeout(() => {
+      splashColumn(d, t2.position, 0xffe0b0);
+      ringWave(d, t2.position, 0xffcc33);
+    }, 400 + i * 240);
+  }
+  camKick = 0.3;
+}
+
+// Leuchtfeuer: the lighthouse beam sweeps down one column, cell by cell
+export function lightSweep(slot, x) {
+  const d = dioramas[slot];
+  if (!d) return;
+  const g = d.grid;
+  const firstTile = d.tiles.get(`${x},0`);
+  if (!firstTile) return;
+  const bx = firstTile.position.x;
+  // a tall cone of light gliding along the column
+  const beam = new THREE.Mesh(
+    new THREE.ConeGeometry(0.55, 3.4, 12, 1, true),
+    new THREE.MeshBasicMaterial({
+      map: radialTexture("rgba(255,236,150,0.85)", "rgba(255,236,150,0)"),
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  beam.position.set(bx, 1.7, -g / 2 - 0.6);
+  d.root.add(beam);
+  tween(
+    (v) => {
+      beam.position.z = -g / 2 - 0.6 + v * (g + 1.2);
+      beam.rotation.y = v * 2;
+      beam.material.opacity = v < 0.85 ? 0.75 : 0.75 * (1 - (v - 0.85) / 0.15);
+    },
+    {
+      dur: 1.0,
+      ease: Ease.linear,
+      onDone: () => {
+        d.root.remove(beam);
+        beam.geometry.dispose();
+        beam.material.dispose();
+      },
+    }
+  );
+  for (let y = 0; y < g; y += 1) {
+    const tile = d.tiles.get(`${x},${y}`);
+    if (!tile) continue;
+    setTimeout(() => {
+      flash(d, tile.position, 0xffec96);
+      if (y % 2 === 0) ringWave(d, tile.position, 0xffffff);
+    }, 80 + y * 100);
+  }
+  camKick = 0.25;
+}
+
 export function clockRipple(slot) {
   const d = dioramas[slot];
   if (!d) return;
@@ -2232,6 +2339,25 @@ export function revealShip(slot, ship) {
     burst(d, worldPos, 0xff5a2a, { count: 40 }); // lava bits
     burst(d, worldPos, 0x4a3038, { count: 24, up: true }); // smoke
     camKick = 0.65;
+  } else if (w === "piraten") {
+    // boarding a pirate ship rains GOLD
+    flash(d, center, 0xffcc33);
+    ringWave(d, center, 0xffcc33);
+    ringWave(d, center, 0xffffff);
+    burst(d, worldPos, 0xffcc33, { count: 55, up: true }); // coins!
+    burst(d, worldPos, 0xffe066, { count: 30, up: true });
+    burst(d, worldPos, 0x8a5a2b, { count: 22 }); // splintered planks
+    camKick = 0.6;
+  } else if (w === "marine") {
+    // harbor celebration: spray, signal-red confetti, white foam
+    flash(d, center, 0xf0f6ff);
+    splashColumn(d, center, 0xcfe8ff);
+    ringWave(d, center, 0xff5f6d);
+    ringWave(d, center, 0xffffff);
+    burst(d, worldPos, 0xcfe8ff, { count: 50, up: true });
+    burst(d, worldPos, 0xff5f6d, { count: 28, up: true }); // confetti
+    burst(d, worldPos, 0xffffff, { count: 22, up: true });
+    camKick = 0.5;
   } else if (w === "ozean" || w === "teich") {
     // sea friends burst out of a big fountain
     flash(d, center, d.world.colors.accent);
