@@ -224,7 +224,7 @@ test("square ships sink after all 4 cells are hit", () => {
   assert.equal(res.gameOver, true);
 });
 
-test("Kuschel-Regel: touching allowed, overlap still forbidden", () => {
+test("Enge Verstecke: touching allowed, overlap still forbidden", () => {
   const b = createBoard(8);
   b.allowTouch = true;
   placeShip(b, { id: 0, size: 3, x: 2, y: 2, dir: "h" });
@@ -238,7 +238,7 @@ test("Kuschel-Regel: touching allowed, overlap still forbidden", () => {
   assert.equal(canPlace(c, { id: 1, size: 2, x: 2, y: 3, dir: "h" }), false);
 });
 
-test("Kuschel-Regel: sinking reveals no surrounding water", () => {
+test("Enge Verstecke: sinking reveals no surrounding water", () => {
   const b = createBoard(8);
   b.allowTouch = true;
   placeShip(b, { id: 0, size: 2, x: 2, y: 2, dir: "h" });
@@ -261,13 +261,13 @@ test("randomFleet fills small, big and mixed-shape boards", () => {
   assert.equal(randomFleet(riesig, [5, 4, 3, 3, 2, 2, 1], rng), true);
   assert.equal(riesig.ships.length, 7);
 
-  const knuddel = createBoard(8);
-  assert.equal(randomFleet(knuddel, ["2x2", 3, 3, 2, 1], rng), true);
-  const sq = knuddel.ships.find((s) => s.shape === "sq");
+  const grossklein = createBoard(8);
+  assert.equal(randomFleet(grossklein, ["2x2", 3, 3, 2, 1], rng), true);
+  const sq = grossklein.ships.find((s) => s.shape === "sq");
   assert.ok(sq);
   assert.equal(sq.size, 4);
   // every occupied cell of every ship stays in bounds
-  for (const board of [flink, riesig, knuddel]) {
+  for (const board of [flink, riesig, grossklein]) {
     for (const s of board.ships) {
       for (const c of shipCells(s)) {
         assert.ok(c.x >= 0 && c.y >= 0 && c.x < board.size && c.y < board.size);

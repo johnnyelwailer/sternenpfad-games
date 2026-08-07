@@ -68,7 +68,22 @@ export class Net {
     this.onMessage = () => {};
     this.onStatus = () => {};
     this.onClose = () => {};
+    this.onKnock = null; // optional: second incoming connection while busy
     this.closed = false;
+  }
+
+  // swap the live connection for a fresh one (opponent came back after
+  // a refresh while the old socket was still zombie-open)
+  replaceConn(conn) {
+    const old = this.conn;
+    this.conn = null;
+    try {
+      old?.close();
+    } catch {
+      /* ignore */
+    }
+    this._wire(conn);
+    if (conn.open) this.onStatus("connected");
   }
 
   host(code) {
@@ -80,10 +95,23 @@ export class Net {
       });
       this.peer.on("connection", (conn) => {
         if (this.conn) {
-          conn.close();
+          // a second knock while occupied: the app may want it (our
+          // opponent reconnecting past a zombie connection)
+          if (this.onKnock) this.onKnock(conn);
+          else conn.close();
           return;
         }
         this._wire(conn);
+      });
+      // long-lived listeners lose the broker link when the phone naps —
+      // quietly redial so the door stays open (data conns are unaffected)
+      this.peer.on("disconnected", () => {
+        if (this.closed) return;
+        try {
+          this.peer.reconnect();
+        } catch {
+          /* broker gone for good — the retry loops upstream handle it */
+        }
       });
       this.peer.on("error", (err) => {
         if (err.type === "unavailable-id") {

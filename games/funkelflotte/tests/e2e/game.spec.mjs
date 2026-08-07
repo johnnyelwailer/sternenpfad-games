@@ -275,23 +275,30 @@ test("feature flags: new features can be switched off via URL", async ({ page })
   await page.waitForFunction(() => !!window.__FF);
   await expect(page.locator("#btn-album")).toBeVisible();
   await page.locator("#btn-options").click();
-  await expect(page.locator("#rule-decoy")).not.toBeHidden();
-  await expect(page.locator("#opt-powers")).not.toBeHidden();
+  await expect(page.locator("#sect-rules summary")).toBeVisible();
+  await expect(page.locator("#sect-zauber summary")).toBeVisible();
   await expect(page.locator("#board-presets")).not.toBeHidden();
+  // the collapsed sections open on tap
+  await page.locator("#sect-rules summary").click();
+  await expect(page.locator("#rule-decoy")).not.toBeHidden();
+  await page.locator("#sect-zauber summary").click();
+  await expect(page.locator("#opt-powers")).not.toBeHidden();
 });
 
 test("Zauber-Kräfte: legend explains, world power + treasure + powers work", async ({ page }) => {
   test.setTimeout(180000);
 
-  // the options screen explains every power
+  // the options screen explains every power (inside the Zauber section)
   await page.locator("#btn-options").click();
   await expect(page.locator("#screen-options")).toHaveClass(/active/);
+  await page.evaluate(() => (document.querySelector("#sect-zauber").open = true));
   await page.locator("#btn-powers-legend").click();
   expect(await page.locator(".legend-row").count()).toBeGreaterThanOrEqual(13);
   await page.locator("#btn-options-back").click();
 
   // enable the opt-in card hand for this test
   await page.locator("#btn-options").click();
+  await page.evaluate(() => (document.querySelector("#sect-zauber").open = true));
   await page.locator("#opt-cards").click({ force: true });
   await page.locator("#btn-options-back").click();
 
@@ -372,6 +379,7 @@ test("cards are off by default: empty hand, treasures still work", async ({ page
 
 test("Zauber-Kräfte: the option really disables powers", async ({ page }) => {
   await page.locator("#btn-options").click();
+  await page.evaluate(() => (document.querySelector("#sect-zauber").open = true));
   await page.locator("#opt-powers").click({ force: true });
   await page.locator("#btn-options-back").click();
   await page.evaluate(() => window.__FF.setFast());
@@ -436,11 +444,11 @@ test("extra rules: ghost mode fades old miss marks", async ({ page }) => {
   expect(await page.evaluate((k) => window.__FF.marksOn(1)[k], `${last.x},${last.y}`)).toBe("miss");
 });
 
-test("board variety: presets, Kuschel-Regel and the chunky 2×2 friend", async ({ page }) => {
+test("board variety: presets, Enge Verstecke and the chunky 2×2 friend", async ({ page }) => {
   test.setTimeout(180000);
   await page.evaluate(() => window.__FF.setFast());
 
-  // flink preset + Kuschel-Regel via the options screen
+  // flink preset + Enge Verstecke via the options screen
   await page.locator("#btn-options").click();
   await expect(page.locator(".board-choice")).toHaveCount(4);
   await page.locator('.board-choice[data-preset="flink"]').click();
@@ -464,7 +472,7 @@ test("board variety: presets, Kuschel-Regel and the chunky 2×2 friend", async (
     .poll(() => page.evaluate((k) => window.__FF.marksOn(1)[k], `${cell.x},${cell.y}`))
     .toBe("miss");
 
-  // sinking with the Kuschel-Regel reveals no surrounding water
+  // sinking with Enge Verstecke reveals no surrounding water
   const shipCells = await page.evaluate(() => {
     const b = window.__FF.state.boards[1];
     return window.__FF.engine.shipCells(b.ships.find((s) => s.size === 2));
@@ -481,10 +489,10 @@ test("board variety: presets, Kuschel-Regel and the chunky 2×2 friend", async (
   const revealedNeighbors = [...around].filter((k) => marks[k] === "miss" && k !== `${cell.x},${cell.y}`);
   expect(revealedNeighbors).toEqual([]);
 
-  // knuddel preset: back home, the square friend and the mini join the fleet
+  // grossklein preset: back home, the square friend and the mini join the fleet
   await page.locator("#btn-home").click();
   await page.locator("#btn-options").click();
-  await page.locator('.board-choice[data-preset="knuddel"]').click();
+  await page.locator('.board-choice[data-preset="grossklein"]').click();
   await page.locator("#rule-touch").click({ force: true }); // back off
   await page.locator("#btn-options-back").click();
   await startRobo(page);
@@ -494,7 +502,7 @@ test("board variety: presets, Kuschel-Regel and the chunky 2×2 friend", async (
   expect(fleet).toContainEqual({ shape: "sq", size: 4 });
   expect(fleet).toContainEqual({ shape: "line", size: 1 });
   // the square really occupies a 2×2 block and the whole fleet is valid
-  const knuddel = await page.evaluate(() => {
+  const grossklein = await page.evaluate(() => {
     const b = window.__FF.placementBoard();
     const E = window.__FF.engine;
     const sq = b.ships.find((s) => s.shape === "sq");
@@ -503,14 +511,14 @@ test("board variety: presets, Kuschel-Regel and the chunky 2×2 friend", async (
       allValid: b.ships.every((s) => E.canPlace(b, s, s.id)),
     };
   });
-  expect(knuddel.sqCells).toEqual(["0,0", "0,1", "1,0", "1,1"]);
-  expect(knuddel.allValid).toBe(true);
+  expect(grossklein.sqCells).toEqual(["0,0", "0,1", "1,0", "1,1"]);
+  expect(grossklein.allValid).toBe(true);
 
   // the preset choice survives a reload
   await page.reload();
   await page.waitForFunction(() => !!window.__FF);
   await page.locator("#btn-options").click();
-  await expect(page.locator('.board-choice[data-preset="knuddel"]')).toHaveClass(/selected/);
+  await expect(page.locator('.board-choice[data-preset="grossklein"]')).toHaveClass(/selected/);
 });
 
 test("Knobel-Insel: solve the puzzle by digging all creature cells", async ({ page }) => {
@@ -1212,10 +1220,10 @@ test("friends: reconnect directly without any code", async ({ browser }) => {
   await host.waitForFunction(() => !!window.__FF);
   const hostPid = await host.evaluate(() => localStorage.getItem("ff-pid"));
   expect(hostPid).toBeTruthy();
-  // the host simply sits on the online screen — reachable for friends
-  await host.locator('[data-mode="online"]').click();
+  // the host simply sits on the TITLE screen — reachable for friends
 
-  // the guest remembers the host from an earlier match
+  // the guest remembers the host from an earlier match: the quick-play
+  // button lives right on the title screen now
   await guest.goto(`${GAME}?${PS}`);
   await guest.waitForFunction(() => !!window.__FF);
   await guest.evaluate((pid) => {
@@ -1224,14 +1232,20 @@ test("friends: reconnect directly without any code", async ({ browser }) => {
       JSON.stringify({ [pid]: { world: "weltraum", ts: Date.now() - 3600000 } })
     );
   }, hostPid);
-  await guest.locator('[data-mode="online"]').click();
-  await expect(guest.locator("#friends-box")).toBeVisible();
-  await guest.locator(".friend-btn").first().click();
+  await guest.reload();
+  await guest.waitForFunction(() => !!window.__FF);
+  await expect(guest.locator("#title-friends .friend-quick")).toBeVisible();
+  await guest.locator("#title-friends .friend-quick").first().click();
   await expect(guest.locator("#screen-worldpick")).toHaveClass(/active/);
   await guest.locator('#world-grid-2 [data-world="dino"]').click();
   await guest.locator("#btn-worldpick-go").click();
 
-  // knock-knock: the host answers with its own world pick, then both place
+  // knock-knock: the host's device flashes an invite popup
+  await expect(host.locator("#invite-pop")).toBeVisible({ timeout: 30000 });
+  await expect(host.locator("#invite-text")).toContainText("möchte", { timeout: 15000 });
+  await host.locator("#invite-yes").click();
+
+  // accepted: the host answers with its own world pick, then both place
   await expect(host.locator("#screen-worldpick")).toHaveClass(/active/, { timeout: 30000 });
   await host.locator("#btn-worldpick-go").click();
   await expect(host.locator("#btn-place-done")).toBeVisible({ timeout: 30000 });
