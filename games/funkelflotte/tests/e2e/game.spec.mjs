@@ -97,6 +97,110 @@ test("new worlds: Eisberg-Bucht plays a battle, Frost-Stern scans its cross", as
   await expect.poll(() => page.evaluate(() => window.__FF.state.turn), { timeout: 15000 }).toBe(1);
 });
 
+test("power-gain card: the dismissing tap never doubles as a board shot", async ({ page }) => {
+  test.setTimeout(120000);
+  // NOT fast mode: the card must wait for the player, like in real play
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  // dig up a cell-target spell so the game sits waiting for an aim tap
+  await page.evaluate(() => window.__FF.forceTreasure("fernglas"));
+  const chest = await page.evaluate(() => {
+    const t = window.__FF.state.boards[1].treasures[0];
+    t.revealed = true;
+    return { x: t.x, y: t.y };
+  });
+  await tapWhenMyTurn(page, chest.x, chest.y);
+  await expect(page.locator("#power-gain")).toBeVisible({ timeout: 15000 });
+  await expect.poll(() => page.evaluate(() => window.__FF.state.pendingPower)).toBe("fernglas");
+  await page.waitForTimeout(200); // the dismiss listener arms 50ms after show
+
+  // a REAL tap right on a board cell — a free cell near the board center,
+  // where the tilted-camera projection is most forgiving
+  const cell = await page.evaluate(() => {
+    const b = window.__FF.state.boards[1];
+    const E = window.__FF.engine;
+    const occupied = new Set(Object.keys(b.shots || {}));
+    for (const s of b.ships) for (const c of E.shipCells(s)) occupied.add(`${c.x},${c.y}`);
+    if (b.decoy) occupied.add(`${b.decoy.x},${b.decoy.y}`);
+    for (const t of b.treasures ?? []) occupied.add(`${t.x},${t.y}`);
+    const mid = (b.size - 1) / 2;
+    let best = null;
+    let bestD = Infinity;
+    for (let y = 0; y < b.size; y += 1) {
+      for (let x = 0; x < b.size; x += 1) {
+        if (occupied.has(`${x},${y}`)) continue;
+        const d = Math.abs(x - mid) + Math.abs(y - mid);
+        if (d < bestD) {
+          bestD = d;
+          best = { x, y };
+        }
+      }
+    }
+    return best;
+  });
+  const pos = await page.evaluate(([x, y]) => window.__FF.cellPos("enemy", x, y), [cell.x, cell.y]);
+  const marksBefore = await page.evaluate(() => Object.keys(window.__FF.marksOn(1)).length);
+  await page.mouse.click(pos.x, pos.y);
+
+  // the card is gone, but the tap did NOT aim the spell or shoot the cell
+  await expect(page.locator("#power-gain")).toBeHidden();
+  expect(await page.evaluate(() => window.__FF.state.pendingPower)).toBe("fernglas");
+  expect(await page.evaluate(() => Object.keys(window.__FF.marksOn(1)).length)).toBe(marksBefore);
+
+  // the SAME real tap with no card up aims the spell — proving the first
+  // one only died because it was spent on dismissing
+  await page.waitForTimeout(400); // beyond the click-squelch window
+  await page.mouse.click(pos.x, pos.y);
+  await expect.poll(() => page.evaluate(() => window.__FF.state.pendingPower), { timeout: 15000 }).toBe(null);
+  await expect(page.locator("#status")).toContainText("such gleich weiter", { timeout: 15000 });
+});
+
+test("a chest right next to a found creature can still be opened", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  // move the chest to a cell hugging the first creature, then sink it
+  await page.evaluate(() => window.__FF.forceTreasure("doppel"));
+  const setup = await page.evaluate(() => {
+    const { state, engine } = window.__FF;
+    const b = state.boards[1];
+    const ship = b.ships.find((s) => s.size === 2 && s.shape !== "sq") ?? b.ships[b.ships.length - 1];
+    const cells = engine.shipCells(ship);
+    // find a free in-bounds neighbour of the ship for the chest
+    let spot = null;
+    outer: for (const c of cells) {
+      for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) {
+        const x = c.x + dx;
+        const y = c.y + dy;
+        if (x < 0 || y < 0 || x >= b.size || y >= b.size) continue;
+        if (engine.shipAt(b, x, y)) continue;
+        if (b.decoy && b.decoy.x === x && b.decoy.y === y) continue;
+        spot = { x, y };
+        break outer;
+      }
+    }
+    b.treasures = [{ x: spot.x, y: spot.y, revealed: true }];
+    return { cells, spot };
+  });
+  for (const c of setup.cells) await tapWhenMyTurn(page, c.x, c.y);
+  // the creature is found; its water ring is revealed — but NOT the chest
+  await expect
+    .poll(() => page.evaluate((k) => window.__FF.marksOn(1)[k] ?? null, `${setup.spot.x},${setup.spot.y}`), {
+      timeout: 15000,
+    })
+    .toBe(null);
+  // digging still works: the chest yields its spell
+  await tapWhenMyTurn(page, setup.spot.x, setup.spot.y);
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.boards[1].treasures.length), { timeout: 15000 })
+    .toBe(0);
+});
+
 test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async ({ page }) => {
   await startRobo(page);
   await expect(page.locator("#btn-place-done")).toBeVisible();

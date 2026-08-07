@@ -155,6 +155,21 @@ test("surroundCells clips at the board edge", () => {
   }
 });
 
+test("auto-reveal skips treasure cells so chests next to a find stay diggable", () => {
+  const b = createBoard(8);
+  placeShip(b, { id: 0, size: 2, x: 2, y: 2, dir: "h" });
+  placeShip(b, { id: 1, size: 2, x: 5, y: 5, dir: "v" });
+  b.treasures = [{ x: 1, y: 1, revealed: true }]; // diagonal neighbour of the ship
+  fire(b, 2, 2);
+  const res = fire(b, 3, 2);
+  assert.equal(res.result, SUNK);
+  // the chest cell keeps its secret: not marked, not in the revealed list
+  assert.equal(b.shots[key(1, 1)], undefined);
+  assert.ok(!res.revealed.some((c) => c.x === 1 && c.y === 1));
+  // and the dig still works — a fresh shot, not a swallowed repeat
+  assert.equal(fire(b, 1, 1).result, MISS);
+});
+
 test("auto-revealed water never overwrites an existing hit", () => {
   const b = createBoard(8);
   placeShip(b, { id: 0, size: 2, x: 2, y: 2, dir: "h" });

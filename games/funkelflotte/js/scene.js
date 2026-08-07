@@ -990,12 +990,12 @@ export function openTreasure(slot, x, y) {
 // ------------------------------------------------------ power effects
 
 // screen-space anchor of a cell (for DOM flight animations)
-export function cellScreenPos(slot, x, y) {
+export function cellScreenPos(slot, x, y, lift = 0.5) {
   const d = dioramas[slot];
   const tile = d?.tiles.get(`${x},${y}`);
   if (!tile) return null;
   const v = tile.getWorldPosition(new THREE.Vector3());
-  v.y += 0.5;
+  v.y += lift; // 0 = the tile surface itself (for aiming), 0.5 = floats above
   v.project(camera);
   return {
     x: (v.x * 0.5 + 0.5) * window.innerWidth,
