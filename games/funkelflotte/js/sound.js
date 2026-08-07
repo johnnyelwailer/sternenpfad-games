@@ -105,6 +105,17 @@ export function hitEnemy(worldId) {
     noise(0, 0.16, 0.1, 2000); // steam hiss
     tone(jit(140), 0.04, 0.2, "sawtooth", 0.14, 90);
     tone(jit(720), 0.12, 0.1, "square", 0.05, 950);
+  } else if (worldId === "piraten") {
+    // creaking timber + a splash of grog
+    noise(0, 0.09, 0.14, 600); // wood knock
+    tone(jit(160), 0.02, 0.22, "sawtooth", 0.09, 110); // creak
+    tone(jit(420), 0.1, 0.14, "sine", 0.12, 620);
+    noise(0.12, 0.16, 0.06, 1000);
+  } else if (worldId === "marine") {
+    // ship's bell ding + metal clank
+    tone(jit(880), 0, 0.3, "triangle", 0.14, 860);
+    tone(jit(1320), 0.02, 0.2, "sine", 0.07);
+    noise(0.04, 0.08, 0.08, 2800); // clank
   } else {
     // ozean: bubbly rising double-plop
     tone(jit(300), 0, 0.12, "sine", 0.16, 480);
@@ -165,6 +176,18 @@ export function sunkEnemy(worldId) {
     noise(0.26, 0.5, 0.16, 400); // boom
     tone(70, 0.28, 0.5, "sine", 0.18, 40);
     for (let i = 0; i < 4; i += 1) noise(0.5 + i * 0.09, 0.06, 0.05, 2800 + i * 400); // sizzle
+  } else if (worldId === "piraten") {
+    // a rowdy concertina shanty riff + treasure jingle
+    const shanty = [262, 330, 392, 330, 523];
+    shanty.forEach((f, i) => tone(f, i * 0.11, 0.2, "sawtooth", 0.06, f * 1.02));
+    for (let i = 0; i < 3; i += 1) tone(1568 + i * 200, 0.5 + i * 0.07, 0.12, "triangle", 0.08); // coins
+    noise(0.1, 0.3, 0.08, 700);
+  } else if (worldId === "marine") {
+    // proud foghorn + bell peal
+    tone(98, 0, 0.7, "sawtooth", 0.14, 82); // fooooog
+    tone(65, 0.05, 0.7, "sine", 0.12, 60);
+    for (let i = 0; i < 3; i += 1) tone(880, 0.5 + i * 0.16, 0.22, "triangle", 0.1);
+    noise(0.06, 0.35, 0.1, 800); // bow wave
   } else {
     // ozean: harp-like rising arpeggio on a wave
     const notes = [392, 494, 587, 784];
@@ -358,6 +381,23 @@ export function startAmbient(worldId) {
       timers.push(setTimeout(blub, 2500 + Math.random() * 5000));
     };
     timers.push(setTimeout(blub, 1800));
+  } else if (worldId === "piraten") {
+    addNoise(420, 0.6, 0.04, 0.13, 0.025); // cove waves
+    const creak = () => {
+      if (muted || !ambient) return;
+      tone(120 + Math.random() * 60, 0, 0.3, "sawtooth", 0.015, 90); // rigging creaks
+      timers.push(setTimeout(creak, 3500 + Math.random() * 5000));
+    };
+    timers.push(setTimeout(creak, 2000));
+  } else if (worldId === "marine") {
+    addNoise(380, 0.6, 0.035, 0.12, 0.02); // harbor swell
+    addNoise(1400, 1.2, 0.008, 0.25, 0.005); // rigging clinks
+    const horn = () => {
+      if (muted || !ambient) return;
+      tone(90, 0, 0.6, "sawtooth", 0.02, 78); // distant foghorn
+      timers.push(setTimeout(horn, 8000 + Math.random() * 8000));
+    };
+    timers.push(setTimeout(horn, 4000));
   } else {
     addNoise(700, 0.8, 0.02, 0.19, 0.012); // breeze in the leaves
     // occasional bird chirps

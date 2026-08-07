@@ -127,6 +127,22 @@ export const POWERS = {
     desc: "Ein Funke springt auf ein Feld und sprüht nach oben, unten, links und rechts — wo es Feuer fängt, lauert ein Glutfreund.",
     use: "Tipp ein Feld an — der Funke sprüht in alle 4 Richtungen.",
   },
+  enterhaken: {
+    emoji: "🪝",
+    name: "Enterhaken",
+    target: "cell",
+    world: "piraten",
+    desc: "Der Enterhaken schwingt heran und zieht über ein Feld und die zwei darunter — überall, wo er ruckelt, versteckt sich ein Schiff.",
+    use: "Tipp ein Feld an — der Haken prüft es und 2 Felder darunter.",
+  },
+  leuchtfeuer: {
+    emoji: "🚨",
+    name: "Leuchtfeuer",
+    target: "col",
+    world: "marine",
+    desc: "Der Leuchtturm schwenkt seinen Strahl eine ganze Spalte entlang und verrät alle Verstecke darin — ganz ohne Schuss.",
+    use: "Tipp eine Spalte an — der Lichtstrahl verrät alle Verstecke darin.",
+  },
 };
 
 // random pool for treasures/recharges — world powers are start gifts,
@@ -155,8 +171,16 @@ const POOL = [
 
 export function worldPower(worldId) {
   return (
-    { ozean: "welle", weltraum: "radar", dino: "trommel", teich: "schild", eis: "frost", vulkan: "funke" }[worldId] ??
-    "fernglas"
+    {
+      ozean: "welle",
+      weltraum: "radar",
+      dino: "trommel",
+      teich: "schild",
+      eis: "frost",
+      vulkan: "funke",
+      piraten: "enterhaken",
+      marine: "leuchtfeuer",
+    }[worldId] ?? "fernglas"
   );
 }
 
@@ -267,6 +291,23 @@ export function plusCells(board, x, y) {
     const cy = Math.min(board.size - 1, Math.max(0, y + dy));
     if (!out.some((c) => c.x === cx && c.y === cy)) out.push({ x: cx, y: cy });
   }
+  return out;
+}
+
+// Enterhaken: a cell plus the two below it (clamped, deduped)
+export function hookCells(board, x, y) {
+  const out = [];
+  for (let i = 0; i < 3; i += 1) {
+    const cy = Math.min(board.size - 1, y + i);
+    if (!out.some((c) => c.y === cy)) out.push({ x, y: cy });
+  }
+  return out;
+}
+
+// Leuchtfeuer: one whole column, the Welle's upright twin
+export function columnCells(board, x) {
+  const out = [];
+  for (let y = 0; y < board.size; y += 1) out.push({ x, y });
   return out;
 }
 

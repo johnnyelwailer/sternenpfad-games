@@ -32,7 +32,7 @@ async function firstUnknownCell(page, boardIdx) {
 
 test("title screen shows worlds and modes, world picking re-themes", async ({ page }) => {
   await expect(page.locator("h1.logo")).toContainText("Funkel-Flotte");
-  await expect(page.locator("#world-grid .world-card")).toHaveCount(6);
+  await expect(page.locator("#world-grid .world-card")).toHaveCount(8);
   await expect(page.locator('[data-mode="ai"]')).toBeVisible();
   const before = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue("--ui").trim()
@@ -106,6 +106,47 @@ test("new worlds: Eisberg-Bucht plays a battle, Frost-Stern scans its cross", as
   await expect
     .poll(() => page.evaluate((k) => window.__FF.marksOn(1)[k], `${shipCell.x},${shipCell.y}`))
     .toBe("hit");
+});
+
+test("ship worlds: Piraten-Bucht plays a battle, the Enterhaken scans its hook", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await page.locator('#world-grid [data-world="piraten"]').click();
+  expect(
+    await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--ui").trim())
+  ).toBe("#3a2416");
+
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+  expect(await page.evaluate(() => window.__FF.state.worlds[0])).toBe("piraten");
+
+  // dig up the pirate signature spell and hook a ship
+  await page.evaluate(() => window.__FF.forceTreasure("enterhaken"));
+  const chest = await page.evaluate(() => {
+    const t = window.__FF.state.boards[1].treasures[0];
+    t.revealed = true;
+    return { x: t.x, y: t.y };
+  });
+  await tapWhenMyTurn(page, chest.x, chest.y);
+  await expect(page.locator("#status")).toContainText("Schatz-Zauber wartet", { timeout: 15000 });
+  const shipCell = await page.evaluate(() => {
+    const b = window.__FF.state.boards[1];
+    return window.__FF.engine.shipCells(b.ships[0])[0];
+  });
+  const statusText = await page.evaluate(([x, y]) => {
+    window.__FF.tap(x, y);
+    return document.getElementById("status").textContent;
+  }, [shipCell.x, shipCell.y]);
+  expect(statusText).toContain("Enterhaken");
+  // an info scan is not a shot, and the chest keeps the turn
+  expect(await page.evaluate((k) => window.__FF.marksOn(1)[k], `${shipCell.x},${shipCell.y}`)).toBeFalsy();
+  await expect
+    .poll(
+      () => page.evaluate(() => window.__FF.state.turn === 0 && !window.__FF.state.inputLocked),
+      { timeout: 15000 }
+    )
+    .toBe(true);
 });
 
 test("power-gain card: the dismissing tap never doubles as a board shot", async ({ page }) => {
@@ -1290,7 +1331,7 @@ test("Funkel-Park: every friend lives in its own world's pond", async ({ page })
   await expect(page.locator("#status")).toContainText("2 Freunde");
 
   // one pond per pickable world, overview first
-  expect(await page.evaluate(() => window.__FF.parkPonds())).toBe(6);
+  expect(await page.evaluate(() => window.__FF.parkPonds())).toBe(8);
   expect(await page.evaluate(() => window.__FF.parkFocused())).toBe(null);
 
   // the two friends sit in DIFFERENT ponds — each in its own world's
@@ -1521,7 +1562,7 @@ test("hot-seat: two worlds, pass screens, full game to the win screen", async ({
   await page.locator("#btn-win-home").click();
   await page.locator("#btn-album").click();
   await expect(page.locator("#screen-album")).toHaveClass(/active/);
-  await expect(page.locator(".album-slot")).toHaveCount(30); // 6 worlds x 5 friends
+  await expect(page.locator(".album-slot")).toHaveCount(40); // 8 worlds x 5 friends
   await expect(page.locator(".album-slot:not(.locked)")).toHaveCount(1);
   await expect(page.locator("#album-total")).toContainText("1 Sticker");
 });

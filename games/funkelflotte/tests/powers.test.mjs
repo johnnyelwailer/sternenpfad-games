@@ -23,15 +23,37 @@ test("every power has complete metadata and a sane target", () => {
   for (const [kind, p] of Object.entries(P.POWERS)) {
     assert.ok(p.emoji && p.name && p.desc, `${kind} needs emoji/name/desc`);
     assert.ok(p.use && p.use.length > 8, `${kind} needs a one-line how-to (use)`);
-    assert.ok(["none", "cell", "row", "cell3", "own", "own-cell"].includes(p.target), `${kind} target`);
+    assert.ok(["none", "cell", "row", "col", "cell3", "own", "own-cell"].includes(p.target), `${kind} target`);
   }
   // each world has a signature power
-  for (const w of ["ozean", "weltraum", "dino", "teich", "eis", "vulkan"]) {
+  for (const w of ["ozean", "weltraum", "dino", "teich", "eis", "vulkan", "piraten", "marine"]) {
     assert.ok(P.POWERS[P.worldPower(w)], `world power for ${w}`);
   }
   // the new worlds bring their own spells, not hand-me-downs
   assert.equal(P.worldPower("eis"), "frost");
   assert.equal(P.worldPower("vulkan"), "funke");
+  assert.equal(P.worldPower("piraten"), "enterhaken");
+  assert.equal(P.worldPower("marine"), "leuchtfeuer");
+});
+
+test("hook and column scans stay in bounds and report ships", () => {
+  const b = E.createBoard();
+  E.placeShip(b, { id: 0, size: 3, x: 2, y: 4, dir: "h" });
+  // the hook grabs a cell and the two below it
+  const hook = P.hookCells(b, 3, 2);
+  assert.deepEqual(hook.map((c) => `${c.x},${c.y}`), ["3,2", "3,3", "3,4"]);
+  assert.ok(P.scanCells(b, hook).some((c) => c.ship), "hook over the ship reports it");
+  // at the bottom edge it clamps and dedupes
+  const low = P.hookCells(b, 0, 7);
+  assert.deepEqual(low.map((c) => `${c.x},${c.y}`), ["0,7"]);
+  // the lighthouse sweeps one full column
+  const col = P.columnCells(b, 2);
+  assert.equal(col.length, 8);
+  assert.ok(col.every((c) => c.x === 2));
+  assert.deepEqual(
+    P.scanCells(b, col).filter((c) => c.ship).map((c) => c.y),
+    [4]
+  );
 });
 
 test("Zeitzauber rewinds the freshest wound on the most-injured friend", () => {

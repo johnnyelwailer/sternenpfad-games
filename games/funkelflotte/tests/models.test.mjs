@@ -11,7 +11,7 @@ function bodyColors(root) {
 }
 
 test("tints really change body material colors", () => {
-  for (const worldId of ["ozean", "weltraum", "dino", "teich", "eis", "vulkan"]) {
+  for (const worldId of ["ozean", "weltraum", "dino", "teich", "eis", "vulkan", "piraten", "marine"]) {
     for (let idx = 0; idx < 5; idx += 1) {
       const plain = bodyColors(buildCreature(worldId, idx, 3));
       const tinted = bodyColors(buildCreature(worldId, idx, 3, { tint: 1, hat: 0 }));
