@@ -23,7 +23,7 @@ test("every power has complete metadata and a sane target", () => {
   for (const [kind, p] of Object.entries(P.POWERS)) {
     assert.ok(p.emoji && p.name && p.desc, `${kind} needs emoji/name/desc`);
     assert.ok(p.use && p.use.length > 8, `${kind} needs a one-line how-to (use)`);
-    assert.ok(["none", "cell", "row", "cell3", "own"].includes(p.target), `${kind} target`);
+    assert.ok(["none", "cell", "row", "cell3", "own", "own-cell"].includes(p.target), `${kind} target`);
   }
   // each world has a signature power
   for (const w of ["ozean", "weltraum", "dino", "teich"]) {
@@ -81,10 +81,10 @@ test("direction and bell helpers describe the hidden fleet", () => {
   assert.equal(E.placeShip(b, { id: 0, size: 4, x: 5, y: 4, dir: "v" }), true);
   const dir = P.directionToNearest(b, 0, 0);
   assert.ok(dir.angle > 0 && dir.angle < Math.PI / 2, "arrow points down-right");
-  assert.equal(P.biggestHiddenDir(b), "v");
+  assert.deepEqual(P.biggestHidden(b), { dir: "v", size: 4 });
   for (let i = 0; i < 4; i += 1) E.fire(b, 5, 4 + i);
   assert.equal(P.directionToNearest(b, 0, 0), null);
-  assert.equal(P.biggestHiddenDir(b), null);
+  assert.equal(P.biggestHidden(b), null);
 });
 
 test("whirlwind relocates creatures onto unshot cells only", () => {
@@ -124,16 +124,21 @@ test("whirlwind lets a WOUNDED creature flee: wounds travel, marks wipe", () => 
   assert.equal(last.result, "sunk");
 });
 
-test("extra balloon respects live balloons and unshot cells", () => {
-  const rng = seeded(5);
-  const b = fullBoard(rng);
-  assert.equal(P.canExtraBalloon(b), true);
-  assert.equal(P.extraBalloon(b, rng), true);
-  assert.equal(P.canExtraBalloon(b), false); // one live balloon max
-  E.fire(b, b.decoy.x, b.decoy.y); // pop it
-  assert.equal(P.canExtraBalloon(b), true);
-  assert.equal(P.extraBalloon(b, rng), true);
-  assert.equal(b.shots[E.key(b.decoy.x, b.decoy.y)], undefined);
+test("extra balloon goes exactly where chosen, respecting the rules", () => {
+  const b = E.createBoard(8);
+  E.placeShip(b, { id: 0, size: 2, x: 0, y: 0, dir: "h" });
+  b.treasures = [{ x: 6, y: 6 }];
+  E.fire(b, 4, 4); // a known miss mark
+  // illegal spots: touching the creature, on a mark, on a treasure
+  assert.equal(P.canExtraBalloonAt(b, 1, 1), false);
+  assert.equal(P.canExtraBalloonAt(b, 4, 4), false);
+  assert.equal(P.canExtraBalloonAt(b, 6, 6), false);
+  // a legal free cell works — once
+  assert.equal(P.extraBalloonAt(b, 5, 1), true);
+  assert.deepEqual(b.decoy, { x: 5, y: 1 });
+  assert.equal(P.canExtraBalloonAt(b, 3, 6), false); // one live balloon max
+  E.fire(b, 5, 1); // pop it
+  assert.equal(P.extraBalloonAt(b, 3, 6), true);
 });
 
 test("hand starts empty by default; card mode adds the world signature", () => {

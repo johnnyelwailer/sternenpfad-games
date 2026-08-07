@@ -435,6 +435,48 @@ test("Doppelschuss from a treasure grants two shots right away", async ({ page }
   await expect.poll(() => page.evaluate(() => window.__FF.state.turn), { timeout: 15000 }).toBe(1);
 });
 
+test("Glocke shows a shaped shadow; Ballon is placed where YOU tap", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.locator("#btn-options").click();
+  await page.evaluate(() => (document.querySelector("#sect-zauber").open = true));
+  await page.locator("#opt-cards").click({ force: true });
+  await page.locator("#btn-options-back").click();
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  // Zauberglocke: the status names length AND orientation of the shadow
+  await page.evaluate(() => window.__FF.power("glocke"));
+  await page.locator('.power-chip[data-power="glocke"]').click();
+  await expect(page.locator("#status")).toContainText(/Felder lang|2×2/, { timeout: 15000 });
+
+  // Extra-Ballon: aim mode asks for a free cell on the OWN board …
+  await waitMyTurn(page);
+  await page.evaluate(() => window.__FF.power("ballon"));
+  await page.locator('.power-chip[data-power="ballon"]').click();
+  await expect(page.locator("#status")).toContainText("freies Feld");
+  const spot = await page.evaluate(() => {
+    const b = window.__FF.state.boards[0];
+    const E = window.__FF.engine;
+    for (let y = 0; y < b.size; y += 1) {
+      for (let x = 0; x < b.size; x += 1) {
+        if (b.shots[`${x},${y}`]) continue;
+        if ((b.treasures ?? []).some((t) => t.x === x && t.y === y)) continue;
+        if (!E.canPlaceDecoy(b, x, y)) continue;
+        return { x, y };
+      }
+    }
+    return null;
+  });
+  await page.evaluate(([x, y]) => window.__FF.ownTap(x, y), [spot.x, spot.y]);
+  // … and the balloon sits exactly there
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.boards[0].decoy))
+    .toEqual({ x: spot.x, y: spot.y });
+  expect(await page.evaluate(() => window.__FF.state.powers[0].hand.includes("ballon"))).toBe(false);
+});
+
 test("Wirbelwind: choose your own friend and watch it move", async ({ page }) => {
   test.setTimeout(120000);
   await page.locator("#btn-options").click();
