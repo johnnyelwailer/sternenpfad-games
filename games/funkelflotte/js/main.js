@@ -9,6 +9,7 @@ import { TINTS, ACCESSORIES, ACCESSORY_NAMES } from "./models.js";
 import * as PROG from "./progress.js";
 import { flag, setFlag, allFlags } from "./flags.js";
 import { generatePuzzle, PUZZLE_SPADES } from "./puzzle.js";
+import { icon } from "./icons.js";
 import * as PW from "./powers.js";
 import * as CHASE from "./chase.js";
 import * as BOSS from "./boss.js";
@@ -79,6 +80,7 @@ function show(screenId) {
   }
   if (screenId === "screen-title") {
     renderTitleFriends();
+    renderJourneyHero();
     startFriendListener();
   }
   maybeShowUpdate();
@@ -203,6 +205,63 @@ function buildWorldPicker(gridEl, onPick, selected) {
 // board already tell the story. Kept as a no-op so call sites stay.
 function renderChips() {}
 
+// ------------------------------------------------------------- UI icons
+// Swap emoji placeholders for real icons: 3D thumbs of the game's own
+// models where one exists, crafted SVGs for abstract concepts.
+
+function decorateIcons() {
+  $("#btn-options").innerHTML = `${icon("gear", 20)} Spiel-Optionen`;
+  $("#btn-opts").innerHTML = `${icon("gear", 18)} Menü`;
+  $("#btn-album").innerHTML = `${icon("book", 20)} Sticker-Album`;
+  $("#btn-aquarium").innerHTML = `<img class="ui-thumb" alt="" src="${SCENE.creatureThumb("ozean", 4, 1.4, 64)}" /> Aquarium`;
+  const xthumb = (id, src) => {
+    const span = $(id)?.querySelector(".xemoji");
+    if (span) span.outerHTML = `<img class="xthumb" alt="" src="${src}" />`;
+  };
+  xthumb("#btn-puzzle", SCENE.modelThumbUrl("fernglas", 96));
+  xthumb("#btn-chase", SCENE.creatureThumb("dino", 4, 1, 96));
+  xthumb("#btn-boss", SCENE.creatureThumb("weltraum", 0, 3.2, 96));
+  document.querySelector('[data-robo="leicht"]').innerHTML =
+    `${icon("robot", 26)} Robo Sanft<br /><small>sucht gemütlich, ganz ohne Zauber</small>`;
+  document.querySelector('[data-robo="schlau"]').innerHTML =
+    `${icon("robotSmart", 26)} Robo Schlau<br /><small>jagt clever, zaubert und klaut Schätze!</small>`;
+  document.querySelector(".resume-emoji").innerHTML = icon("play", 26);
+  document.querySelector(".invite-emoji").innerHTML = icon("bell", 28);
+  // options: sections + rows
+  const sect = (id, html) => {
+    const s = document.querySelector(`${id} summary`);
+    if (s) s.innerHTML = `<span class="sect-label">${html}</span>`;
+  };
+  sect("#sect-board", `${icon("board", 22)} Brett &amp; Flotte`);
+  sect("#sect-zauber", `<img class="ui-thumb" alt="" src="${SCENE.modelThumbUrl("chest:ozean", 64)}" /> Zauber`);
+  sect("#sect-rules", `${icon("dice", 22)} Extra-Regeln`);
+  const row = (inputId, html) => {
+    const name = $(inputId)?.closest(".opt-row")?.querySelector(".opt-name");
+    if (name) name.innerHTML = `${html} ${name.textContent.trim()}`;
+  };
+  row("#opt-powers", `<img class="ui-thumb" alt="" src="${SCENE.modelThumbUrl("chest:ozean", 64)}" />`);
+  row("#opt-treasures", `<img class="ui-thumb" alt="" src="${SCENE.modelThumbUrl("chest:dino", 64)}" />`);
+  row("#opt-cards", `<img class="ui-thumb" alt="" src="${SCENE.powerIconUrl("salve", 64)}" />`);
+  row("#rule-decoy", `<img class="ui-thumb" alt="" src="${SCENE.modelThumbUrl("decoy", 64)}" />`);
+  row("#rule-sonar", icon("sonar", 20));
+  row("#rule-ghost", icon("ghost", 20));
+  row("#rule-touch", icon("snuggle", 20));
+}
+
+// the Weltreise hero card: progress bar + the next stop's chest
+function renderJourneyHero() {
+  const btn = $("#btn-journey");
+  if (!btn || btn.hidden) return;
+  const done = Math.min(loadJourney(), JOURNEY.length);
+  const stop = JOURNEY[Math.min(done, JOURNEY.length - 1)];
+  $("#jh-chest").src = SCENE.modelThumbUrl(`chest:${stop.world}`, 96);
+  $("#jh-sub").textContent =
+    done >= JOURNEY.length
+      ? "Alle Etappen geschafft — nochmal von vorn?"
+      : `Etappe ${done + 1} von ${JOURNEY.length}: ${stop.label}`;
+  $("#jh-fill").style.width = `${Math.round((Math.min(done, JOURNEY.length) / JOURNEY.length) * 100)}%`;
+}
+
 function foundIdsOn(index) {
   if (S.mode === "online" && index === 1) {
     return new Set(S.shadow.found.map((s) => s.id));
@@ -217,10 +276,10 @@ function foundIdsOn(index) {
 // square friend, 1 is a tiny single-cell friend.
 
 const BOARD_PRESETS = {
-  klassisch: { grid: 8, fleet: [4, 3, 3, 2, 2], name: "🌊 Klassisch", desc: "8×8 Felder, fünf Freunde — so wie immer." },
-  flink: { grid: 6, fleet: [3, 2, 2, 1], name: "⚡ Flink", desc: "Kleines 6×6-Brett mit vier Freunden — perfekt für eine schnelle Runde." },
-  riesig: { grid: 10, fleet: [5, 4, 3, 3, 2, 2, 1], name: "🐋 Riesig", desc: "Großes 10×10-Meer mit sieben Freunden — die lange Expedition." },
-  grossklein: { grid: 8, fleet: ["2x2", 3, 3, 2, 1], name: "🐙 Groß & Klein", desc: "Ein extragroßer 2×2-Freund und ein Winzling mischen die Flotte auf (8×8)." },
+  klassisch: { grid: 8, fleet: [4, 3, 3, 2, 2], name: "Klassisch", desc: "8×8 Felder, fünf Freunde — so wie immer." },
+  flink: { grid: 6, fleet: [3, 2, 2, 1], name: "Flink", desc: "Kleines 6×6-Brett mit vier Freunden — perfekt für eine schnelle Runde." },
+  riesig: { grid: 10, fleet: [5, 4, 3, 3, 2, 2, 1], name: "Riesig", desc: "Großes 10×10-Meer mit sieben Freunden — die lange Expedition." },
+  grossklein: { grid: 8, fleet: ["2x2", 3, 3, 2, 1], name: "Groß & Klein", desc: "Ein extragroßer 2×2-Freund und ein Winzling mischen die Flotte auf (8×8)." },
 };
 
 function boardPreset() {
@@ -257,7 +316,8 @@ function renderBoardPresets() {
     btn.type = "button";
     btn.className = "board-choice" + (id === S.boardPreset ? " selected" : "");
     btn.dataset.preset = id;
-    btn.innerHTML = `<span class="opt-name">${p.name}</span><span class="opt-desc">${p.desc}</span>`;
+    const gridIcon = { klassisch: "grid8", flink: "grid6", riesig: "grid10", grossklein: "gridMix" }[id];
+    btn.innerHTML = `<span class="opt-name">${icon(gridIcon, 20)} ${p.name}</span><span class="opt-desc">${p.desc}</span>`;
     btn.addEventListener("click", () => {
       SND.unlock();
       SND.tap();
@@ -1167,7 +1227,7 @@ function resolveInfo(kind, payload, apply) {
   else if (kind === "radar") apply({ cells: PW.scanCells(board, PW.squareCells(board, payload.x, payload.y)) });
   else if (kind === "fernglas") apply({ cells: PW.scanCells(board, [{ x: payload.x, y: payload.y }]) });
   else if (kind === "trommel" || kind === "kompass") apply({ dir: PW.directionToNearest(board, payload.x, payload.y) });
-  else if (kind === "glocke") apply({ big: PW.biggestHidden(board) });
+  else if (kind === "glocke") apply({ big: PW.biggestHiddenRegion(board) });
 }
 
 function executePower(kind, target) {
@@ -1219,16 +1279,18 @@ function executePower(kind, target) {
     SCENE.bellToll(enemySlot);
     resolveInfo(kind, {}, ({ big }) => {
       SND.sparkle();
-      // the biggest hidden friend's SHADOW appears over the board: its
-      // exact length and orientation, hovering until the next shot
-      if (big?.dir && big?.size) SCENE.orientationGhost(enemySlot, big.dir, big.size);
+      // a rough shadow settles over the REGION where the biggest hidden
+      // friend really lurks — vague on purpose, honest always
+      if (big && Number.isFinite(big.cx) && Number.isFinite(big.rx)) {
+        SCENE.regionShadow(enemySlot, big);
+      }
       status(
         big
           ? big.dir === "sq"
-            ? "🔔 Die Glocke zeigt den Schatten: Der größte Freund ist ein 2×2-Brocken!"
-            : `🔔 Die Glocke zeigt den Schatten: ${big.size} Felder lang, ${
+            ? "🔔 Unter dem Schatten lauert ein 2×2-Brocken — irgendwo da drin!"
+            : `🔔 Unter dem Schatten lauert er: ${big.size} Felder lang, ${
                 big.dir === "h" ? "QUER ↔" : "HOCHKANT ↕"
-              } — such so eine Reihe!`
+              } — irgendwo da drin!`
           : "🔔 Die Glocke schweigt — alle sind gefunden!"
       );
     });
@@ -1917,7 +1979,7 @@ function renderFriends() {
     row.className = "friend-row";
     const btn = document.createElement("button");
     btn.className = "friend-btn";
-    btn.textContent = `🤝 Mitspieler aus ${getWorld(f.world).name} · ${timeAgo(f.ts)}`;
+    btn.innerHTML = `${icon("friends", 18)} Mitspieler aus ${getWorld(f.world).name} · ${timeAgo(f.ts)}`;
     btn.addEventListener("click", () => joinFriend(pid));
     const x = document.createElement("button");
     x.className = "friend-forget";
@@ -1947,7 +2009,7 @@ function renderTitleFriends() {
   for (const [pid, f] of friends) {
     const btn = document.createElement("button");
     btn.className = "btn friend-quick";
-    btn.innerHTML = `🤝 Zusammen spielen <small>Freund aus ${getWorld(f.world).name} · ${timeAgo(f.ts)}</small>`;
+    btn.innerHTML = `${icon("friends", 20)} Zusammen spielen <small>Freund aus ${getWorld(f.world).name} · ${timeAgo(f.ts)}</small>`;
     btn.addEventListener("click", () => joinFriend(pid));
     box.appendChild(btn);
   }
@@ -2553,7 +2615,7 @@ function handleNetMessage(msg) {
       } else if (msg.kind === "trommel" || msg.kind === "kompass") {
         S.net.send({ t: "pwr", kind: msg.kind, dir: PW.directionToNearest(b, msg.x, msg.y) });
       } else if (msg.kind === "glocke") {
-        S.net.send({ t: "pwr", kind: "glocke", big: PW.biggestHidden(b) });
+        S.net.send({ t: "pwr", kind: "glocke", big: PW.biggestHiddenRegion(b) });
       } else if (msg.kind === "zeit") {
         S.extraTurn = 1;
         toast("⏳ Dein Mitspieler hat einen Zeitzauber gewirkt!");
@@ -4318,6 +4380,7 @@ function goHome({ keepSave = false } = {}) {
   renderPowers();
   maybeShowResume();
   renderTitleFriends();
+  renderJourneyHero();
   startFriendListener();
   show("screen-title");
 }
@@ -4707,6 +4770,8 @@ async function applyUpdate() {
 function boot() {
   SCENE.initScene($("#stage"));
   applyUiWorld("ozean");
+  decorateIcons();
+  renderJourneyHero();
   S.rules = flag("rules") ? loadRules() : { decoy: false, sonar: false, ghost: false };
   S.powersOn = flag("powers") ? loadPowersOpt() : false;
   S.cardsOn = flag("powers") ? loadCardsOpt() : false;

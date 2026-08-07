@@ -1287,6 +1287,33 @@ export function starComet(slot, x, y, delay = 0) {
 
 // crisp rendered icon for a power (cached data URL — no glyphs)
 const powerIconCache = new Map();
+// generic 3D-model thumbnails for UI icons: the game's own chests,
+// balloon and spell sculptures replace generic emoji everywhere
+const modelThumbCache = new Map();
+export function modelThumbUrl(kind, px = 96) {
+  const key = `${kind}@${px}`;
+  if (modelThumbCache.has(key)) return modelThumbCache.get(key);
+  const r = ensureThumbRenderer(px);
+  const s = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 20);
+  s.add(new THREE.HemisphereLight(0xffffff, 0x556677, 1.2));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.6);
+  dl.position.set(-2, 4, 3);
+  s.add(dl);
+  let model;
+  if (kind.startsWith("chest:")) model = buildTreasureChest(kind.slice(6));
+  else if (kind === "decoy") model = buildDecoy();
+  else model = buildPowerIcon(kind);
+  model.rotation.y = 0.5;
+  s.add(model);
+  frameToFit(cam, model, 1.15);
+  r.render(s, cam);
+  const url = r.domElement.toDataURL("image/png");
+  disposeSceneTree(s);
+  modelThumbCache.set(key, url);
+  return url;
+}
+
 export function powerIconUrl(kind, px = 96) {
   if (powerIconCache.has(kind)) return powerIconCache.get(kind);
   const r = ensureThumbRenderer(px);
@@ -1373,57 +1400,56 @@ export function arrowMarker(slot, x, y, angle) {
   tween((v) => holder.scale.setScalar(v), { dur: 0.45, ease: Ease.outBack });
 }
 
-// Zauberglocke: a golden GHOST OUTLINE hovers over the board — one pad
-// per body cell of the biggest hidden friend, laid out exactly like it
-// (flat ↔, upright ↕, or a 2×2 square). Length + orientation, never
-// position. It lingers (as the current hint) until the next shot.
-export function orientationGhost(slot, dir, size = 4) {
+// Zauberglocke: a ROUGH dark shadow settles over the region where the
+// biggest hidden friend really lurks — an ellipse stretched along its
+// body, fuzzy at the edges, with a "?" floating above. It marks a
+// NEIGHBOURHOOD, not a spot, and lingers until the next shot.
+export function regionShadow(slot, region) {
   const d = dioramas[slot];
   if (!d) return;
   clearHintArrow(slot);
   const holder = new THREE.Group();
-  const padTex = padTexture();
-  const offsets =
-    dir === "sq"
-      ? [
-          [-0.55, -0.55],
-          [0.55, -0.55],
-          [-0.55, 0.55],
-          [0.55, 0.55],
-        ]
-      : Array.from({ length: size }, (_, i) => {
-          const o = (i - (size - 1) / 2) * 1.1;
-          return dir === "v" ? [0, o] : [o, 0];
-        });
-  for (const [ox, oz] of offsets) {
-    const pad = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.95, 0.95),
-      new THREE.MeshBasicMaterial({
-        map: padTex,
-        color: 0xffd447,
-        transparent: true,
-        opacity: 0.85,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      })
-    );
-    pad.rotation.x = -Math.PI / 2;
-    pad.position.set(ox, 0, oz);
-    holder.add(pad);
-  }
-  // a soft golden frame so the pads read as ONE creature-shaped shadow
+  const blob = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 40),
+    new THREE.MeshBasicMaterial({
+      map: radialTexture("rgba(15,8,40,0.62)", "rgba(15,8,40,0)"),
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  blob.rotation.x = -Math.PI / 2;
+  blob.scale.set(region.rx, region.rz, 1);
+  holder.add(blob);
+  // a faint golden rim so the shadow reads as magic, not a glitch
+  const rim = new THREE.Mesh(
+    new THREE.RingGeometry(0.93, 1, 48),
+    new THREE.MeshBasicMaterial({
+      color: 0xffd447,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  rim.rotation.x = -Math.PI / 2;
+  rim.scale.set(region.rx, region.rz, 1);
+  rim.position.y = 0.02;
+  holder.add(rim);
   const qMark = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: textTexture("?"), transparent: true, depthWrite: false })
   );
-  qMark.scale.setScalar(0.8);
-  qMark.position.set(0, 0.55, 0);
+  qMark.scale.setScalar(0.85);
+  qMark.position.set(0, 0.7, 0);
   holder.add(qMark);
-  holder.position.set(0, 1.1, 0);
-  holder.userData.baseY = 1.1;
+  const px = region.cx - d.grid / 2 + 0.5;
+  const pz = region.cy - d.grid / 2 + 0.5;
+  holder.position.set(px, 0.5, pz);
+  holder.userData.baseY = 0.5;
   d.root.add(holder);
   d.hintArrow = holder;
-  flash(d, { x: 0, z: 0 }, 0xffc94d);
-  for (const [ox, oz] of offsets) ringWave(d, { x: ox, z: oz }, 0xffd447);
+  flash(d, { x: px, z: pz }, 0xffc94d);
+  ringWave(d, { x: px, z: pz }, 0xffd447);
   holder.scale.setScalar(0.01);
   tween((v) => holder.scale.setScalar(v), { dur: 0.6, ease: Ease.outBack });
 }

@@ -801,9 +801,35 @@ test("Knobel-Insel: stale locks never block digging; zero rows self-clear", asyn
 
 test("Knobel-Insel: running out of spades reveals the layout", async ({ page }) => {
   test.setTimeout(120000);
-  await page.evaluate(() => window.__FF.setFast());
-  await page.locator("#btn-puzzle").click();
-  await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("puzzle");
+  // some boards need many uniqueness hints, whose sunk-rings and
+  // satisfied-line floods leave FEWER than 6 diggable water cells — on
+  // those, losing is impossible. Redraw until the board can be lost.
+  const freshWater = () =>
+    page.evaluate(() => {
+      const { board } = window.__FF.state.puzzle;
+      const E = window.__FF.engine;
+      const occ = new Set();
+      for (const s of board.ships) for (const c of E.shipCells(s)) occ.add(`${c.x},${c.y}`);
+      let free = 0;
+      for (let y = 0; y < board.size; y += 1) {
+        for (let x = 0; x < board.size; x += 1) {
+          if (!occ.has(`${x},${y}`) && !board.shots[`${x},${y}`]) free += 1;
+        }
+      }
+      return free;
+    });
+  let viable = false;
+  for (let attempt = 0; attempt < 6 && !viable; attempt += 1) {
+    if (attempt > 0) {
+      await page.reload();
+      await page.waitForFunction(() => !!window.__FF);
+    }
+    await page.evaluate(() => window.__FF.setFast());
+    await page.locator("#btn-puzzle").click();
+    await expect.poll(() => page.evaluate(() => window.__FF.state.phase)).toBe("puzzle");
+    viable = (await freshWater()) >= 6;
+  }
+  expect(viable).toBe(true);
 
   // dig water cells until the spades run out — pick a FRESH cell each
   // time (satisfied clues auto-water lines, so a snapshot goes stale)
@@ -945,6 +971,8 @@ test("Weltreise: story screens, winning unlocks, spells get taught", async ({ pa
   await page.waitForFunction(() => !!window.__FF);
   await page.evaluate(() => window.__FF.setFast());
 
+  // the hero card announces the next stop with live progress
+  await expect(page.locator("#jh-sub")).toContainText("Etappe 5 von 12");
   await page.locator("#btn-journey").click();
   await expect(page.locator(".journey-stop.done")).toHaveCount(4);
   await expect(page.locator(".journey-stop.current")).toHaveCount(1);

@@ -81,10 +81,19 @@ test("direction and bell helpers describe the hidden fleet", () => {
   assert.equal(E.placeShip(b, { id: 0, size: 4, x: 5, y: 4, dir: "v" }), true);
   const dir = P.directionToNearest(b, 0, 0);
   assert.ok(dir.angle > 0 && dir.angle < Math.PI / 2, "arrow points down-right");
-  assert.deepEqual(P.biggestHidden(b), { dir: "v", size: 4 });
+  // the bell's shadow region always CONTAINS the creature (honest fuzz)
+  for (let i = 0; i < 20; i += 1) {
+    const r = P.biggestHiddenRegion(b);
+    assert.equal(r.dir, "v");
+    assert.equal(r.size, 4);
+    for (const c of E.shipCells(b.ships[0])) {
+      assert.ok(Math.abs(c.x - r.cx) <= r.rx + 1e-9, "cell inside shadow (x)");
+      assert.ok(Math.abs(c.y - r.cy) <= r.rz + 1e-9, "cell inside shadow (y)");
+    }
+  }
   for (let i = 0; i < 4; i += 1) E.fire(b, 5, 4 + i);
   assert.equal(P.directionToNearest(b, 0, 0), null);
-  assert.equal(P.biggestHidden(b), null);
+  assert.equal(P.biggestHiddenRegion(b), null);
 });
 
 test("whirlwind relocates creatures onto unshot cells only", () => {
