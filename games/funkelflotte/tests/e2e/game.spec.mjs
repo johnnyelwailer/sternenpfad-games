@@ -212,6 +212,42 @@ test("a chest right next to a found creature can still be opened", async ({ page
     .toBe(0);
 });
 
+test("Zeitzauber heals the freshest wound and the hit mark rewinds away", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.evaluate(() => window.__FF.setFast());
+  await startRobo(page);
+  await page.locator("#btn-place-done").click();
+  await waitMyTurn(page);
+
+  // wound our own first creature, then cast Zeitzauber from the hand
+  const cell = await page.evaluate(() => {
+    const { state, engine } = window.__FF;
+    const c = engine.shipCells(state.boards[0].ships[0])[0];
+    engine.fire(state.boards[0], c.x, c.y);
+    return c;
+  });
+  expect(await page.evaluate(() => window.__FF.state.boards[0].ships[0].hits.length)).toBe(1);
+  await page.evaluate(() => {
+    window.__FF.power("zeit");
+    window.__FF.usePower("zeit", null);
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.boards[0].ships[0].hits.length), { timeout: 15000 })
+    .toBe(0);
+  expect(
+    await page.evaluate((k) => window.__FF.state.boards[0].shots[k], `${cell.x},${cell.y}`)
+  ).toBeFalsy();
+
+  // with a healthy fleet the spell falls back to the classic extra turn
+  await page.evaluate(() => {
+    window.__FF.power("zeit");
+    window.__FF.usePower("zeit", null);
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.__FF.state.extraTurn), { timeout: 15000 })
+    .toBe(0);
+});
+
 test("placement: 5 valid creatures, shuffle keeps validity, rotate works", async ({ page }) => {
   await startRobo(page);
   await expect(page.locator("#btn-place-done")).toBeVisible();

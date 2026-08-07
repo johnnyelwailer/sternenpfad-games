@@ -34,6 +34,33 @@ test("every power has complete metadata and a sane target", () => {
   assert.equal(P.worldPower("vulkan"), "funke");
 });
 
+test("Zeitzauber rewinds the freshest wound on the most-injured friend", () => {
+  const b = E.createBoard();
+  E.placeShip(b, { id: 0, size: 3, x: 0, y: 0, dir: "h" });
+  E.placeShip(b, { id: 1, size: 3, x: 0, y: 4, dir: "h" });
+  // ship 0 takes two wounds, ship 1 takes one — ship 0 is most endangered
+  E.fire(b, 0, 0);
+  E.fire(b, 1, 0);
+  E.fire(b, 0, 4);
+  const healed = P.rewindWound(b);
+  assert.equal(healed.ship.id, 0);
+  assert.deepEqual(healed.cell, { x: 1, y: 0 }, "the FRESHEST wound heals");
+  assert.equal(b.ships[0].hits.length, 1);
+  assert.equal(b.shots[E.key(1, 0)], undefined, "the enemy's hit mark is wiped");
+  assert.equal(b.shots[E.key(0, 0)], E.HIT, "older wounds stay");
+  // the healed cell can be hit again — marks stay truthful
+  assert.equal(E.fire(b, 1, 0).result, E.HIT);
+});
+
+test("Zeitzauber never resurrects a found creature and fizzles on a healthy fleet", () => {
+  const b = E.createBoard();
+  E.placeShip(b, { id: 0, size: 2, x: 0, y: 0, dir: "h" });
+  assert.equal(P.rewindWound(b), null, "nothing wounded → nothing to heal");
+  E.fire(b, 0, 0);
+  E.fire(b, 1, 0); // sunk
+  assert.equal(P.rewindWound(b), null, "found creatures stay found");
+});
+
 test("frost cross and funke plus scans stay in bounds and report ships", () => {
   const b = E.createBoard();
   E.placeShip(b, { id: 0, size: 3, x: 2, y: 4, dir: "h" });
