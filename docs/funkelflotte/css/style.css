@@ -883,6 +883,24 @@ h1.logo {
   max-width: 260px;
 }
 
+.gain-dismiss {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  opacity: 0.65;
+  animation: dismissPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dismissPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
 .power-name {
   flex: 1;
   line-height: 1.15;

@@ -949,12 +949,16 @@ function showPowerGain(kind, why) {
   card.innerHTML = `<div class="gain-why">${why}</div>
     <img alt="" src="${SCENE.powerIconUrl(kind, 192)}" />
     <div class="gain-name">${p.name}</div>
-    <div class="gain-use">${p.use ?? ""}</div>`;
+    <div class="gain-use">${p.use ?? ""}</div>
+    <div class="gain-dismiss">👆 Tippen, wenn du's gelesen hast</div>`;
   card.hidden = false;
   clearTimeout(gainTimer);
-  gainTimer = setTimeout(() => {
-    card.hidden = true;
-  }, FAST ? 300 : 3400);
+  // the card waits for the reader — only automated tests rush it away
+  if (FAST) {
+    gainTimer = setTimeout(() => {
+      card.hidden = true;
+    }, 300);
+  }
   card.onclick = () => {
     card.hidden = true;
   };
@@ -1005,16 +1009,19 @@ function dispatchTreasureFollowup() {
   if (!S.treasureFollowup) return;
   const f = S.treasureFollowup;
   S.treasureFollowup = null;
-  const fromDoppel = S.treasureKind === "doppel";
+  const kind = S.treasureKind;
   S.treasureKind = null;
-  // Doppelschuss from a chest means action NOW: the turn does not pass —
-  // you search right away, and the forgiven miss covers shot number two
-  if (fromDoppel) {
+  // some chest spells mean action NOW — the turn does not pass:
+  //   doppel: search twice right away (the forgiven miss covers #2)
+  //   fernglas: peek, then immediately use what you learned
+  const keepTurn = { doppel: "🎯 Doppelschuss! Du darfst gleich ZWEIMAL suchen!",
+    fernglas: "🔍 Du weißt jetzt mehr — such gleich weiter!" }[kind];
+  if (keepTurn) {
     setTimeout(() => {
       if (S.phase !== "battle") return;
-      if (S.mode === "online") S.net.send({ t: "pw", kind: "doppel" });
+      if (S.mode === "online" && kind === "doppel") S.net.send({ t: "pw", kind: "doppel" });
       S.inputLocked = false;
-      status("🎯 Doppelschuss! Du darfst gleich ZWEIMAL suchen!");
+      status(keepTurn);
       renderPowers();
       saveGame();
     }, FAST ? 140 : 1400);
