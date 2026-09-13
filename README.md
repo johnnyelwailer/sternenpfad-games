@@ -2,6 +2,24 @@
 
 Monorepo scaffold for multiple story-driven programming games.
 
+## Family game-making sessions
+
+The repo skill [`sternenpfadgames`](.agents/skills/sternenpfadgames/SKILL.md)
+guides a parent and a seven-year-old child through imagining, building, playing,
+and improving a game. It follows your language (German by default), supports
+voice-friendly conversation, and uses frequent visuals and early prototypes.
+
+In a skill-enabled agent opened in this repository, start with:
+
+```text
+Use $sternenpfadgames. Wir möchten zusammen ein Spiel erfinden.
+```
+
+For a chat environment that cannot load repo skills, provide the contents of
+the linked `SKILL.md` as session instructions. Voice, image generation, canvas,
+and code execution depend on the tools available in that environment.
+Session progress is saved in `docs/family-sessions/latest.md` when used.
+
 ## Top-level layout
 
 - `apps/` — shared web shells, dev tools, and future game launchers

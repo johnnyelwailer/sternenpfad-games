@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sternenpfad Family Game Studio"
+  short_description: "Invent and build games together with your child"
+  default_prompt: "Use $sternenpfadgames to start or continue a playful game-making session with me and my seven-year-old daughter; follow our language and default to German."
