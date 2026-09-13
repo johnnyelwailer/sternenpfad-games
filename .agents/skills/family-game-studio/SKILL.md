@@ -1,5 +1,5 @@
 ---
-name: sternenpfadgames
+name: family-game-studio
 description: Guide collaborative game invention and creation with a parent and their seven-year-old daughter in Sternenpfad Games. Use for family game-making sessions, with voice-friendly teaching, frequent visuals, generated animated assets, and early playable prototypes.
 ---
 

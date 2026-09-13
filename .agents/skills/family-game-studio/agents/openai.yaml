@@ -1,0 +1,4 @@
+interface:
+  display_name: "Family Game Studio"
+  short_description: "Invent and build games together with your child"
+  default_prompt: "Use $family-game-studio to start or continue a playful game-making session with me and my seven-year-old daughter; follow our language and default to German."
